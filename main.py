@@ -2,6 +2,7 @@
 import argparse
 import os
 import re
+from datetime import timezone
 
 from feedgen.ext.base import BaseExtension
 from feedgen.feed import FeedGenerator
@@ -130,8 +131,8 @@ def generate_rss_feed(repo, feed_filename, me):
         fe.id(issue.html_url)
         fe.title(issue.title)
         fe.link(href=issue.html_url)
-        fe.published(issue.created_at)
-        fe.updated(issue.updated_at)
+        fe.published(issue.created_at.replace(tzinfo=timezone.utc))
+        fe.updated(issue.updated_at.replace(tzinfo=timezone.utc))
         fe.summary(summary)
         fe.content(html_body, type="html")
 
