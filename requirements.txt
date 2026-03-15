@@ -1,0 +1,5 @@
+PyGithub==1.59.1
+feedgen
+marko
+markdown
+lxml

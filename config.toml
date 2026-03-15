@@ -1,0 +1,17 @@
+base_url = "https://wjy9902.github.io/ai-daily/"
+generate_feeds = true
+feed_filenames = ["rss.xml"]
+theme = "even"
+taxonomies = [
+    {name = "categories", feed = true},
+    {name = "tags", feed = true},
+]
+[extra]
+even_title = "甲鱼AI日报"
+even_menu = [
+    {url = "https://wjy9902.github.io/ai-daily", name = "Home"},
+    {url = "https://wjy9902.github.io/ai-daily/tags/top/", name = "Top"},
+]
+[markdown]
+highlight_code = true
+render_emoji = true
