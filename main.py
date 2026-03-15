@@ -45,7 +45,14 @@ IGNORE_LABELS = TOP_ISSUES_LABELS + TODO_ISSUES_LABELS
 
 
 def get_me(user):
-    return user.get_user().login
+    try:
+        return user.get_user().login
+    except Exception:
+        # Fallback: use GITHUB_REPOSITORY_OWNER env var
+        owner = os.environ.get("GITHUB_REPOSITORY_OWNER", "")
+        if owner:
+            return owner
+        raise
 
 
 def get_me_from_repo(repo):
