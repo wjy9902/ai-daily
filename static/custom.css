@@ -1,98 +1,229 @@
-/* 甲鱼AI日报 — Custom Styles */
+/* 甲鱼AI日报 — Custom Styles v2 */
 
 :root {
-  --primary-color: #e67e22;
-  --bg-color: #fafafa;
-  --text-color: #333;
-  --border-color: #eee;
+  --primary: #e67e22;
+  --primary-light: #fff3e6;
+  --primary-dark: #d35400;
+  --bg: #fafafa;
+  --bg-card: #ffffff;
+  --text: #2c3e50;
+  --text-secondary: #666;
+  --border: #eaeaea;
+  --radius: 10px;
+  --shadow: 0 2px 12px rgba(0,0,0,0.06);
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
-  background: var(--bg-color);
-  color: var(--text-color);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", "PingFang SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.8;
+  font-size: 16px;
+}
+
+/* Header */
+#header .logo a::after {
+  content: "🐢 甲鱼AI日报";
+  font-size: 1.3em;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* Post list */
+.post__header .post__title a {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.post__header .post__title a:hover {
+  color: var(--primary);
+}
+
+/* Article content */
+.post-content {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 0 1em;
 }
 
 .post-content h1 {
-  color: var(--primary-color);
-  border-bottom: 2px solid var(--primary-color);
-  padding-bottom: 0.3em;
+  color: var(--primary);
+  font-size: 1.8em;
+  font-weight: 800;
+  border-bottom: 3px solid var(--primary);
+  padding-bottom: 0.4em;
+  margin-top: 0.5em;
+  margin-bottom: 1em;
 }
 
 .post-content h2 {
-  color: #2c3e50;
-  margin-top: 1.5em;
-  padding-bottom: 0.2em;
-  border-bottom: 1px solid var(--border-color);
+  color: var(--text);
+  font-size: 1.35em;
+  font-weight: 700;
+  margin-top: 2em;
+  margin-bottom: 0.8em;
+  padding: 0.5em 0.8em;
+  background: linear-gradient(135deg, var(--primary-light), #fff);
+  border-left: 4px solid var(--primary);
+  border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .post-content h3 {
-  color: #34495e;
-  margin-top: 1.2em;
+  color: var(--text);
+  font-size: 1.15em;
+  font-weight: 600;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px dashed var(--border);
 }
 
+/* Links */
 .post-content a {
-  color: var(--primary-color);
+  color: var(--primary);
   text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
 }
 
 .post-content a:hover {
-  text-decoration: underline;
+  border-bottom-color: var(--primary);
 }
 
+/* Lists */
 .post-content ul {
   padding-left: 1.2em;
+  margin: 0.8em 0;
 }
 
 .post-content li {
-  margin-bottom: 0.5em;
-  line-height: 1.7;
+  margin-bottom: 0.6em;
+  line-height: 1.8;
+  position: relative;
 }
 
-.post-content code {
-  background: #f0f0f0;
-  padding: 0.15em 0.4em;
-  border-radius: 3px;
-  font-size: 0.9em;
+.post-content li::marker {
+  color: var(--primary);
 }
 
-.post-content blockquote {
-  border-left: 4px solid var(--primary-color);
-  padding: 0.5em 1em;
-  margin: 1em 0;
-  background: #fff8f0;
-  color: #666;
+/* Paragraphs */
+.post-content p {
+  margin: 0.8em 0;
+  line-height: 1.9;
 }
 
+/* Bold text */
 .post-content strong {
-  color: #2c3e50;
+  color: var(--text);
+  font-weight: 600;
 }
 
-.post-content img {
-  max-width: 100%;
-  border-radius: 8px;
-  margin: 1em 0;
-}
-
-/* Tag badges */
-.post-content code:first-child {
-  background: var(--primary-color);
+/* Inline code — tag badges */
+.post-content code {
+  background: var(--primary);
   color: white;
-  padding: 0.2em 0.5em;
+  padding: 0.15em 0.5em;
   border-radius: 4px;
   font-size: 0.8em;
+  font-weight: 600;
+  font-family: inherit;
+  vertical-align: middle;
 }
 
-/* Header override */
-#header .logo a::after {
-  content: "🐢 甲鱼AI日报";
-  font-size: 1.2em;
-  font-weight: bold;
+/* Code blocks */
+.post-content pre code {
+  background: #1e1e2e;
+  color: #cdd6f4;
+  padding: 1em 1.2em;
+  border-radius: var(--radius);
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.85em;
+  display: block;
+  overflow-x: auto;
+  font-weight: normal;
 }
 
-/* Footer */
-.post-content hr:last-of-type {
+/* Blockquotes */
+.post-content blockquote {
+  border-left: 4px solid var(--primary);
+  padding: 0.8em 1.2em;
+  margin: 1.2em 0;
+  background: var(--primary-light);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Horizontal rules — section dividers */
+.post-content hr {
   border: none;
-  border-top: 1px solid var(--border-color);
-  margin-top: 2em;
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--border), transparent);
+  margin: 2em 0;
+}
+
+/* Images */
+.post-content img {
+  max-width: 100%;
+  border-radius: var(--radius);
+  margin: 1.2em 0;
+  box-shadow: var(--shadow);
+}
+
+/* Arrow indicators (→) */
+.post-content p:has(> :first-child) {
+  line-height: 1.9;
+}
+
+/* Source labels */
+.post-content p > strong:first-child {
+  color: var(--primary-dark);
+}
+
+/* Footer line */
+.post-content hr:last-of-type {
+  margin-top: 3em;
+}
+
+.post-content hr:last-of-type + p,
+.post-content p:last-child {
+  color: var(--text-secondary);
+  font-size: 0.85em;
+  font-style: italic;
+}
+
+/* Overview section — make it card-like */
+.post-content h2#gai-lan + h3,
+.post-content h2#gai-lan ~ h3 {
+  background: none;
+  border-left: none;
+  border-bottom: none;
+  padding: 0;
+  font-size: 1em;
+  color: var(--primary-dark);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .post-content {
+    padding: 0 0.5em;
+  }
+  .post-content h1 {
+    font-size: 1.5em;
+  }
+  .post-content h2 {
+    font-size: 1.2em;
+    padding: 0.4em 0.6em;
+  }
+}
+
+/* Smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Selection color */
+::selection {
+  background: var(--primary);
+  color: white;
 }
