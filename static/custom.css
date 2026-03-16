@@ -22,8 +22,22 @@ body {
 }
 
 /* Header */
+#header .logo a {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+#header .logo a::before {
+  content: "";
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  background: url("/ai-daily/icon.png") center/cover no-repeat;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 #header .logo a::after {
-  content: "🐢 甲鱼AI日报";
+  content: "甲鱼AI日报";
   font-size: 1.3em;
   font-weight: 700;
   letter-spacing: 0.02em;
