@@ -168,6 +168,17 @@ body {
   font-style: normal;
 }
 
+/* TL;DR 摘要块 — 第一个 blockquote 特殊样式 */
+.post-content h2 + blockquote,
+.post-content h2 + p + blockquote {
+  background: #f0f7ff;
+  border-left-color: #3b82f6;
+  font-weight: 500;
+  font-size: 0.95em;
+  color: var(--text);
+  font-style: normal;
+}
+
 /* Horizontal rules — section dividers */
 .post-content hr {
   border: none;
@@ -186,7 +197,7 @@ body {
 
 /* Arrow indicators (→) */
 .post-content p:has(> :first-child) {
-  line-height: 1.9;
+  line-height: 1.75;
 }
 
 /* Source labels */
@@ -272,7 +283,7 @@ body {
 
 /* Table of Contents — 右侧目录优化 */
 .toc {
-  font-size: 0.75em;
+  font-size: 0.8em;
   line-height: 1.5;
   max-height: 80vh;
   overflow-y: auto;
