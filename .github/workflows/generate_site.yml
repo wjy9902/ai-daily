@@ -82,7 +82,7 @@ jobs:
           GIT_SHA=$(git rev-parse --short HEAD)
           CSS_HREF="${BASE_URL%/}/custom.css?v=${GIT_SHA}"
           ICON_HREF="${BASE_URL%/}/icon.png?v=${GIT_SHA}"
-          INLINE_JS="<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.post-content a').forEach(function(a){if(a.hostname!==window.location.hostname){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}})});</script>"
+          INLINE_JS="<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.post-content a').forEach(function(a){if(a.hostname!==window.location.hostname){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});var b=document.createElement('button');b.innerHTML='↑';b.id='btt';b.style.cssText='position:fixed;bottom:2em;right:2em;width:40px;height:40px;border-radius:50%;background:#e67e22;color:#fff;border:none;font-size:1.2em;cursor:pointer;opacity:0;transition:opacity .3s;z-index:999';document.body.appendChild(b);window.addEventListener('scroll',function(){b.style.opacity=window.scrollY>500?'0.8':'0'});b.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})})});</script>"
           SITE_TITLE="甲鱼AI日报"
           SITE_DESC="每日 AI 前沿技术情报，由 AI 辅助创作"
           find output/public -name "*.html" -exec sed -i \

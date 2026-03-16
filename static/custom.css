@@ -122,8 +122,8 @@ body {
 
 /* Paragraphs */
 .post-content p {
-  margin: 0.8em 0;
-  line-height: 1.9;
+  margin: 0.6em 0;
+  line-height: 1.75;
 }
 
 /* Bold text */
@@ -171,9 +171,9 @@ body {
 /* Horizontal rules — section dividers */
 .post-content hr {
   border: none;
-  height: 1px;
+  height: 2px;
   background: linear-gradient(to right, transparent, var(--border), transparent);
-  margin: 2em 0;
+  margin: 3em 0;
 }
 
 /* Images */
@@ -260,6 +260,16 @@ body {
   }
 }
 
+/* TL;DR 一句话摘要 — 每篇第一个 blockquote */
+.post-content h2 + blockquote,
+.post-content h2 + p + blockquote {
+  background: #f0f7ff;
+  border-left-color: #3b82f6;
+  font-weight: 500;
+  font-size: 0.95em;
+  color: var(--text);
+}
+
 /* Table of Contents — 右侧目录优化 */
 .toc {
   font-size: 0.75em;
@@ -273,11 +283,11 @@ body {
   color: var(--text-secondary);
   text-decoration: none;
   display: block;
-  padding: 0.15em 0;
+  padding: 0.25em 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 220px;
+  max-width: 280px;
 }
 .toc a:hover {
   color: var(--primary);
