@@ -132,10 +132,10 @@ body {
   font-weight: 600;
 }
 
-/* Inline code — tag badges */
+/* Inline code — readable tag style */
 .post-content code {
-  background: var(--primary);
-  color: white;
+  background: #fff3e0;
+  color: #b35900;
   padding: 0.15em 0.5em;
   border-radius: 4px;
   font-size: 0.8em;
@@ -165,7 +165,7 @@ body {
   background: var(--primary-light);
   border-radius: 0 var(--radius) var(--radius) 0;
   color: var(--text-secondary);
-  font-style: italic;
+  font-style: normal;
 }
 
 /* Horizontal rules — section dividers */
@@ -217,7 +217,7 @@ body {
   color: var(--primary-dark);
 }
 
-/* Responsive */
+/* Responsive — tablet */
 @media (max-width: 768px) {
   .post-content {
     padding: 0 0.5em;
@@ -228,6 +228,35 @@ body {
   .post-content h2 {
     font-size: 1.2em;
     padding: 0.4em 0.6em;
+  }
+}
+
+/* Responsive — mobile */
+@media (max-width: 480px) {
+  #header .logo a::before {
+    width: 40px;
+    height: 40px;
+  }
+  #header .logo a::after {
+    font-size: 1.1em;
+  }
+  #header .logo a {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.3em;
+  }
+  .post-content {
+    padding: 0 0.4em;
+  }
+  .post-content h1 {
+    font-size: 1.3em;
+  }
+  .post-content h2 {
+    font-size: 1.1em;
+    padding: 0.3em 0.5em;
+  }
+  body {
+    font-size: 15px;
   }
 }
 

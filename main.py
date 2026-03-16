@@ -133,7 +133,7 @@ def generate_rss_feed(repo, feed_filename, me):
         fe = fg.add_entry()
         fe.id(issue.html_url)
         fe.title(issue.title)
-        fe.link(href=issue.html_url)
+        fe.link(href=f"{SITE_BASE_URL}/issue-{issue.number}/")
         fe.published(issue.created_at.replace(tzinfo=timezone.utc))
         fe.updated(issue.updated_at.replace(tzinfo=timezone.utc))
         fe.summary(summary)

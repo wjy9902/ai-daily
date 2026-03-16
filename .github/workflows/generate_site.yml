@@ -78,13 +78,15 @@ jobs:
           mkdir -p output/static
           cp -r static/. output/static/
           (cd output && zola build --base-url $BASE_URL)
-          # Inject custom CSS, JS, and favicon
-          CSS_HREF="${BASE_URL%/}/custom.css"
-          ICON_HREF="${BASE_URL%/}/icon.png"
-          JS_HREF="${BASE_URL%/}/custom.js"
-          find output/public -name "*.html" -exec sed -i "s|</head>|<link rel=\"stylesheet\" href=\"${CSS_HREF}\"></head>|g" {} \;
-          find output/public -name "*.html" -exec sed -i "s|</head>|<script defer src=\"${JS_HREF}\"></script></head>|g" {} \;
-          find output/public -name "*.html" -exec sed -i "s|</head>|<link rel=\"icon\" type=\"image/png\" href=\"${ICON_HREF}\"><link rel=\"shortcut icon\" href=\"${ICON_HREF}\"></head>|g" {} \;
+          # Inject custom CSS, favicon, inline JS, and SEO meta tags (single sed pass)
+          GIT_SHA=$(git rev-parse --short HEAD)
+          CSS_HREF="${BASE_URL%/}/custom.css?v=${GIT_SHA}"
+          ICON_HREF="${BASE_URL%/}/icon.png?v=${GIT_SHA}"
+          INLINE_JS="<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.post-content a').forEach(function(a){if(a.hostname!==window.location.hostname){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}})});</script>"
+          SITE_TITLE="甲鱼AI日报"
+          SITE_DESC="每日 AI 前沿技术情报，由 AI 辅助创作"
+          find output/public -name "*.html" -exec sed -i \
+            -e "s|</head>|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><meta name=\"description\" content=\"${SITE_DESC}\"><meta property=\"og:title\" content=\"${SITE_TITLE}\"><meta property=\"og:description\" content=\"${SITE_DESC}\"><meta property=\"og:image\" content=\"${BASE_URL%/}/icon.png\"><meta property=\"og:type\" content=\"website\"><link rel=\"stylesheet\" href=\"${CSS_HREF}\">${INLINE_JS}<link rel=\"icon\" type=\"image/png\" href=\"${ICON_HREF}\"><link rel=\"shortcut icon\" href=\"${ICON_HREF}\"></head>|g" {} \;
           cp rss.xml output/public/rss.xml
       - name: Setup Pages
         uses: actions/configure-pages@v5

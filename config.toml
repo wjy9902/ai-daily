@@ -9,8 +9,8 @@ taxonomies = [
 [extra]
 even_title = "甲鱼AI日报"
 even_menu = [
-    {url = "https://wjy9902.github.io/ai-daily", name = "Home"},
-    {url = "https://wjy9902.github.io/ai-daily/tags/top/", name = "Top"},
+    {url = "/ai-daily/", name = "Home"},
+    {url = "/ai-daily/tags/top/", name = "Top"},
 ]
 [markdown]
 highlight_code = true
