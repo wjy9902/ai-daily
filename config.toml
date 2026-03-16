@@ -16,3 +16,6 @@ even_menu = [
 [markdown]
 highlight_code = true
 render_emoji = true
+
+[link_checker]
+internal_level = "warn"
