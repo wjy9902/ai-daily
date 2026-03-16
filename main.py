@@ -54,7 +54,10 @@ def is_me(issue, me):
 
 
 def format_time(time):
-    return str(time)[:10]
+    """Convert UTC datetime to Asia/Shanghai date string"""
+    from datetime import timedelta
+    cst = time + timedelta(hours=8)
+    return str(cst)[:10]
 
 
 def add_md_header(filename):
