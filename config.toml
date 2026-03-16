@@ -1,4 +1,5 @@
 base_url = "https://wjy9902.github.io/ai-daily/"
+title = "甲鱼AI日报"
 generate_feeds = true
 feed_filenames = ["rss.xml"]
 theme = "even"
