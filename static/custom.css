@@ -30,8 +30,8 @@ body {
 #header .logo a::before {
   content: "";
   display: inline-block;
-  width: 36px;
-  height: 36px;
+  width: 64px;
+  height: 64px;
   background: url("/ai-daily/icon.png") center/cover no-repeat;
   border-radius: 50%;
   flex-shrink: 0;
