@@ -26,6 +26,8 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5em;
+  font-size: 0;
+  color: transparent;
 }
 #header .logo a::before {
   content: "";
