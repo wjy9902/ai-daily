@@ -427,6 +427,43 @@ main .post blockquote p:last-child {
   margin: 0.75em 0;
 }
 
+/* ===== Info-Dense Blockquote — "Intelligence Card" ===== */
+/* Targets structured field blockquotes (TL;DR / 来源 / 核心事实 / …)
+   that directly follow an <h2> article heading.  The simple "今日亮点"
+   summary blockquote follows <h1>, so it is unaffected.
+   Mechanism: Zola's pulldown-cmark emits soft line-breaks (\n) between
+   fields inside a single <p>.  `white-space: pre-line` makes those
+   newlines visible; `strong::before { display: block }` inserts vertical
+   breathing room between fields without touching the HTML. */
+
+.post-content h2 + blockquote {
+  padding: 1em 1.3em;
+}
+
+.post-content h2 + blockquote p {
+  white-space: pre-line;
+  line-height: 1.7;
+}
+
+/* Field labels — orange scanning anchors */
+.post-content h2 + blockquote strong {
+  color: var(--primary-hover);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+/* Vertical gap before each field label */
+.post-content h2 + blockquote p strong::before {
+  content: '';
+  display: block;
+  height: 0.5em;
+}
+
+/* First field (TL;DR) — no extra gap above */
+.post-content h2 + blockquote p > strong:first-child::before {
+  display: none;
+}
+
 /* --- Inline Code --- */
 .post-content :not(pre) > code,
 main .post :not(pre) > code {
@@ -732,6 +769,15 @@ main .pagination a:hover {
     padding: 0.65em 0.9em;
     margin: 1em 0;
     font-size: 0.92em;
+  }
+
+  /* Intelligence Card — tighter field gaps on mobile */
+  .post-content h2 + blockquote {
+    padding: 0.75em 1em;
+  }
+
+  .post-content h2 + blockquote p strong::before {
+    height: 0.35em;
   }
 
   /* Post-nav stacks vertically */
