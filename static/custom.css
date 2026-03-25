@@ -223,12 +223,16 @@ main .post-reactions .reaction-emoji {
 }
 
 /* ===== Table of Contents ===== */
-/* Override theme's fixed sidebar — make it inline for all widths */
+/* Desktop: keep TOC as a right-side sticky/floating directory.
+   Mobile/tablet: fall back to inline card above article. */
 .post-toc {
-  position: static !important;
-  width: auto !important;
-  margin-left: 0 !important;
-  display: block !important;
+  position: fixed;
+  top: 6.25rem;
+  left: calc(50% + 270px);
+  width: 260px;
+  max-height: calc(100vh - 8rem);
+  overflow: auto;
+  display: block;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -237,6 +241,7 @@ main .post-reactions .reaction-emoji {
   box-shadow: var(--shadow-sm);
   font-size: 0.85rem;
   line-height: 1.65;
+  z-index: 10;
 }
 
 .post-toc .post-toc-title {
@@ -718,6 +723,17 @@ main .pagination a:hover {
 
   main > .content > article.post {
     padding: 1.25rem 1.15rem;
+  }
+
+  /* TOC returns inline on tablet/mobile */
+  .post-toc {
+    position: static;
+    top: auto;
+    left: auto;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    margin-bottom: 1rem;
   }
 }
 
