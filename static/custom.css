@@ -225,10 +225,15 @@ main .post-reactions .reaction-emoji {
 /* ===== Table of Contents ===== */
 /* Desktop: keep TOC as a right-side sticky/floating directory.
    Mobile/tablet: fall back to inline card above article. */
+/* El contenedor del tema mide 800px centrado (borde derecho en
+   calc(50% + 400px)). El TOC fijo se coloca JUSTO a la derecha de ese
+   borde con un hueco de 16px, para que nunca tape el contenido del
+   artículo en pantallas de escritorio (antes: left: calc(50% + 270px)
+   solapaba ~130px del texto en cualquier ancho). */
 .post-toc {
   position: fixed;
   top: 6.25rem;
-  left: calc(50% + 270px);
+  left: calc(50% + 416px);
   width: 260px;
   max-height: calc(100vh - 8rem);
   overflow: auto;
@@ -242,6 +247,15 @@ main .post-reactions .reaction-emoji {
   font-size: 0.85rem;
   line-height: 1.65;
   z-index: 10;
+}
+
+/* Solo cabe al lado del contenedor en pantallas anchas
+   (borde derecho del TOC = 50% + 416px + 260px <= 100vw  =>  vw >= 1352px).
+   Por debajo se oculta igual que hacía el tema base (media <= 1185px). */
+@media (max-width: 1351px) {
+  .post-toc {
+    display: none;
+  }
 }
 
 .post-toc .post-toc-title {
