@@ -26,3 +26,12 @@ def test_recovery_does_not_call_model_when_issue_exists() -> None:
     recovery = workflow[recovery_start:recovery_end]
     assert "ai-daily issue-exists" in recovery
     assert recovery.index("ai-daily issue-exists") < recovery.index("ai-daily run")
+
+
+def test_benchmark_workflow_uses_secrets_and_fixed_dataset() -> None:
+    workflow = Path(".github/workflows/benchmark_models.yml").read_text()
+    assert "DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}" in workflow
+    assert "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}" in workflow
+    assert "tests/evals/judge-golden.json" in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" not in workflow
