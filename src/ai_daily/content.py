@@ -13,6 +13,9 @@ class JudgeBatch(BaseModel):
     decisions: list[JudgeDecision]
 
 
+JUDGE_BATCH_SIZE = 10
+
+
 def evidence_bundle(event: Event) -> EvidenceBundle:
     evidence = [
         Evidence(
@@ -28,7 +31,15 @@ def evidence_bundle(event: Event) -> EvidenceBundle:
 
 
 async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
-    bundles = [evidence_bundle(event).model_dump(mode="json") for event in events]
+    decisions = []
+    for start in range(0, len(events), JUDGE_BATCH_SIZE):
+        batch = events[start : start + JUDGE_BATCH_SIZE]
+        decisions.extend(await _judge_batch(gateway, batch))
+    return decisions
+
+
+async def _judge_batch(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
+    bundles = [evidence_bundle(event) for event in events]
     result = await gateway.generate(
         "judge",
         JudgeBatch,
@@ -37,20 +48,23 @@ async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[Judge
             "每个 event_id 必须恰好返回一个决定，evidence_ids 只能使用输入值。"
             "优先会改变技术或产品行动的官方发布、重要研究和高质量开源项目。"
         ),
-        prompt=json.dumps(bundles, ensure_ascii=False),
+        prompt=json.dumps(
+            [bundle.model_dump(mode="json") for bundle in bundles], ensure_ascii=False
+        ),
     )
-    by_event = {decision.event_id: decision for decision in result.decisions}
+    decisions = result.decisions
+    by_event = {decision.event_id: decision for decision in decisions}
     expected = {event.event_id for event in events}
-    if set(by_event) != expected or len(result.decisions) != len(events):
+    if set(by_event) != expected or len(decisions) != len(events):
         raise ValueError("judge output does not cover every event exactly once")
     allowed = {
         bundle.event_id: {evidence.evidence_id for evidence in bundle.evidence}
-        for bundle in map(evidence_bundle, events)
+        for bundle in bundles
     }
-    for decision in result.decisions:
+    for decision in decisions:
         if not set(decision.evidence_ids) <= allowed[decision.event_id]:
             raise ValueError("judge referenced unknown evidence")
-    return result.decisions
+    return decisions
 
 
 async def draft_selected(

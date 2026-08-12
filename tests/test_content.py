@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,21 +30,27 @@ def event() -> Event:
 
 
 class FakeGateway:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def generate(
         self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
     ) -> Any:
         if output_type is JudgeBatch:
+            self.calls += 1
+            bundles = json.loads(prompt)
             return JudgeBatch(
                 decisions=[
                     JudgeDecision(
-                        event_id="event-1",
+                        event_id=bundle["event_id"],
                         selected=True,
                         category="模型与平台",
                         relevance=95,
                         confidence=0.9,
                         reason="Official material change",
-                        evidence_ids=["event-1-1"],
+                        evidence_ids=[bundle["evidence"][0]["evidence_id"]],
                     )
+                    for bundle in bundles
                 ]
             )
         return DraftItem(
@@ -107,3 +114,13 @@ async def test_judge_must_return_each_event_exactly_once() -> None:
 def test_judge_batch_is_valid_structured_tool_output() -> None:
     assert JudgeBatch.model_json_schema()["type"] == "object"
     Agent(TestModel(), output_type=JudgeBatch)
+
+
+async def test_judge_splits_large_candidate_sets_into_small_batches() -> None:
+    gateway = FakeGateway()
+    events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(21)]
+
+    decisions = await judge_events(gateway, events)  # type: ignore[arg-type]
+
+    assert len(decisions) == 21
+    assert gateway.calls == 3
