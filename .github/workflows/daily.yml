@@ -1,0 +1,148 @@
+name: Generate AI Daily
+
+on:
+  schedule:
+    - cron: "20 20 * * *"
+    - cron: "5 21 * * *"
+    - cron: "45 21 * * *"
+  workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Asia/Shanghai date (YYYY-MM-DD); blank means today"
+        required: false
+        type: string
+      mode:
+        description: "Run mode"
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - publish
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ai-daily-publication-lock
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.decision.outputs.deploy }}
+      verify: ${{ steps.decision.outputs.verify }}
+      target_date: ${{ steps.target.outputs.date }}
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      SITE_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: |
+          python -m pip install uv==0.9.28
+          uv sync --frozen --no-dev
+      - id: target
+        name: Resolve target date
+        env:
+          INPUT_DATE: ${{ inputs.target_date }}
+        run: |
+          if [ -n "$INPUT_DATE" ]; then
+            DATE="$INPUT_DATE"
+          else
+            DATE=$(TZ=Asia/Shanghai date +%F)
+          fi
+          python -c 'import datetime,sys; datetime.date.fromisoformat(sys.argv[1])' "$DATE"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+      - id: decision
+        name: Generate or recover
+        env:
+          TARGET_DATE: ${{ steps.target.outputs.date }}
+          SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$SCHEDULE" = "45 21 * * *" ]; then
+            if uv run --frozen ai-daily verify --date "$TARGET_DATE"; then
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "deploy=true" >> "$GITHUB_OUTPUT"
+            fi
+            echo "verify=true" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "5 21 * * *" ]; then
+            if uv run --frozen ai-daily verify --date "$TARGET_DATE"; then
+              echo "deploy=false" >> "$GITHUB_OUTPUT"
+            elif uv run --frozen ai-daily issue-exists --date "$TARGET_DATE"; then
+              echo "deploy=true" >> "$GITHUB_OUTPUT"
+            else
+              uv run --frozen ai-daily run --date "$TARGET_DATE" --mode publish
+              echo "deploy=true" >> "$GITHUB_OUTPUT"
+            fi
+            echo "verify=true" >> "$GITHUB_OUTPUT"
+          elif [ "${MANUAL_MODE:-publish}" = "dry-run" ]; then
+            uv run --frozen ai-daily run --date "$TARGET_DATE" --mode dry-run
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "verify=false" >> "$GITHUB_OUTPUT"
+          else
+            uv run --frozen ai-daily run --date "$TARGET_DATE" --mode publish
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "verify=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-daily-${{ steps.target.outputs.date }}-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: ignore
+          retention-days: 90
+
+  deploy:
+    needs: prepare
+    if: needs.prepare.outputs.deploy == 'true'
+    uses: ./.github/workflows/generate_site.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      issues: read
+      pages: write
+      id-token: write
+
+  verify:
+    needs: [prepare, deploy]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.verify == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      SITE_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: |
+          python -m pip install uv==0.9.28
+          uv sync --frozen --no-dev
+      - name: Verify website and RSS
+        env:
+          TARGET_DATE: ${{ needs.prepare.outputs.target_date }}
+        run: |
+          for attempt in 1 2 3 4 5 6; do
+            if uv run --frozen ai-daily verify --date "$TARGET_DATE"; then
+              exit 0
+            fi
+            sleep 20
+          done
+          exit 1

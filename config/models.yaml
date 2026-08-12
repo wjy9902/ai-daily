@@ -1,0 +1,41 @@
+budget:
+  request_limit: 30
+  input_token_limit: 200000
+  output_token_limit: 30000
+  cost_cny_limit: 5.0
+
+roles:
+  judge:
+    primary:
+      provider: alibaba
+      model: qwen3.7-flash
+      timeout_seconds: 45
+      max_output_tokens: 4096
+      temperature: 0.1
+      input_cost_cny_per_million: 0.7
+      output_cost_cny_per_million: 2.0
+    fallback:
+      provider: deepseek
+      model: deepseek-v4-flash
+      timeout_seconds: 60
+      max_output_tokens: 4096
+      temperature: 0.1
+      input_cost_cny_per_million: 1.01
+      output_cost_cny_per_million: 2.02
+  editor:
+    primary:
+      provider: alibaba
+      model: qwen3.8-max
+      timeout_seconds: 90
+      max_output_tokens: 8192
+      temperature: 0.2
+      input_cost_cny_per_million: 2.5
+      output_cost_cny_per_million: 10.0
+    fallback:
+      provider: deepseek
+      model: deepseek-v4-pro
+      timeout_seconds: 120
+      max_output_tokens: 8192
+      temperature: 0.2
+      input_cost_cny_per_million: 3.13
+      output_cost_cny_per_million: 6.26
