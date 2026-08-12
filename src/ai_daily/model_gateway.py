@@ -71,11 +71,7 @@ class ModelGateway:
                 )
                 result = await agent.run(
                     prompt,
-                    model_settings=ModelSettings(
-                        temperature=endpoint.temperature,
-                        max_tokens=endpoint.max_output_tokens,
-                        timeout=endpoint.timeout_seconds,
-                    ),
+                    model_settings=self._model_settings(endpoint),
                     usage_limits=UsageLimits(
                         request_limit=1,
                         input_tokens_limit=self.config.budget.input_token_limit,
@@ -115,6 +111,16 @@ class ModelGateway:
                     continue
                 raise ModelInvocationFailed(self._safe_error(error)) from error
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _model_settings(endpoint: ModelEndpoint) -> ModelSettings:
+        extra_body = {"enable_thinking": False} if endpoint.provider == "alibaba" else None
+        return ModelSettings(
+            temperature=endpoint.temperature,
+            max_tokens=endpoint.max_output_tokens,
+            timeout=endpoint.timeout_seconds,
+            extra_body=extra_body,
+        )
 
     def _build_model(self, endpoint: ModelEndpoint) -> OpenAIChatModel:
         if endpoint.provider == "alibaba":

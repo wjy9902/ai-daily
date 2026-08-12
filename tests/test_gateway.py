@@ -24,6 +24,15 @@ def test_provider_requires_environment_secrets() -> None:
         raise AssertionError("missing secrets were accepted")
 
 
+def test_alibaba_structured_output_disables_thinking_mode() -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    alibaba = gateway.config.roles["judge"].primary
+    deepseek = gateway.config.roles["judge"].fallback
+
+    assert gateway._model_settings(alibaba)["extra_body"] == {"enable_thinking": False}
+    assert gateway._model_settings(deepseek)["extra_body"] is None
+
+
 def test_fallback_audit_preserves_requested_model() -> None:
     gateway = ModelGateway(load_config().models, Secrets(), clock=lambda: 1.0)
     role = gateway.config.roles["judge"]
