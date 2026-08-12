@@ -1,0 +1,41 @@
+name: Benchmark models
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies
+        run: |
+          python -m pip install uv==0.9.28
+          uv sync --frozen --no-dev
+      - name: Run fixed model evaluation
+        run: |
+          mkdir -p artifacts
+          uv run --frozen ai-daily benchmark-models \
+            --dataset tests/evals/judge-golden.json \
+            > artifacts/model-benchmark.json
+          jq '{recommendation, profiles: (.profiles | with_entries(.value |= {primary, metrics}))}' \
+            artifacts/model-benchmark.json
+      - name: Upload benchmark audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-benchmark-${{ github.run_id }}
+          path: artifacts/model-benchmark.json
+          if-no-files-found: error
+          retention-days: 90
