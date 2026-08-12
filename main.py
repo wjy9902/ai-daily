@@ -118,7 +118,7 @@ def generate_rss_feed(repo, feed_filename, me):
     fg.link(href=f"{SITE_BASE_URL}/{feed_filename}", rel="self")
     fg.language("zh-CN")
 
-    count = 0
+    trusted_issues = []
     for issue in repo.get_issues(state="open", sort="created", direction="desc"):
         if not is_trusted_issue(issue, me):
             continue
@@ -126,6 +126,12 @@ def generate_rss_feed(repo, feed_filename, me):
         if any(label in IGNORE_LABELS for label in labels):
             continue
 
+        trusted_issues.append(issue)
+        if len(trusted_issues) >= 30:
+            break
+
+    # FeedGenerator prepends entries, so add oldest first to emit newest first.
+    for issue in reversed(trusted_issues):
         body = issue.body or ""
         html_body = marko(body)
         summary = re.sub(r"<[^>]+>", "", html_body)[:RSS_SUMMARY_MAX_CHARS]
@@ -138,10 +144,6 @@ def generate_rss_feed(repo, feed_filename, me):
         fe.updated(issue.updated_at.replace(tzinfo=UTC))
         fe.summary(summary)
         fe.content(html_body, type="html")
-
-        count += 1
-        if count >= 30:
-            break
 
     fg.rss_file(feed_filename, pretty=True)
 
