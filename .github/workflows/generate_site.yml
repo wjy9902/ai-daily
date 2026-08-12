@@ -70,7 +70,7 @@ jobs:
           uv sync --frozen --no-dev
       - name: Generate markdown and build site
         run: |
-          uv run --frozen python main.py ${{ github.token }} ${{ github.repository }}
+          uv run --frozen python main.py ${{ github.repository }}
           gh release download $ISITE_VERSION --repo kemingy/isite -p '*linux_amd64*' --output isite.tar.gz
           tar zxf isite.tar.gz && mv isite /usr/local/bin
           isite generate --user $USER --repo $REPO

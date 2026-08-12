@@ -15,6 +15,8 @@ def test_site_workflow_is_reusable_and_locked() -> None:
     assert "workflow_call:" in workflow
     assert "uv sync --frozen --no-dev" in workflow
     assert "requirements.txt" not in workflow
+    assert "python main.py ${{ github.repository }}" in workflow
+    assert "python main.py ${{ github.token }}" not in workflow
 
 
 def test_recovery_does_not_call_model_when_issue_exists() -> None:

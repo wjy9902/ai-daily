@@ -5,7 +5,7 @@ from datetime import UTC
 
 from feedgen.ext.base import BaseExtension
 from feedgen.feed import FeedGenerator
-from github import Github
+from github import Auth, Github
 from marko.ext.gfm import gfm as marko
 
 from ai_daily.site_trust import is_trusted_issue
@@ -35,7 +35,7 @@ MD_HEAD = """# 甲鱼AI日报
 
 
 def login(token):
-    return Github(token)
+    return Github(auth=Auth.Token(token))
 
 
 def get_repo(user, repo_full_name):
@@ -199,8 +199,7 @@ def main(token, repo_name, issue_number=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("github_token", help="github_token")
     parser.add_argument("repo_name", help="repo_name (owner/repo)")
     parser.add_argument("--issue_number", help="issue_number", default=None, required=False)
     options = parser.parse_args()
-    main(options.github_token, options.repo_name, options.issue_number)
+    main(os.environ["GH_TOKEN"], options.repo_name, options.issue_number)
