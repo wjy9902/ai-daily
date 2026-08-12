@@ -17,6 +17,17 @@ def test_site_workflow_is_reusable_and_locked() -> None:
     assert "requirements.txt" not in workflow
     assert "python main.py ${{ github.repository }}" in workflow
     assert "python main.py ${{ github.token }}" not in workflow
+    assert "ZOLA_VERSION: v0.23.3" in workflow
+    assert "EVEN_THEME_COMMIT: 56015feedb5b3d6a7b74c077568449892cf8b458" in workflow
+    assert 'git -C output/themes/even checkout --detach "$EVEN_THEME_COMMIT"' in workflow
+
+
+def test_zola_config_uses_current_highlighting_schema() -> None:
+    config = Path("config.toml").read_text()
+    assert 'description = "每日 AI 前沿技术情报，由 AI 辅助创作"' in config
+    assert "[markdown.highlighting]" in config
+    assert 'theme = "gruvbox-dark-medium"' in config
+    assert "highlight_code" not in config
 
 
 def test_recovery_does_not_call_model_when_issue_exists() -> None:
