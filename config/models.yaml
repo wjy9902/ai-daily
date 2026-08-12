@@ -8,12 +8,12 @@ roles:
   judge:
     primary:
       provider: alibaba
-      model: qwen3.7-flash
+      model: qwen3.8-max
       timeout_seconds: 45
       max_output_tokens: 4096
       temperature: 0.1
-      input_cost_cny_per_million: 0.7
-      output_cost_cny_per_million: 2.0
+      input_cost_cny_per_million: 2.5
+      output_cost_cny_per_million: 10.0
     fallback:
       provider: deepseek
       model: deepseek-v4-flash
