@@ -78,7 +78,7 @@ class ModelGateway:
                         output_tokens_limit=self.config.budget.output_token_limit,
                     ),
                 )
-                usage = result.usage()
+                usage = result.usage
                 self.ledger.reconcile_requests(usage.requests)
                 run = self._success_run(
                     role,
