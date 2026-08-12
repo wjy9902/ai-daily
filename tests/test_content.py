@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 
 from ai_daily.content import JudgeBatch, draft_selected, judge_events
 from ai_daily.models import DraftItem, Event, JudgeDecision, RawItem, SourceTier
@@ -32,7 +34,7 @@ class FakeGateway:
     ) -> Any:
         if output_type is JudgeBatch:
             return JudgeBatch(
-                root=[
+                decisions=[
                     JudgeDecision(
                         event_id="event-1",
                         selected=True,
@@ -89,7 +91,7 @@ class DuplicateJudgeGateway(FakeGateway):
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, JudgeBatch):
-            return JudgeBatch(root=[value.root[0], value.root[0]])
+            return JudgeBatch(decisions=[value.decisions[0], value.decisions[0]])
         return value
 
 
@@ -100,3 +102,8 @@ async def test_judge_must_return_each_event_exactly_once() -> None:
         assert "exactly once" in str(error)
     else:
         raise AssertionError("duplicate judge decision was accepted")
+
+
+def test_judge_batch_is_valid_structured_tool_output() -> None:
+    assert JudgeBatch.model_json_schema()["type"] == "object"
+    Agent(TestModel(), output_type=JudgeBatch)

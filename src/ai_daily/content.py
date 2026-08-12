@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
-from pydantic import RootModel
+from pydantic import BaseModel
 
 from ai_daily.model_gateway import ModelGateway
 from ai_daily.models import DraftItem, Event, Evidence, EvidenceBundle, JudgeDecision
 
 
-class JudgeBatch(RootModel[list[JudgeDecision]]):
-    pass
+class JudgeBatch(BaseModel):
+    decisions: list[JudgeDecision]
 
 
 def evidence_bundle(event: Event) -> EvidenceBundle:
@@ -39,18 +39,18 @@ async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[Judge
         ),
         prompt=json.dumps(bundles, ensure_ascii=False),
     )
-    by_event = {decision.event_id: decision for decision in result.root}
+    by_event = {decision.event_id: decision for decision in result.decisions}
     expected = {event.event_id for event in events}
-    if set(by_event) != expected or len(result.root) != len(events):
+    if set(by_event) != expected or len(result.decisions) != len(events):
         raise ValueError("judge output does not cover every event exactly once")
     allowed = {
         bundle.event_id: {evidence.evidence_id for evidence in bundle.evidence}
         for bundle in map(evidence_bundle, events)
     }
-    for decision in result.root:
+    for decision in result.decisions:
         if not set(decision.evidence_ids) <= allowed[decision.event_id]:
             raise ValueError("judge referenced unknown evidence")
-    return result.root
+    return result.decisions
 
 
 async def draft_selected(
