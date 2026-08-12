@@ -53,4 +53,25 @@ def test_benchmark_scores_evidence_selection_chinese_latency_and_cost() -> None:
     ]
     result = score_records(records)
     assert result["score"] == 100
+    assert result["schema_rate"] == 1
     assert result["eligible"] is True
+
+
+def test_benchmark_records_schema_failures_in_score() -> None:
+    records = [
+        PredictionRecord(
+            case_id=str(index),
+            expected_selected=True,
+            expected_category="模型与平台",
+            prediction=None,
+            error="UnexpectedModelBehavior",
+            latency_ms=100,
+            cost_cny=0,
+            fallback_used=False,
+        )
+        for index in range(20)
+    ]
+    result = score_records(records)
+    assert result["schema_rate"] == 0
+    assert result["score"] == 15
+    assert result["eligible"] is False
