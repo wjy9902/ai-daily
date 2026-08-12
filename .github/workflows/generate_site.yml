@@ -55,7 +55,8 @@ jobs:
       ZOLA_VERSION: v0.20.0
       USER: ${{ github.repository_owner }}
       REPO: ${{ github.event.repository.name }}
-      BASE_URL: https://wjy9902.github.io/ai-daily
+      BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+      SITE_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -15,7 +15,10 @@ FEED_ICON_PATH = "static/icon.png"
 RSS_SUMMARY_MAX_CHARS = 360
 WEBFEEDS_NS = "http://webfeeds.org/rss/1.0"
 BACKUP_DIR = "BACKUP"
-SITE_BASE_URL = "https://wjy9902.github.io/ai-daily"
+SITE_BASE_URL = os.environ.get(
+    "SITE_BASE_URL",
+    os.environ.get("BASE_URL", "https://wjy9902.github.io/ai-daily"),
+)
 
 TOP_ISSUES_LABELS = ["Top"]
 IGNORE_LABELS = ["Top", "TODO"]
