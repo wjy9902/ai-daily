@@ -3,3 +3,13 @@ output/
 __pycache__/
 *.pyc
 .DS_Store
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ai-daily/
+artifacts/
+*.tar.gz
+isite
+zola

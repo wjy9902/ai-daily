@@ -1,0 +1,22 @@
+[
+  {"id":"case-01","title":"OpenAI 发布 Linux 桌面应用","summary":"OpenAI 官方发布 Linux 桌面应用预览并列出支持的发行版。","url":"https://openai.com/news/linux-app","expected_selected":true,"expected_category":"模型与平台"},
+  {"id":"case-02","title":"Qwen 开放新模型权重","summary":"Qwen 团队正式开放新一代 27B 模型权重与许可证。","url":"https://qwenlm.github.io/blog/release","expected_selected":true,"expected_category":"模型与平台"},
+  {"id":"case-03","title":"Pydantic AI 发布新版本","summary":"官方 release 增加新的模型 provider 与结构化输出修复。","url":"https://github.com/pydantic/pydantic-ai/releases/tag/v1","expected_selected":true,"expected_category":"值得试的项目"},
+  {"id":"case-04","title":"Google 发布多模态医疗研究","summary":"Google Research 论文展示实时视频问诊的受控实验结果。","url":"https://research.google/blog/amie-video","expected_selected":true,"expected_category":"前沿研究"},
+  {"id":"case-05","title":"Hugging Face 推出推理服务更新","summary":"官方公告新增批处理与成本控制接口。","url":"https://huggingface.co/blog/inference-update","expected_selected":true,"expected_category":"模型与平台"},
+  {"id":"case-06","title":"DeepSeek 更新 API 模型","summary":"官方 API 文档上线新模型并调整 JSON 输出能力。","url":"https://api-docs.deepseek.com/updates/model","expected_selected":true,"expected_category":"模型与平台"},
+  {"id":"case-07","title":"Meta 开源多模态模型","summary":"Meta 官方仓库发布 Apache-2.0 多模态模型、权重和评测。","url":"https://github.com/meta-ai/model","expected_selected":true,"expected_category":"值得试的项目"},
+  {"id":"case-08","title":"arXiv 论文改进长上下文推理","summary":"论文提供完整方法、消融实验和可复现代码。","url":"https://arxiv.org/abs/2608.00001","expected_selected":true,"expected_category":"前沿研究"},
+  {"id":"case-09","title":"国内模型平台调整 API 定价","summary":"厂商官方公告给出新价格、生效时间和迁移说明。","url":"https://example.cn/official/pricing","expected_selected":true,"expected_category":"国内 AI"},
+  {"id":"case-10","title":"GitHub 开源 Agent 调试工具","summary":"项目发布稳定版，含许可证、文档和端到端示例。","url":"https://github.com/example/agent-debugger/releases/tag/v1","expected_selected":true,"expected_category":"值得试的项目"},
+  {"id":"case-11","title":"某公司普通人事任命","summary":"与模型、开发工具和产品能力无直接关系。","url":"https://example.com/hr-update","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-12","title":"未经证实的新模型传闻","summary":"匿名账号声称模型即将发布，没有官方来源或可验证材料。","url":"https://example.com/rumor","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-13","title":"AI 公司办公室搬迁","summary":"公司搬到新的办公地址，没有产品或技术变化。","url":"https://example.com/office","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-14","title":"旧论文再次登上社交媒体","summary":"论文两年前已发布，本次没有修订、代码或新结果。","url":"https://arxiv.org/abs/2401.00001","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-15","title":"泛泛的 AI 趋势评论","summary":"文章没有数据、产品变化、论文或一手证据。","url":"https://example.com/opinion","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-16","title":"与 AI 无关的区块链营销活动","summary":"活动只包含代币促销和抽奖信息。","url":"https://example.com/token","expected_selected":false,"expected_category":"快讯"},
+  {"id":"case-17","title":"模型服务区域性故障公告","summary":"官方状态页确认 API 大面积故障并提供恢复时间线。","url":"https://status.example.com/incidents/1","expected_selected":true,"expected_category":"行业动态"},
+  {"id":"case-18","title":"中国团队发布端侧推理框架","summary":"官方仓库提供移动端基准、许可证和安装说明。","url":"https://github.com/example-cn/edge-inference","expected_selected":true,"expected_category":"国内 AI"},
+  {"id":"case-19","title":"模型安全漏洞与修复","summary":"官方安全公告披露影响范围、版本和修复方案。","url":"https://example.com/security/advisory","expected_selected":true,"expected_category":"行业动态"},
+  {"id":"case-20","title":"小幅文档排版更新","summary":"项目只修改 README 标点，没有功能、接口或修复变化。","url":"https://github.com/example/project/commit/docs","expected_selected":false,"expected_category":"快讯"}
+]

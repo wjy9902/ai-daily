@@ -1,0 +1,37 @@
+sources:
+  - name: openai-news
+    kind: rss
+    url: https://openai.com/news/rss.xml
+    tier: A
+  - name: google-ai
+    kind: rss
+    url: https://blog.google/technology/ai/rss/
+    tier: A
+  - name: deepmind
+    kind: rss
+    url: https://deepmind.google/blog/rss.xml
+    tier: A
+  - name: huggingface-blog
+    kind: rss
+    url: https://huggingface.co/blog/feed.xml
+    tier: A
+  - name: hacker-news
+    kind: hackernews
+    url: https://hacker-news.firebaseio.com/v0
+    tier: B
+    limit: 30
+  - name: arxiv-ai
+    kind: arxiv
+    url: https://export.arxiv.org/api/query
+    tier: B
+    limit: 30
+  - name: huggingface-papers
+    kind: huggingface
+    url: https://huggingface.co/api/daily_papers
+    tier: B
+    limit: 20
+  - name: pydantic-ai-releases
+    kind: github_releases
+    url: https://api.github.com/repos/pydantic/pydantic-ai/releases
+    tier: B
+    limit: 10

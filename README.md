@@ -22,6 +22,18 @@
 - GitHub Actions 自动构建部署
 - GitHub Pages 托管
 
+## 自动生成器
+
+新的生成流水线位于 `src/ai_daily`，仅采集公开网站、RSS 和官方 API。模型密钥只从环境变量读取，不写入仓库。
+
+```bash
+uv sync --frozen --all-groups
+uv run ai-daily run --date 2026-08-12 --mode dry-run
+uv run ai-daily benchmark-models --dataset tests/evals
+```
+
+生产运行、密钥配置、故障恢复和回滚说明见 [`docs/OPERATIONS.md`](docs/OPERATIONS.md)。完整实施设计见 [`docs/plan/PLAN.md`](docs/plan/PLAN.md)。
+
 ---
 
 Powered by 🍗 鸡胸肉
