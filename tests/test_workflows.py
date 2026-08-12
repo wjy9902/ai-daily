@@ -20,6 +20,8 @@ def test_site_workflow_is_reusable_and_locked() -> None:
     assert "ZOLA_VERSION: v0.23.3" in workflow
     assert "EVEN_THEME_COMMIT: 56015feedb5b3d6a7b74c077568449892cf8b458" in workflow
     assert 'git -C output/themes/even checkout --detach "$EVEN_THEME_COMMIT"' in workflow
+    assert "*x86_64-unknown-linux-gnu*" in workflow
+    assert "'*x86_64-unknown-linux*'" not in workflow
 
 
 def test_zola_config_uses_current_highlighting_schema() -> None:
