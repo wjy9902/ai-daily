@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -11,6 +11,8 @@ from pydantic import BaseModel
 from ai_daily.budget import BudgetLedger
 from ai_daily.config import Secrets, load_config
 from ai_daily.content import JudgeBatch
+from ai_daily.degradation import DegradationTracker, FailureClass
+from ai_daily.model_gateway import ModelInvocationFailed
 from ai_daily.models import (
     DraftItem,
     EditorialInsight,
@@ -30,11 +32,14 @@ from ai_daily.pipeline import (
     DETAIL_EVIDENCE_MIN_CHARS,
     DailyPipeline,
     QualityGateFailed,
+    RunOutcome,
     _detail_evidence_audit,
     _repair_detail_evidence,
     collection_window,
     filter_fresh_items,
 )
+from ai_daily.publication import PublicationLevel
+from ai_daily.site_publisher import SiteLayout
 
 
 class FakeCollector:
@@ -248,12 +253,40 @@ def _draft_output(value: dict[str, object]) -> DraftItem:
     )
 
 
+class UnavailableEditorGateway(FakeGateway):
+    """The judge answers, the editor is unreachable. This is the common outage."""
+
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        if output_type.__name__.startswith("EditorialPlanOutput_"):
+            raise ModelInvocationFailed("editor endpoint is unreachable")
+        return await super().generate(role, output_type, instructions, prompt, validator)
+
+
 def _client() -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         return httpx.Response(200, json=[])
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+
+
+def _site(tmp_path: Path) -> SiteLayout:
+    """An isolated site root: no test may write to a real one."""
+
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    return layout
+
+
+def _today() -> date:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).date()
 
 
 def test_collection_window_uses_beijing_run_time() -> None:
@@ -310,16 +343,17 @@ async def test_candidate_filter_rejects_unverified_publication_dates(
     undated = [
         item.model_copy(update={"published_at": None, "discovered_at": run_time}) for item in items
     ]
-    pipeline = DailyPipeline(config, Secrets(), client=_client())
+    pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
+    tracker = DegradationTracker()
 
-    with pytest.raises(QualityGateFailed, match="only 0 candidates"):
-        await pipeline._candidates(
-            run_time.date(),
-            undated,
-            tmp_path,
-            config.pipeline.repository,
-        )
+    filtered, candidates = await pipeline._candidates(
+        run_time.date(), undated, tmp_path, tracker
+    )
 
+    assert filtered == []
+    assert candidates == []
+    assert tracker.failures == [FailureClass.CANDIDATES_EXHAUSTED]
+    assert tracker.blocked is True
     audit = json.loads((tmp_path / "freshness.json").read_text())
     assert audit["policy"] == ("verified-publication-time-with-exact-url-community-corroboration")
     assert audit["accepted_count"] == 0
@@ -397,19 +431,20 @@ async def test_backfill_scores_against_target_date_not_wall_clock(
     monkeypatch.setattr("ai_daily.pipeline.score_events", capture_score)
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
-    pipeline = DailyPipeline(config, Secrets(), client=_client())
+    pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
+    tracker = DegradationTracker()
 
-    _, candidates = await pipeline._candidates(
-        target_date, items, tmp_path, config.pipeline.repository
-    )
+    _, candidates = await pipeline._candidates(target_date, items, tmp_path, tracker)
 
     assert len(candidates) == 17
     assert captured["now"].astimezone(timezone).date() == target_date
+    assert tracker.failures == []
 
 
-async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> None:
+async def test_full_dry_run_composes_an_issue_without_publishing_it(tmp_path: Path) -> None:
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
+    layout = _site(tmp_path)
     gateway = FakeGateway(config)
     collector = SpyEnrichmentCollector()
     pipeline = DailyPipeline(
@@ -418,18 +453,31 @@ async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> 
         client=_client(),
         collector=collector,
         gateway=gateway,  # type: ignore[arg-type]
+        layout=layout,
     )
 
-    artifact, body = await pipeline.run(
-        datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False
-    )
+    outcome = await pipeline.run(_today(), publish=False)
 
-    assert artifact.publication is not None
-    assert artifact.publication.status == "dry_run"
-    assert "## 编辑观点" in body
-    assert len(list(tmp_path.rglob("digest.md"))) == 1
-    assert artifact.metadata["model_requests"] == artifact.metadata["audited_model_requests"]
-    assert collector.event_ids == {event.event_id for event in artifact.events}
+    assert isinstance(outcome, RunOutcome)
+    assert outcome.publication.level is PublicationLevel.L0
+    assert outcome.publication.marker_is_valid()
+    assert outcome.publication.details and outcome.publication.briefs
+    assert outcome.publication.viewpoints
+    assert outcome.tracker.failures == []
+    assert outcome.artifact.publication is not None
+    assert outcome.artifact.publication.status == "dry_run"
+    assert outcome.artifact.publication.marker == outcome.publication.marker
+    assert outcome.artifact.metadata["level"] == "L0"
+    assert outcome.artifact.metadata["degradation"] == []
+    assert outcome.artifact.metadata["candidate_count"] == len(outcome.artifact.events)
+    # A dry run touches nothing a reader could see.
+    assert list(layout.published.iterdir()) == []
+    assert list(layout.releases.iterdir()) == []
+    assert not layout.current.exists()
+    assert json.loads((outcome.run_dir / "publication.json").read_text()) == json.loads(
+        outcome.publication.model_dump_json()
+    )
+    assert collector.event_ids == {event.event_id for event in outcome.artifact.events}
     enrichment = json.loads(next(tmp_path.rglob("article-enrichment.json")).read_text())
     assert enrichment["items"][0]["status"] == "enriched"
     candidates = json.loads(next(tmp_path.rglob("candidates-enriched.json")).read_text())
@@ -438,7 +486,9 @@ async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> 
     assert all(item["passed"] for item in evidence["items"])
 
 
-async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> None:
+async def test_a_thin_candidate_pool_degrades_instead_of_aborting(tmp_path: Path) -> None:
+    """A short news day shrinks the issue; it no longer erases it."""
+
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
     gateway = FakeGateway(config)
@@ -448,15 +498,54 @@ async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> No
         client=_client(),
         collector=FakeCollector(count=5),  # type: ignore[arg-type]
         gateway=gateway,  # type: ignore[arg-type]
+        layout=_site(tmp_path),
     )
 
-    with pytest.raises(QualityGateFailed, match="candidates"):
-        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+    outcome = await pipeline.run(_today(), publish=False)
 
+    assert FailureClass.CANDIDATES_THIN in outcome.tracker.failures
+    assert outcome.publication.level is PublicationLevel.L2B
+    assert outcome.publication.details == []
+    assert outcome.publication.briefs
+    assert outcome.publication.marker_is_valid()
+    # Nothing is invented: every brief is one of the collected candidates.
+    collected = {event.event_id: event for event in outcome.artifact.events}
+    for brief in outcome.publication.briefs:
+        assert brief.event_id in collected
+        assert brief.headline == collected[brief.event_id].title[:100]
+        assert {str(ref.url) for ref in brief.sources} <= {
+            str(item.url) for item in collected[brief.event_id].items
+        }
+
+
+async def test_an_exhausted_candidate_pool_blocks_the_day_before_any_model_call(
+    tmp_path: Path,
+) -> None:
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    gateway = FakeGateway(config)
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=FakeCollector(count=2),  # type: ignore[arg-type]
+        gateway=gateway,  # type: ignore[arg-type]
+        layout=_site(tmp_path),
+    )
+
+    outcome = await pipeline.run(_today(), publish=False)
+
+    assert outcome.tracker.failures == [FailureClass.CANDIDATES_EXHAUSTED]
+    assert outcome.tracker.blocked is True
+    assert outcome.publication.level is PublicationLevel.L3
+    assert outcome.publication.has_content is False
     assert gateway.ledger.requests == 0
+    assert gateway.runs == []
 
 
-async def test_short_feed_excerpts_block_detailed_stories(tmp_path: Path) -> None:
+async def test_short_feed_excerpts_demote_detailed_stories_to_briefs(tmp_path: Path) -> None:
+    """Evidence too thin for a detailed story still yields a brief, never prose."""
+
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
     pipeline = DailyPipeline(
@@ -465,14 +554,51 @@ async def test_short_feed_excerpts_block_detailed_stories(tmp_path: Path) -> Non
         client=_client(),
         collector=ShortEvidenceCollector(),  # type: ignore[arg-type]
         gateway=FakeGateway(config),  # type: ignore[arg-type]
+        layout=_site(tmp_path),
     )
 
-    with pytest.raises(QualityGateFailed, match="lack article evidence"):
-        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+    outcome = await pipeline.run(_today(), publish=False)
 
-    audit_path = next(tmp_path.rglob("evidence-quality.json"))
-    audit = json.loads(audit_path.read_text())
+    assert FailureClass.DETAIL_EVIDENCE_THIN in outcome.tracker.failures
+    assert outcome.publication.level is PublicationLevel.L1
+    assert outcome.publication.details == []
+    assert outcome.publication.briefs
+    assert "详报证据不足" in outcome.publication.degradation_reasons
+    audit = json.loads(next(tmp_path.rglob("evidence-quality.json")).read_text())
     assert any(not item["passed"] for item in audit["items"])
+    demoted = json.loads(next(tmp_path.rglob("editorial-plan-demoted.json")).read_text())
+    assert {item["tier"] for item in demoted["selections"]} == {"brief"}
+
+
+async def test_an_unreachable_editor_still_produces_a_brief_only_issue(tmp_path: Path) -> None:
+    """The editor outage costs the prose, not the issue.
+
+    The stage raised, so its judge decisions are lost with it and the issue is
+    rebuilt from ranking alone (L2B) rather than from the decisions (L2A).
+    """
+
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    gateway = UnavailableEditorGateway(config)
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=FakeCollector(),  # type: ignore[arg-type]
+        gateway=gateway,  # type: ignore[arg-type]
+        layout=_site(tmp_path),
+    )
+
+    outcome = await pipeline.run(_today(), publish=False)
+
+    assert FailureClass.PLAN_FAILED in outcome.tracker.failures
+    assert outcome.publication.level is PublicationLevel.L2B
+    assert outcome.publication.details == []
+    assert outcome.publication.viewpoints == []
+    assert outcome.publication.briefs
+    assert outcome.publication.degradation_reasons == ["编辑规划失败"]
+    assert outcome.publication.marker_is_valid()
+    assert len(list(tmp_path.rglob("decisions.json"))) == 1
 
 
 async def test_editor_promoted_false_negative_is_enriched_after_planning(
@@ -488,11 +614,13 @@ async def test_editor_promoted_false_negative_is_enriched_after_planning(
         client=_client(),
         collector=collector,  # type: ignore[arg-type]
         gateway=gateway,  # type: ignore[arg-type]
+        layout=_site(tmp_path),
     )
 
-    artifact, _ = await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+    outcome = await pipeline.run(_today(), publish=False)
 
-    promoted = next(event for event in artifact.events if event.event_id == gateway.rejected_id)
+    events = outcome.artifact.events
+    promoted = next(event for event in events if event.event_id == gateway.rejected_id)
     assert gateway.rejected_id not in collector.enrichment_calls[0]
     assert gateway.rejected_id in collector.enrichment_calls[1]
     assert len(promoted.items[0].summary) >= DETAIL_EVIDENCE_MIN_CHARS
@@ -627,21 +755,31 @@ def test_detail_evidence_repair_swaps_unsupported_detail_with_grounded_brief() -
     assert all(item["passed"] for item in _detail_evidence_audit(repaired, events))
 
 
-async def test_model_request_audit_mismatch_blocks_run(tmp_path: Path) -> None:
+async def test_spend_from_an_earlier_window_carries_into_this_runs_audit(
+    tmp_path: Path,
+) -> None:
+    """The day's ledger is shared, so an earlier window's spend is still counted."""
+
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
     gateway = FakeGateway(config)
     gateway.ledger.requests = 1
+    gateway.ledger.cost_cny = 0.25
     pipeline = DailyPipeline(
         config,
         Secrets(),
         client=_client(),
         collector=FakeCollector(),  # type: ignore[arg-type]
         gateway=gateway,  # type: ignore[arg-type]
+        layout=_site(tmp_path),
     )
 
-    with pytest.raises(QualityGateFailed, match="audit is incomplete"):
-        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+    outcome = await pipeline.run(_today(), publish=False)
+
+    assert outcome.publication.level is PublicationLevel.L0
+    assert outcome.artifact.metadata["requests"] == gateway.ledger.requests >= 1
+    assert outcome.artifact.metadata["cost_cny"] == 0.25
+    assert outcome.artifact.metadata["request_limit"] == config.models.budget.request_limit
 
 
 async def test_model_failure_still_writes_audit_artifact(tmp_path: Path) -> None:
@@ -653,24 +791,73 @@ async def test_model_failure_still_writes_audit_artifact(tmp_path: Path) -> None
         client=_client(),
         collector=FakeCollector(),  # type: ignore[arg-type]
         gateway=FakeGateway(config, fail_plan=True),  # type: ignore[arg-type]
+        layout=_site(tmp_path),
     )
 
     with pytest.raises(RuntimeError, match="editor failed"):
-        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+        await pipeline.run(_today(), publish=False)
 
     assert len(list(tmp_path.rglob("model-runs.json"))) == 1
 
 
-async def test_publish_mode_requires_github_token(tmp_path: Path) -> None:
+async def test_publish_mode_needs_no_credentials_and_publishes_nothing_by_itself(
+    tmp_path: Path,
+) -> None:
+    """Publishing is a separate, local transaction; the run only composes."""
+
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
+    layout = _site(tmp_path)
     pipeline = DailyPipeline(
         config,
         Secrets(github_token=None),
         client=_client(),
         collector=FakeCollector(),  # type: ignore[arg-type]
         gateway=FakeGateway(config),  # type: ignore[arg-type]
+        layout=layout,
     )
 
-    with pytest.raises(QualityGateFailed, match="GITHUB_TOKEN"):
-        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=True)
+    outcome = await pipeline.run(_today(), publish=True)
+
+    assert outcome.publication.level is PublicationLevel.L0
+    assert outcome.artifact.publication is not None
+    assert outcome.artifact.publication.status == "issue_published"
+    assert list(layout.published.iterdir()) == []
+    assert list(layout.releases.iterdir()) == []
+    assert not layout.current.exists()
+
+
+async def test_a_misconfigured_source_set_is_still_fatal(tmp_path: Path) -> None:
+    """Degradation covers bad news days, not a configuration with no Tier A source."""
+
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
+    health = [
+        SourceHealth(source="tier-b", tier=SourceTier.B, status="ok", item_count=1, latency_ms=1)
+    ]
+
+    with pytest.raises(QualityGateFailed, match="no Tier A sources"):
+        pipeline._check_source_health(health, DegradationTracker())
+
+
+def test_low_tier_a_coverage_is_recorded_but_never_fatal() -> None:
+    config = load_config(Path("config"))
+    pipeline = DailyPipeline(config, Secrets(), client=_client())
+    health = [
+        SourceHealth(
+            source=f"source-{index}",
+            tier=SourceTier.A,
+            status="ok" if index == 0 else "failed",
+            item_count=1,
+            latency_ms=1,
+        )
+        for index in range(4)
+    ]
+    tracker = DegradationTracker()
+
+    pipeline._check_source_health(health, tracker)
+
+    assert tracker.failures == [FailureClass.SOURCE_COVERAGE_LOW]
+    assert tracker.ceiling() is PublicationLevel.L0
+    assert tracker.blocked is False

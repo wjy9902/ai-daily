@@ -1,10 +1,10 @@
 from datetime import date
 from pathlib import Path
 
+import factories
 import httpx
 import pytest
 
-import factories
 from ai_daily.history import fetch_historical_index, local_historical_index
 from ai_daily.publication import DailyPublication
 from ai_daily.site_trust import daily_marker, story_title_marker

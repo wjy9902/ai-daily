@@ -6,9 +6,9 @@ from datetime import UTC, date, datetime, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
 
+import factories
 import pytest
 
-import factories
 from ai_daily import cli
 from ai_daily.site_publisher import SiteLayout, build_archive, publish_site, recent_publications
 

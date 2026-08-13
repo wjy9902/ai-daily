@@ -6,9 +6,9 @@ import json
 from datetime import UTC, date, datetime
 from typing import Any
 
+import factories
 import pytest
 
-import factories
 from ai_daily.publication import (
     LEVEL_ORDER,
     DailyPublication,
@@ -82,7 +82,7 @@ def test_load_rejects_an_unsigned_record() -> None:
 def test_a_truncated_file_raises_instead_of_publishing_partial_content() -> None:
     raw = factories.publication().model_dump_json()
 
-    with pytest.raises(ValueError):  # noqa: PT011 - pydantic raises a ValidationError
+    with pytest.raises(ValueError):
         load_publication(raw[: len(raw) // 2])
 
 

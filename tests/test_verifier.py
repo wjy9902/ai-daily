@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from datetime import date
 
+import factories
 import httpx
 import pytest
 
-import factories
 from ai_daily.publication import DailyPublication, PublicationLevel
 from ai_daily.render import render_daily, render_rss
 from ai_daily.verifier import (

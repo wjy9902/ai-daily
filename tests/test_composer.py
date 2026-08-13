@@ -5,9 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+import factories
 import pytest
 
-import factories
 from ai_daily.composer import (
     RANKED_BRIEF_LIMIT,
     ComposeError,

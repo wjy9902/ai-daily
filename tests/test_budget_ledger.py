@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import factories
 import pytest
 
-import factories
 from ai_daily.budget import (
     STAGE_SHARE,
     BudgetExceeded,
