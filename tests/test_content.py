@@ -562,3 +562,5 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     assert "快讯由 brief 数组表示" in captured["instructions"]
     assert "每条只能引用已经进入三个数组的 evidence_ids" in captured["instructions"]
     assert "禁止引用未选候选" in captured["instructions"]
+    assert "训练数据覆盖" in captured["instructions"]
+    assert "已上线产品范围" in captured["instructions"]
