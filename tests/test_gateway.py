@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 import pytest
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -20,10 +20,46 @@ from ai_daily.models import JudgeDecision
 
 def test_only_transient_failures_are_recoverable() -> None:
     assert is_recoverable(httpx.ConnectError("offline"))
+    assert is_recoverable(ModelAPIError("model", "Request timed out."))
     assert is_recoverable(ModelHTTPError(429, "model"))
     assert is_recoverable(ModelHTTPError(503, "model"))
     assert not is_recoverable(ModelHTTPError(401, "model"))
     assert not is_recoverable(ModelHTTPError(400, "model"))
+
+
+async def test_generate_falls_back_after_pydantic_ai_wrapped_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    calls: list[Invocation] = []
+
+    async def invoke(
+        invocation: Invocation,
+        output_type: type[JudgeDecision],
+        instructions: str,
+        prompt: str,
+        validator: object,
+    ) -> JudgeDecision:
+        calls.append(invocation)
+        if invocation.attempt == 1:
+            raise ModelAPIError(invocation.endpoint.model, "Request timed out.")
+        return JudgeDecision(
+            event_id="event-1",
+            selected=True,
+            category="模型与平台",
+            relevance=90,
+            confidence=0.9,
+            reason="有效候选",
+            evidence_ids=["event-1-1"],
+        )
+
+    monkeypatch.setattr(gateway, "_invoke_endpoint", invoke)
+
+    result = await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+    assert result.event_id == "event-1"
+    assert [call.endpoint.provider for call in calls] == ["alibaba", "deepseek"]
+    assert calls[1].fallback_reason == "ModelAPIError"
 
 
 def test_provider_requires_environment_secrets() -> None:

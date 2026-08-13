@@ -48,6 +48,9 @@ def is_recoverable(error: Exception) -> bool:
         return True
     if isinstance(error, ModelHTTPError):
         return error.status_code == 429 or 500 <= error.status_code < 600
+    # Pydantic AI maps OpenAI SDK connection and timeout failures to ModelAPIError.
+    if isinstance(error, ModelAPIError):
+        return True
     return False
 
 
