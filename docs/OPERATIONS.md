@@ -4,7 +4,16 @@
 
 本项目只读取 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`DEEPSEEK_API_KEY`、`GITHUB_TOKEN`。密钥只能进入本机环境变量或 GitHub Actions Secrets，禁止写入 `.env.example`、YAML、测试 fixture、日志和 artifact。
 
-对话中曾暴露的密钥必须先在两个供应商控制台吊销；之后生成的新密钥不要粘贴到聊天、Issue 或终端历史中。百炼正式环境使用华北 2 业务空间专属兼容地址。
+生产密钥配置为 GitHub Actions Secrets，不进入仓库、Issue、日志或 artifact。若密钥曾进入提交、构建日志或公开页面，立即在供应商控制台轮换。百炼正式环境使用华北 2 业务空间专属兼容地址。
+
+## 来源与选题门禁
+
+- 来源分为官方、新闻、社区、研究和版本发布；官方与高质量媒体承担主要召回，研究和版本发布只作有限补充。
+- 混合主题订阅源先做确定性 AI 相关性过滤，再进入聚类和模型判断。
+- 同一事件在 48 小时内跨来源聚类，并按 URL 与标题对历史 45 天去重；同一安全公告的多个维护分支合并为一条。
+- 最终选题由一次全局编辑调用在最多 80 个候选中完成，不比较不同批次的模型分数。
+- 每期必须有 4–5 条今日重点、5–7 条值得关注、8–12 条快讯；详细报道最多 2 条研究、同一来源最多 2 条。
+- 模型只能引用当次证据包中的 ID 和 URL；来源健康低于门槛、证据不完整或结构校验失败时不发布。
 
 ## 本地验证
 
@@ -26,6 +35,16 @@ uv run ai-daily benchmark-models --dataset tests/evals/judge-golden.json
 ```
 
 评测会真实调用四个配置模型。所有 20 条必须通过 schema 和证据 ID 门禁；出现 fallback 的候选不具备晋级资格。第一名至少领先第二名 5 分才建议修改 `config/models.yaml`。
+
+不调用模型的编辑样式预览：
+
+```bash
+uv run python scripts/render_fixture.py \
+  --fixture tests/fixtures/editorial-preview.json \
+  --output /tmp/ai-daily-preview.md
+```
+
+该 fixture 固定包含 17 条真实新闻，覆盖重点、关注、快讯、中文动态、研究和编辑观点；测试会检查关键新闻召回、栏目配额、论文上限、证据引用和 Issue 正文大小。
 
 ## GitHub 配置
 

@@ -7,13 +7,12 @@
 
 ## 内容板块
 
-- 🧪 **前沿论文** — HuggingFace / arXiv 热门论文精选
-- 🔥 **技术热点** — Hacker News / KOL 技术讨论
-- 🛠️ **值得试的项目** — GitHub Trending / Product Hunt
-- 📊 **行业动态** — 融资、发布、格局变化
-- 🇨🇳 **国内 AI 动态** — 大模型、产品、政策
-- 💡 **产品机会** — 技术→产品的可行性分析
-- ✅ **今日行动项** — 具体可执行建议
+- **今日重点（4–5 条）** — 当天最重要的模型、产品、公司与产业变化
+- **值得关注（5–7 条）** — 影响明确、值得继续跟踪的进展
+- **快讯（8–12 条）** — 用紧凑格式补齐工具、融资、研究和社区动态
+- **编辑观点** — 只基于本期证据提炼跨新闻趋势，不做无来源推断
+
+采集覆盖 30 余个公开来源，包括 AI 实验室与平台官方站点、中文及英文科技媒体、研究源和少量高信号项目发布。研究论文与版本更新设有篇幅上限，避免挤占重大产品和行业新闻。
 
 ## 技术栈
 
@@ -30,6 +29,9 @@
 uv sync --frozen --all-groups
 uv run ai-daily run --date 2026-08-12 --mode dry-run
 uv run ai-daily benchmark-models --dataset tests/evals
+uv run python scripts/render_fixture.py \
+  --fixture tests/fixtures/editorial-preview.json \
+  --output /tmp/ai-daily-preview.md
 ```
 
 生产运行、密钥配置、故障恢复和回滚说明见 [`docs/OPERATIONS.md`](docs/OPERATIONS.md)。完整实施设计见 [`docs/plan/PLAN.md`](docs/plan/PLAN.md)。
