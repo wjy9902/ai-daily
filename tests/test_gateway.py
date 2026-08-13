@@ -160,6 +160,7 @@ async def test_generate_repairs_invalid_structured_output_with_same_provider(
     assert result.category == "行业动态"
     assert calls == 2
     assert gateway.ledger.requests == 2
+    assert gateway.runs[-1].request_count == 2
 
 
 async def test_generate_repairs_semantically_invalid_output_with_same_provider(
@@ -206,6 +207,7 @@ async def test_generate_repairs_semantically_invalid_output_with_same_provider(
     assert result.event_id == "event-1"
     assert calls == 2
     assert gateway.ledger.requests == 2
+    assert gateway.runs[-1].request_count == 2
 
 
 async def test_semantic_validation_failure_does_not_cross_provider(

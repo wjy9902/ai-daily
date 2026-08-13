@@ -130,6 +130,7 @@ class ModelGateway:
             started,
             usage.input_tokens,
             usage.output_tokens,
+            usage.requests,
         )
         self.runs.append(run)
         self.ledger.record(run)
@@ -184,6 +185,7 @@ class ModelGateway:
         started: float,
         input_tokens: int,
         output_tokens: int,
+        request_count: int = 1,
     ) -> ModelRun:
         endpoint = invocation.endpoint
         cost = (
@@ -199,6 +201,7 @@ class ModelGateway:
             attempt=invocation.attempt,
             status="ok",
             fallback_reason=invocation.fallback_reason,
+            request_count=request_count,
             latency_ms=int((self.clock() - started) * 1000),
             input_tokens=input_tokens,
             output_tokens=output_tokens,

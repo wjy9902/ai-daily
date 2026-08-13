@@ -178,6 +178,7 @@ class ModelRun(StrictModel):
     attempt: int = Field(ge=1)
     status: Literal["ok", "failed"]
     fallback_reason: str | None = None
+    request_count: int = Field(default=1, ge=1)
     latency_ms: int = Field(ge=0)
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)

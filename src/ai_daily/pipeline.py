@@ -74,6 +74,9 @@ class DailyPipeline:
         items, health = await self._collect(run_dir)
         filtered, candidates = await self._candidates(target_date, items, run_dir, repository)
         editorial_plan, drafts = await self._generate_content(candidates, run_dir)
+        audited_requests = sum(run.request_count for run in self.gateway.runs)
+        if audited_requests != self.gateway.ledger.requests:
+            raise QualityGateFailed("model request audit is incomplete")
         body = assemble_markdown(target_date, editorial_plan, drafts, candidates)
         publication = await self._publish(target_date, body, repository, publish)
         artifact = RunArtifact(
@@ -89,6 +92,7 @@ class DailyPipeline:
                 "selected_count": len(editorial_plan.selections),
                 "detailed_count": len(drafts),
                 "model_requests": self.gateway.ledger.requests,
+                "audited_model_requests": audited_requests,
                 "input_tokens": self.gateway.ledger.input_tokens,
                 "output_tokens": self.gateway.ledger.output_tokens,
                 "cost_cny": round(self.gateway.ledger.cost_cny, 6),

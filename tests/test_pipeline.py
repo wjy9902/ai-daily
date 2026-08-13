@@ -213,6 +213,7 @@ async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> 
     assert artifact.publication.status == "dry_run"
     assert "## 编辑观点" in body
     assert len(list(tmp_path.rglob("digest.md"))) == 1
+    assert artifact.metadata["model_requests"] == artifact.metadata["audited_model_requests"]
 
 
 async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> None:
@@ -231,6 +232,23 @@ async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> No
         await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
 
     assert gateway.ledger.requests == 0
+
+
+async def test_model_request_audit_mismatch_blocks_run(tmp_path: Path) -> None:
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    gateway = FakeGateway(config)
+    gateway.ledger.requests = 1
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=FakeCollector(),  # type: ignore[arg-type]
+        gateway=gateway,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(QualityGateFailed, match="audit is incomplete"):
+        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
 
 
 async def test_model_failure_still_writes_audit_artifact(tmp_path: Path) -> None:
