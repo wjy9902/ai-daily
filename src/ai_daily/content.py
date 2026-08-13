@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 
 from pydantic import BaseModel, Field, create_model
@@ -33,8 +34,12 @@ class EditorialPlanOutputBase(StrictModel):
 
 
 JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
-PLANNING_EVIDENCE_EXCERPT_CHARS = 1_000
+PLANNING_EVIDENCE_EXCERPT_CHARS = 800
 DRAFT_EVIDENCE_EXCERPT_CHARS = 4_000
+SPECULATIVE_COPY_RE = re.compile(
+    r"(?:传闻|尚未证实|据猜测|或将|或随后|"
+    r"(?:可能|也许|预计|有望).{0,16}(?:发布|推出|上线|开放|宣布|融资|收购|合并))"
+)
 
 
 def evidence_bundle(
@@ -47,6 +52,7 @@ def evidence_bundle(
             title=item.title,
             excerpt=(item.summary or item.title)[:excerpt_chars],
             source=item.source_label or item.source,
+            source_time_kind=item.source_time_kind,
         )
         for index, item in enumerate(event.items[:3], start=1)
     ]
@@ -189,6 +195,7 @@ def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, objec
             "title": item.title,
             "excerpt": item.excerpt,
             "url": str(item.url),
+            "source_time_kind": item.source_time_kind.value,
         }
         for item in bundle.evidence
     ]
@@ -204,6 +211,7 @@ def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, objec
                 "channel": item.source_channel.value,
                 "region": item.source_region.value,
                 "metrics": item.metrics,
+                "source_time_kind": item.source_time_kind.value,
             }
             for item in event.items[:3]
         ],
@@ -224,9 +232,13 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "brief 是值得知道但无需展开的消息。"
         "相同事件、同一漏洞的多版本修复、同一发布的转述只能出现一次。"
         "优先真实产品/模型发布、能力或价格变化、重要公司与政策事件、广泛采用的开源工具；"
-        "sources.metrics.timestamp_kind 为 repository_last_modified 时，"
+        "sources.source_time_kind 为 repository_updated 时，"
         "只能把时间描述为官方仓库更新；"
         "除非证据另有明确发布日期，不能把该时间改写为模型首次发布。"
+        "headline 和 brief 只能陈述证据已经确认的事实，不得包含可能、预计、传闻、"
+        "或将、或随后发布等未证实预测；预测只能放入详细稿 caveat，且不得提高重要性。"
+        "调查、榜单、流量或样本数据必须在 headline 和 brief 中保留统计口径，"
+        "不得把单个平台或单类样本外推为整体市场，也不得凭时间相关性推断因果。"
         "孤立论文和常规版本发布不得主导版面。"
         f"详细区前沿研究最多 {config.max_research_details} 条，"
         f"同一来源通常不超过 {config.max_source_details} 条详细稿件；"
@@ -251,8 +263,19 @@ def validate_editorial_plan(
         raise ValueError("editorial plan contains duplicate events")
     if not set(ids) <= set(events_by_id):
         raise ValueError("editorial plan referenced an unknown event")
+    _validate_factual_copy(plan)
     _validate_plan_evidence(plan, events_by_id)
     _validate_plan_quotas(plan.selections, config)
+
+
+def _validate_factual_copy(plan: EditorialPlan) -> None:
+    for selection in plan.selections:
+        for field, value in (("headline", selection.headline), ("brief", selection.brief)):
+            if SPECULATIVE_COPY_RE.search(value):
+                raise ValueError(
+                    f"editorial plan {field} contains unverified speculation: "
+                    f"event_id={selection.event_id}"
+                )
 
 
 def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
@@ -348,8 +371,11 @@ async def _draft_one(
             f"这是 {selection.tier.value} 稿件，写 {depth}，避免重复标题和 TL;DR。"
             "why_it_matters 解释影响，不写空泛赞美；action 只有确有可执行建议时才填写。"
             "不要把推测写成事实，信息不足或证据冲突时写入 caveat。"
+            "样本、榜单、流量和市场份额必须保留原始统计口径；"
+            "不得把相关性写成因果，也不得用证据外的人事、战略或竞争变化解释数据。"
             "正文证据已优先于 RSS 摘要；不得声称证据未披露实际已经写明的名称、数字或限制。"
-            "若候选时间来自 repository_last_modified，只能称为仓库更新，不能擅自称为首次发布。"
+            "若 source_time_kind 为 repository_updated，只能称为仓库更新，"
+            "不能擅自称为在该时间首次发布。"
         ),
         prompt=json.dumps(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},

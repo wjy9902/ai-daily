@@ -15,6 +15,7 @@ from ai_daily.models import (
     RawItem,
     SourceChannel,
     SourceTier,
+    SourceTimeKind,
 )
 
 
@@ -174,6 +175,36 @@ def test_selected_event_without_verified_publication_time_is_rejected() -> None:
     event = _event(0).model_copy(update={"published_at": None})
 
     with pytest.raises(ValueError, match="verified publication time"):
+        assemble_markdown(
+            date(2026, 8, 12),
+            _plan([_selection(0, EditorialTier.LEAD)]),
+            [_draft(0)],
+            [event],
+        )
+
+
+def test_repository_change_is_labeled_as_update_not_publication() -> None:
+    event = _event(0).model_copy(
+        update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
+    )
+
+    body = assemble_markdown(
+        date(2026, 8, 12),
+        _plan([_selection(0, EditorialTier.LEAD)]),
+        [_draft(0)],
+        [event],
+    )
+
+    assert "来源更新：08-12 08:00 北京时间" in body
+    assert "来源发布：08-12 08:00 北京时间" not in body
+
+
+def test_community_submission_time_cannot_be_rendered_as_publication() -> None:
+    event = _event(0).model_copy(
+        update={"source_time_kind": SourceTimeKind.COMMUNITY_SUBMITTED}
+    )
+
+    with pytest.raises(ValueError, match="community submission time"):
         assemble_markdown(
             date(2026, 8, 12),
             _plan([_selection(0, EditorialTier.LEAD)]),

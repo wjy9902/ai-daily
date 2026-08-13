@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from itertools import permutations
 
 from ai_daily.history import HistoricalIndex
-from ai_daily.models import RawItem, SourceChannel, SourceTier
+from ai_daily.models import RawItem, SourceChannel, SourceTier, SourceTimeKind
 from ai_daily.normalize import canonicalize_url, cluster_items, is_ai_related, remove_historical
 
 
@@ -34,6 +34,25 @@ def test_cluster_exact_url_and_similar_title() -> None:
     )
     assert len(events) == 1
     assert len(events[0].items) == 3
+
+
+def test_cluster_preserves_the_time_kind_of_latest_verified_source_time() -> None:
+    published = item("1", "https://example.com/a", "Qwen model release today").model_copy(
+        update={"published_at": datetime(2026, 8, 12, 8, tzinfo=UTC)}
+    )
+    repository_update = item(
+        "2", "https://example.com/a", "Qwen model release today"
+    ).model_copy(
+        update={
+            "published_at": datetime(2026, 8, 12, 10, tzinfo=UTC),
+            "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
+        }
+    )
+
+    event = cluster_items([published, repository_update])[0]
+
+    assert event.published_at == repository_update.published_at
+    assert event.source_time_kind == SourceTimeKind.REPOSITORY_UPDATED
 
 
 def test_history_filter_uses_canonical_url() -> None:

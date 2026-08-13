@@ -26,6 +26,7 @@ from ai_daily.models import (
     SourceHealth,
     SourceRegion,
     SourceTier,
+    SourceTimeKind,
 )
 
 
@@ -633,6 +634,7 @@ class Collector:
                 title=item["title"],
                 summary="",
                 published_at=None,
+                source_time_kind=SourceTimeKind.COMMUNITY_SUBMITTED,
                 discovered_at=datetime.fromtimestamp(item["time"], tz=UTC),
                 author=item.get("by"),
                 metrics={"score": item.get("score", 0), "comments": item.get("descendants", 0)},
@@ -750,6 +752,7 @@ class Collector:
                     title=f"{source.display_name or source.namespace}: {name} repository update",
                     summary=summary[:ARTICLE_TEXT_LIMIT],
                     published_at=updated,
+                    source_time_kind=SourceTimeKind.REPOSITORY_UPDATED,
                     discovered_at=now,
                     metrics={
                         "likes": value.get("likes", 0),

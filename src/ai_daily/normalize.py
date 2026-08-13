@@ -5,6 +5,7 @@ import math
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import HttpUrl
@@ -187,14 +188,22 @@ def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
         ordered = [primary, *(item for item in group if item is not primary)]
         canonical = canonicalize_url(str(primary.url))
         event_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
+        latest_dated_item = max(
+            (item for item in group if item.published_at),
+            key=lambda item: cast(datetime, item.published_at),
+            default=None,
+        )
         events.append(
             Event(
                 event_id=event_id,
                 canonical_url=HttpUrl(canonical),
                 title=primary.title,
                 summary=primary.summary,
-                published_at=max(
-                    (item.published_at for item in group if item.published_at), default=None
+                published_at=(latest_dated_item.published_at if latest_dated_item else None),
+                source_time_kind=(
+                    latest_dated_item.source_time_kind
+                    if latest_dated_item
+                    else primary.source_time_kind
                 ),
                 items=ordered,
             )

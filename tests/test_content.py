@@ -410,6 +410,8 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("lead-quota", "lead count"),
         ("research-quota", "too many detailed research"),
         ("category-breadth", "lacks category breadth"),
+        ("speculative-headline", "unverified speculation"),
+        ("speculative-brief", "unverified speculation"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -440,6 +442,10 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "category-breadth":
         for selection in plan_value.selections[:9]:
             selection.category = "模型与平台"
+    elif mutation == "speculative-headline":
+        plan_value.selections[0].headline = "新模型或随后发布开源权重"
+    elif mutation == "speculative-brief":
+        plan_value.selections[0].brief = "官方尚未证实，预计本周推出。"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 

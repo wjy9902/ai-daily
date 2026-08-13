@@ -5,7 +5,14 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from ai_daily.models import Event, RawItem, SourceChannel, SourceConfig, SourceTier
+from ai_daily.models import (
+    Event,
+    RawItem,
+    SourceChannel,
+    SourceConfig,
+    SourceTier,
+    SourceTimeKind,
+)
 from ai_daily.sources import ARTICLE_RESPONSE_BYTES, MAX_RESPONSE_BYTES, Collector
 
 
@@ -680,6 +687,7 @@ async def test_hackernews_adapter_uses_public_api() -> None:
     items, health = await Collector(client).collect([source])
     assert str(items[0].url).startswith("https://news.ycombinator.com/item?id=1")
     assert items[0].published_at is None
+    assert items[0].source_time_kind == SourceTimeKind.COMMUNITY_SUBMITTED
     assert items[0].discovered_at == datetime.fromtimestamp(1786492800, tz=UTC)
     assert health[0].status == "ok"
 
@@ -722,6 +730,7 @@ async def test_huggingface_model_change_watch_uses_official_update_time() -> Non
         "Qwen Official Models: Qwen3.8-2.4T-A95B repository update"
     ]
     assert items[0].published_at == datetime(2026, 8, 12, 10, 24, 4, tzinfo=UTC)
+    assert items[0].source_time_kind == SourceTimeKind.REPOSITORY_UPDATED
     assert items[0].metrics["timestamp_kind"] == "repository_last_modified"
     assert health[0].status == "ok"
 

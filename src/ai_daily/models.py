@@ -34,6 +34,12 @@ class SourceRegion(StrEnum):
     CHINA = "china"
 
 
+class SourceTimeKind(StrEnum):
+    PUBLISHED = "published"
+    REPOSITORY_UPDATED = "repository_updated"
+    COMMUNITY_SUBMITTED = "community_submitted"
+
+
 class EditorialTier(StrEnum):
     LEAD = "lead"
     FOLLOW = "follow"
@@ -90,6 +96,7 @@ class RawItem(StrictModel):
     title: str = Field(min_length=1, max_length=500)
     summary: str = Field(default="", max_length=10000)
     published_at: datetime | None = None
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
     discovered_at: datetime
     author: str | None = None
     metrics: dict[str, int | float | str] = Field(default_factory=dict)
@@ -110,6 +117,7 @@ class Event(StrictModel):
     title: str
     summary: str
     published_at: datetime | None = None
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
     items: list[RawItem] = Field(min_length=1)
     score: float = Field(default=0, ge=0, le=100)
 
@@ -124,6 +132,7 @@ class Evidence(StrictModel):
     title: str
     excerpt: str = Field(max_length=4000)
     source: str
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
 
 
 class EvidenceBundle(StrictModel):

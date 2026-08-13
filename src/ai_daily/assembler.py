@@ -47,7 +47,7 @@ def assemble_markdown(
                 selection,
                 drafts_by_id[selection.event_id],
                 evidence,
-                events_by_id[selection.event_id].published_at,
+                events_by_id[selection.event_id],
             )
         )
     briefs = [item for item in plan.selections if item.tier == EditorialTier.BRIEF]
@@ -115,7 +115,7 @@ def _detail(
     selection: EditorialSelection,
     draft: DraftItem,
     evidence: dict[str, Evidence],
-    published_at: datetime | None,
+    event: Event,
 ) -> list[str]:
     tier_label = "今日重点" if selection.tier == EditorialTier.LEAD else "值得关注"
     tier_class = "lead" if selection.tier == EditorialTier.LEAD else "follow"
@@ -149,13 +149,13 @@ def _detail(
         lines.append(
             f'<p class="story-caveat"><strong>局限/争议：</strong> {html.escape(draft.caveat)}</p>'
         )
-    publication_time = _publication_time(published_at)
+    publication_time, time_label = _source_time(event)
     lines.extend(
         [
             "</div>",
             (
                 '<p class="story-meta"><time datetime="'
-                f'{publication_time.isoformat()}">来源发布：'
+                f'{publication_time.isoformat()}">{time_label}：'
                 f"{publication_time.strftime('%m-%d %H:%M')} 北京时间</time> · "
                 f"{html.escape(selection.category)}</p>"
             ),
@@ -177,13 +177,13 @@ def _briefs(
         headline = html.escape(selection.headline)
         category = html.escape(selection.category)
         brief = html.escape(selection.brief)
-        publication_time = _publication_time(events_by_id[selection.event_id].published_at)
+        publication_time, time_label = _source_time(events_by_id[selection.event_id])
         lines.append(story_title_marker(selection.headline))
         lines.append(
             f'<li id="story-{event_id}"><strong>{headline}</strong>'
             f'<span class="brief-category">{category}</span>'
             f'<p>{brief}</p><div class="brief-sources">{sources} · '
-            f'<time datetime="{publication_time.isoformat()}">来源发布：'
+            f'<time datetime="{publication_time.isoformat()}">{time_label}：'
             f"{publication_time.strftime('%m-%d %H:%M')} 北京时间</time></div></li>"
         )
     lines.extend(["</ol>", ""])
@@ -235,6 +235,15 @@ def _publication_time(value: datetime | None) -> datetime:
     if value is None or value.utcoffset() is None:
         raise ValueError("selected event requires a verified publication time")
     return value.astimezone(BEIJING_TIMEZONE)
+
+
+def _source_time(event: Event) -> tuple[datetime, str]:
+    publication_time = _publication_time(event.published_at)
+    if event.source_time_kind.value == "repository_updated":
+        return publication_time, "来源更新"
+    if event.source_time_kind.value == "community_submitted":
+        raise ValueError("community submission time cannot be used as publication time")
+    return publication_time, "来源发布"
 
 
 def _markdown_text(value: str) -> str:
