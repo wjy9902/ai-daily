@@ -18,6 +18,7 @@ from ai_daily.sources import (
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BYTES,
     Collector,
+    PublicNetworkBackend,
     SourceCollectionError,
     _plain_text,
     _validate_public_dns,
@@ -86,6 +87,27 @@ async def test_dns_validation_rejects_hostname_resolving_to_private_address(
 
     with pytest.raises(SourceCollectionError, match="non-public address"):
         await _validate_public_dns("https://source.example/news")
+
+
+async def test_pinned_backend_connects_to_the_validated_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connected_hosts: list[str] = []
+
+    async def public_addresses(_host: str, _port: int) -> tuple[str, ...]:
+        return ("93.184.216.34",)
+
+    async def connect_tcp(host: str, *_args: object, **_kwargs: object) -> object:
+        connected_hosts.append(host)
+        return object()
+
+    backend = PublicNetworkBackend()
+    monkeypatch.setattr("ai_daily.sources._public_addresses", public_addresses)
+    monkeypatch.setattr(backend._backend, "connect_tcp", connect_tcp)
+
+    await backend.connect_tcp("source.example", 443)
+
+    assert connected_hosts == ["93.184.216.34"]
 
 
 async def test_collector_limits_concurrency_per_host() -> None:

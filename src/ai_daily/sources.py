@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import feedparser
+import httpcore
 import httpx
 from lxml import etree, html  # type: ignore[import-untyped]
 from pydantic import HttpUrl
@@ -336,7 +337,9 @@ class Collector:
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": DEFAULT_USER_AGENT},
             follow_redirects=False,
+            transport=PublicAsyncHTTPTransport(),
         )
+        self._uses_pinned_dns = client is None
         self._per_host = per_host
         self._article_semaphore = asyncio.Semaphore(article_concurrency)
         self._article_text_cache: dict[str, str] = {}
@@ -519,7 +522,8 @@ class Collector:
         request_kwargs = kwargs
         for redirect_count in range(MAX_REDIRECTS + 1):
             _validate_request_url(current, allowed_origin)
-            await _validate_public_dns(current)
+            if not self._uses_pinned_dns:
+                await _validate_public_dns(current)
             request = self.client.build_request("GET", current, **request_kwargs)
             response = await self._send_limited(request, max_response_bytes)
             if response.status_code not in REDIRECT_STATUSES:
@@ -913,6 +917,63 @@ async def _validate_public_dns(value: str) -> None:
         return
     if not address.is_global:
         raise SourceCollectionError("source URL cannot target a non-public address")
+
+
+async def _public_addresses(host: str, port: int) -> tuple[str, ...]:
+    records = await asyncio.to_thread(
+        socket.getaddrinfo,
+        host,
+        port,
+        type=socket.SOCK_STREAM,
+    )
+    addresses = tuple(dict.fromkeys(str(record[4][0]) for record in records))
+    if not addresses or any(not ipaddress.ip_address(value).is_global for value in addresses):
+        raise SourceCollectionError("source hostname resolved to a non-public address")
+    return addresses
+
+
+class PublicNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Resolve once, validate, and connect to that exact public address."""
+
+    def __init__(self) -> None:
+        self._backend = cast(httpcore.AsyncNetworkBackend, httpcore.AnyIOBackend())
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        addresses = await _public_addresses(host, port)
+        last_error: Exception | None = None
+        for address in addresses:
+            try:
+                return await self._backend.connect_tcp(
+                    address, port, timeout, local_address, socket_options
+                )
+            except httpcore.ConnectError as error:
+                last_error = error
+        assert last_error is not None
+        raise last_error
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Any = None,
+    ) -> httpcore.AsyncNetworkStream:
+        raise SourceCollectionError("Unix sockets are not allowed for sources")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class PublicAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    def __init__(self) -> None:
+        super().__init__()
+        self._pool = httpcore.AsyncConnectionPool(network_backend=PublicNetworkBackend())
 
 
 def _origin(value: str) -> tuple[str, str, int]:

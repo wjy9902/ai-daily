@@ -9,9 +9,10 @@ MARKER = "<!-- ai-daily:2026-08-12:v3:sha256=" + ("a" * 64) + " -->"
 
 
 def rss(link: str, title: str = "2026-08-12", marker: str = MARKER) -> bytes:
+    escaped_marker = marker.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
     <item><title>{title}</title><link>{link}</link><guid>{link}</guid>
-    <description>{marker}</description></item>
+    <description>{escaped_marker}</description></item>
     </channel></rss>""".encode()
 
 
@@ -54,6 +55,25 @@ async def test_verify_rejects_page_with_wrong_content_marker() -> None:
         return httpx.Response(200, text="stale digest")
 
     with pytest.raises(PublicationNotVisible, match="expected content marker"):
+        await verify_publication(
+            date(2026, 8, 12),
+            "https://site.test",
+            12,
+            MARKER,
+            httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+
+
+async def test_verify_rejects_latest_rss_entry_with_wrong_content_marker() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("rss.xml"):
+            return httpx.Response(
+                200,
+                content=rss("https://site.test/issue-12/", marker="stale digest"),
+            )
+        return httpx.Response(200, text=MARKER)
+
+    with pytest.raises(PublicationNotVisible, match="RSS latest entry"):
         await verify_publication(
             date(2026, 8, 12),
             "https://site.test",
