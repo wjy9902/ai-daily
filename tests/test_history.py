@@ -1,9 +1,12 @@
 from datetime import date
+from pathlib import Path
 
 import httpx
 import pytest
 
-from ai_daily.history import fetch_historical_index
+import factories
+from ai_daily.history import fetch_historical_index, local_historical_index
+from ai_daily.publication import DailyPublication
 from ai_daily.site_trust import daily_marker, story_title_marker
 
 
@@ -231,3 +234,86 @@ async def test_history_rejects_bot_marker_for_a_different_date() -> None:
     result = await fetch_historical_index(client, "owner/repo", None, 45, date(2026, 8, 13))
 
     assert result.urls == set()
+
+
+# ------------------------------------------------- the local dedupe index
+
+
+def _publish(published: Path, target_date: date, record: DailyPublication | None = None) -> None:
+    """Drop one published record where the local index will find it."""
+
+    published.mkdir(parents=True, exist_ok=True)
+    issue = record or factories.publication(target_date=target_date)
+    (published / f"{target_date.isoformat()}.json").write_text(
+        issue.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+
+def test_local_index_reads_titles_and_source_urls_from_published_records(
+    tmp_path: Path,
+) -> None:
+    published = tmp_path / "published"
+    _publish(published, date(2026, 8, 12))
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == {"详报标题 0", "快讯标题 1"}
+    assert index.urls == {
+        "https://example.test/story-0",
+        "https://example.test/story-1",
+    }
+
+
+def test_local_index_covers_every_day_inside_the_window(tmp_path: Path) -> None:
+    published = tmp_path / "published"
+    for day in (date(2026, 7, 1), date(2026, 8, 1), date(2026, 8, 12)):
+        _publish(
+            published,
+            day,
+            factories.publication(
+                target_date=day,
+                details=[],
+                briefs=[factories.brief_card(day.day, headline=f"{day.isoformat()} 的头条")],
+            ),
+        )
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == {
+        "2026-07-01 的头条",
+        "2026-08-01 的头条",
+        "2026-08-12 的头条",
+    }
+
+
+@pytest.mark.parametrize(
+    "outside",
+    [date(2026, 6, 28), date(2026, 8, 13), date(2026, 8, 14)],
+)
+def test_local_index_ignores_records_outside_the_window(tmp_path: Path, outside: date) -> None:
+    published = tmp_path / "published"
+    _publish(published, outside)
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == set()
+    assert index.urls == set()
+
+
+def test_local_index_ignores_corrupt_and_misnamed_files(tmp_path: Path) -> None:
+    published = tmp_path / "published"
+    _publish(published, date(2026, 8, 12))
+    (published / "2026-08-11.json").write_text('{"details": [', encoding="utf-8")
+    (published / "notes.json").write_text("{}", encoding="utf-8")
+    (published / "2026-13-99.json").write_text("{}", encoding="utf-8")
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == {"详报标题 0", "快讯标题 1"}
+
+
+def test_local_index_is_empty_before_the_first_issue(tmp_path: Path) -> None:
+    index = local_historical_index(tmp_path / "published", 45, date(2026, 8, 13))
+
+    assert index.titles == set()
+    assert index.urls == set()

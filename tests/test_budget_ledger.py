@@ -83,10 +83,12 @@ def test_run_counts_survive_across_processes(tmp_path: Path) -> None:
 
 def test_a_ledger_without_a_store_stays_in_memory(tmp_path: Path) -> None:
     ledger = BudgetLedger(factories.budget_config())
+
     ledger.record(_run(1.0), BudgetStage.JUDGE)
 
-    assert list(tmp_path.iterdir()) == []
+    assert ledger.cost_cny == pytest.approx(1.0)
     assert BudgetLedger(factories.budget_config()).cost_cny == 0
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_an_exhausted_stage_stops_only_that_stage(tmp_path: Path) -> None:
