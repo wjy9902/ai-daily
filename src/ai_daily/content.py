@@ -234,15 +234,13 @@ def _drop_unselected_viewpoints(plan: EditorialPlan) -> EditorialPlan:
 
 
 def _normalize_plan_copy(plan: EditorialPlan) -> EditorialPlan:
-    selections = [
-        selection.model_copy(
-            update={
-                "headline": _drop_speculative_clauses(selection.headline),
-                "brief": _drop_speculative_clauses(selection.brief),
-            }
+    selections: list[EditorialSelection] = []
+    for selection in plan.selections:
+        headline = _drop_speculative_clauses(selection.headline)
+        brief = _drop_speculative_clauses(selection.brief) or headline
+        selections.append(
+            selection.model_copy(update={"headline": headline, "brief": brief})
         )
-        for selection in plan.selections
-    ]
     return plan.model_copy(
         update={
             "today_highlight": _deterministic_highlight(selections),

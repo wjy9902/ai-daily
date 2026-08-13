@@ -583,6 +583,31 @@ async def test_global_editor_drops_speculative_brief_clause() -> None:
     assert result.selections[0].brief == "模型已通过API提供；支持三档推理等级"
 
 
+async def test_global_editor_uses_headline_when_brief_is_all_speculation() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=True,
+            category="模型与平台",
+            relevance=80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for value in events
+    ]
+    plan_value = valid_global_plan()
+    plan_value.selections[0].headline = "DeepSeek V4 Pro已通过API提供"
+    plan_value.selections[0].brief = "权重可能随后发布。"
+
+    result = await plan_digest(  # type: ignore[arg-type]
+        PlanningGateway(plan_value), events, decisions, load_config(Path("config")).pipeline
+    )
+
+    assert result.selections[0].brief == "DeepSeek V4 Pro已通过API提供"
+
+
 async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> None:
     events = [numbered_event(index) for index in range(18)]
     decisions = [
