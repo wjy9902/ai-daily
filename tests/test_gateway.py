@@ -6,7 +6,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ai_daily.budget import BudgetExceeded
+from ai_daily.budget import BudgetExceeded, BudgetStage
 from ai_daily.config import Secrets, load_config
 from ai_daily.model_gateway import (
     Invocation,
@@ -39,6 +39,7 @@ async def test_generate_falls_back_after_pydantic_ai_wrapped_timeout(
         instructions: str,
         prompt: str,
         validator: object,
+        stage: object = None,
     ) -> JudgeDecision:
         calls.append(invocation)
         if invocation.attempt == 1:
@@ -129,6 +130,7 @@ async def test_generate_falls_back_only_after_a_recoverable_failure(
         instructions: str,
         prompt: str,
         validator: object,
+        stage: object = None,
     ) -> JudgeDecision:
         calls.append(invocation)
         if invocation.attempt == 1:
@@ -167,6 +169,7 @@ async def test_generate_does_not_fallback_after_unrecoverable_error(
         instructions: str,
         prompt: str,
         validator: object,
+        stage: object = None,
     ) -> JudgeDecision:
         calls.append(invocation)
         raise ModelHTTPError(401, "unauthorized")
@@ -321,7 +324,7 @@ async def test_new_invocation_cannot_exceed_daily_request_budget() -> None:
     gateway.ledger.requests = gateway.config.budget.request_limit
 
     with pytest.raises(BudgetExceeded, match="request"):
-        await gateway._reserve_request_slots()
+        gateway.ledger.request_allowance(BudgetStage.JUDGE, 2)
 
 
 async def test_generate_preserves_budget_exceeded_error(

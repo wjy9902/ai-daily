@@ -15,7 +15,7 @@ from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from ai_daily.budget import BudgetExceeded, BudgetLedger
+from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
 from ai_daily.config import Secrets
 from ai_daily.models import ModelEndpoint, ModelRun, ModelsConfig
 
@@ -23,6 +23,8 @@ OutputT = TypeVar("OutputT", bound=BaseModel)
 ModelRole = Literal["judge", "editor"]
 OUTPUT_RETRIES = 1
 # One provider call at a time keeps daily token and cost accounting globally ordered.
+# It also means calls never contend for budget, so no reservation bookkeeping is
+# needed: each call simply asks the ledger what it may spend before it starts.
 MAX_MODEL_CONCURRENCY = 1
 
 
@@ -60,15 +62,14 @@ class ModelGateway:
         config: ModelsConfig,
         secrets: Secrets | None = None,
         clock: Callable[[], float] = time.monotonic,
+        ledger: BudgetLedger | None = None,
     ) -> None:
         self.config = config
         self.secrets = secrets or Secrets()
-        self.ledger = BudgetLedger(config.budget)
+        self.ledger = ledger or BudgetLedger(config.budget)
         self.runs: list[ModelRun] = []
         self.clock = clock
         self._concurrency = asyncio.Semaphore(MAX_MODEL_CONCURRENCY)
-        self._budget_condition = asyncio.Condition()
-        self._reserved_requests = 0
 
     async def generate(
         self,
@@ -77,6 +78,7 @@ class ModelGateway:
         instructions: str,
         prompt: str,
         validator: Callable[[OutputT], None] | None = None,
+        stage: BudgetStage = BudgetStage.JUDGE,
     ) -> OutputT:
         role_config = self.config.roles[role]
         fallback_reason: str | None = None
@@ -89,6 +91,7 @@ class ModelGateway:
                     instructions,
                     prompt,
                     validator,
+                    stage,
                 )
             except (BudgetExceeded, UsageLimitExceeded, MissingProviderSecret):
                 raise
@@ -106,6 +109,7 @@ class ModelGateway:
         instructions: str,
         prompt: str,
         validator: Callable[[OutputT], None] | None,
+        stage: BudgetStage,
     ) -> OutputT:
         async with self._concurrency:
             return await self._invoke_endpoint_bounded(
@@ -114,6 +118,7 @@ class ModelGateway:
                 instructions,
                 prompt,
                 validator,
+                stage,
             )
 
     async def _invoke_endpoint_bounded(
@@ -123,20 +128,18 @@ class ModelGateway:
         instructions: str,
         prompt: str,
         validator: Callable[[OutputT], None] | None,
+        stage: BudgetStage,
     ) -> OutputT:
         started = self.clock()
-        request_limit = await self._reserve_request_slots()
-        try:
-            input_token_limit, output_token_limit = self._remaining_token_budget()
-            agent: Agent[None, OutputT] = Agent(
-                self._build_model(invocation.endpoint),
-                output_type=output_type,
-                instructions=instructions,
-                retries=OUTPUT_RETRIES,
-            )
-        except Exception:
-            await self._release_request_slots(request_limit)
-            raise
+        # Decided up front: pydantic-ai fixes its request limit when the run starts.
+        request_limit = self.ledger.request_allowance(stage, 1 + OUTPUT_RETRIES)
+        input_token_limit, output_token_limit = self._remaining_token_budget()
+        agent: Agent[None, OutputT] = Agent(
+            self._build_model(invocation.endpoint),
+            output_type=output_type,
+            instructions=instructions,
+            retries=OUTPUT_RETRIES,
+        )
         if validator is not None:
             agent.output_validator(self._semantic_validator(validator))
         usage = RunUsage()
@@ -153,12 +156,12 @@ class ModelGateway:
                     usage=usage,
                 )
         except asyncio.CancelledError as error:
-            await self._record_failed_run(invocation, started, error, usage, request_limit)
+            self._record_failed_run(invocation, started, error, usage, stage)
             raise
         except Exception as error:
-            await self._record_failed_run(invocation, started, error, usage, request_limit)
+            self._record_failed_run(invocation, started, error, usage, stage)
             raise
-        await self._settle_request_slots(request_limit, max(1, usage.requests))
+        self.ledger.record_requests(max(1, usage.requests), stage)
         run = self._success_run(
             invocation,
             started,
@@ -167,7 +170,7 @@ class ModelGateway:
             usage.requests,
         )
         self.runs.append(run)
-        self.ledger.record(run)
+        self.ledger.record(run, stage)
         return result.output
 
     def _remaining_token_budget(self) -> tuple[int, int]:
@@ -182,47 +185,15 @@ class ModelGateway:
             raise BudgetExceeded("cost limit exceeded")
         return input_tokens, output_tokens
 
-    async def _reserve_request_slots(self) -> int:
-        async with self._budget_condition:
-            while True:
-                remaining = (
-                    self.config.budget.request_limit
-                    - self.ledger.requests
-                    - self._reserved_requests
-                )
-                if remaining > 0:
-                    reserved = min(1 + OUTPUT_RETRIES, remaining)
-                    self._reserved_requests += reserved
-                    return reserved
-                if self.ledger.requests >= self.config.budget.request_limit:
-                    raise BudgetExceeded("model request limit exceeded")
-                await self._budget_condition.wait()
-
-    async def _settle_request_slots(self, reserved: int, actual: int) -> None:
-        async with self._budget_condition:
-            try:
-                if actual > reserved:
-                    raise RuntimeError("model exceeded its reserved request slots")
-                self.ledger.record_requests(actual)
-            finally:
-                self._reserved_requests -= reserved
-                self._budget_condition.notify_all()
-
-    async def _release_request_slots(self, reserved: int) -> None:
-        async with self._budget_condition:
-            self._reserved_requests -= reserved
-            self._budget_condition.notify_all()
-
-    async def _record_failed_run(
+    def _record_failed_run(
         self,
         invocation: Invocation,
         started: float,
         error: BaseException,
         usage: RunUsage,
-        reserved: int,
+        stage: BudgetStage,
     ) -> None:
         request_count = max(1, usage.requests)
-        await self._settle_request_slots(reserved, request_count)
         run = self._failed_run(
             invocation,
             started,
@@ -232,7 +203,18 @@ class ModelGateway:
             request_count,
         )
         self.runs.append(run)
-        self.ledger.record(run)
+        # A failed call still consumed provider quota, so it is recorded and
+        # persisted. Any ceiling it trips is swallowed here because the caller
+        # is already raising the real error; the next call's check_stage() is
+        # what turns an exhausted budget into a clean degradation.
+        for record in (
+            lambda: self.ledger.record_requests(request_count, stage),
+            lambda: self.ledger.record(run, stage),
+        ):
+            try:
+                record()
+            except BudgetExceeded:
+                pass
 
     @staticmethod
     def _semantic_validator(

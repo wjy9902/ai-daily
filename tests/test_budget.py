@@ -33,11 +33,11 @@ def run(**updates: object) -> ModelRun:
 
 def test_budget_records_usage_and_fails_before_second_request() -> None:
     ledger = BudgetLedger(config())
-    ledger.reserve_request()
+    ledger.record_requests(1)
     ledger.record(run())
     assert ledger.input_tokens == 90
     with pytest.raises(BudgetExceeded, match="request"):
-        ledger.reserve_request()
+        ledger.record_requests(1)
 
 
 @pytest.mark.parametrize(
