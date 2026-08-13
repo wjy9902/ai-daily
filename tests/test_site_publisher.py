@@ -197,6 +197,36 @@ def _run_rebuild(layout: SiteLayout) -> int:
     return asyncio.run(cli._rebuild(_rebuild_args(layout)))
 
 
+def test_a_committed_record_that_fails_its_round_trip_is_never_activated(
+    layout: SiteLayout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_daily import site_publisher
+
+    yesterday = factories.publication(target_date=date(2026, 8, 12))
+    publish_site(layout, yesterday, SITE)
+    previous_release = layout.current.resolve()
+    record = factories.publication(target_date=date(2026, 8, 13))
+    reads: list[int] = []
+
+    def truncated_read(target: SiteLayout, target_date: date) -> DailyPublication | None:
+        reads.append(1)
+        if len(reads) == 1:  # the same-day guard, before anything is written
+            return None
+        return factories.publication(target_date=target_date, highlight="半个文件")
+
+    monkeypatch.setattr(site_publisher, "read_publication", truncated_read)
+
+    with pytest.raises(PublicationRefused, match="did not survive the round trip"):
+        publish_site(layout, record, SITE)
+
+    assert layout.current.resolve() == previous_release
+    monkeypatch.undo()
+    assert_serves(layout, yesterday)
+    # What did reach the disk is intact, so a rebuild can serve it.
+    assert _run_rebuild(layout) == 0
+    assert_serves(layout, record)
+
+
 def test_a_naive_rerun_of_the_same_level_is_refused_and_keeps_the_record(
     layout: SiteLayout,
 ) -> None:

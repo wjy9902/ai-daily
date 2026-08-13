@@ -25,6 +25,7 @@ from ai_daily.site_publisher import (
     build_archive,
     hold_previous_release,
     publication_lock,
+    publish_site,
     published_dates,
     read_publication,
     recent_publications,
@@ -68,33 +69,6 @@ def _emit(payload: dict[str, Any]) -> None:
 
 
 # ------------------------------------------------------------------ publishing
-
-
-def _publish_publication(
-    layout: SiteLayout,
-    publication: DailyPublication,
-    site_base_url: str,
-) -> Path:
-    """Render, commit and activate, in that order.
-
-    Rendering first means a committed record always has a release that renders;
-    an orphaned release is harmless and gets pruned.
-    """
-
-    from ai_daily.site_publisher import _write_atomic
-
-    layout.ensure()
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    release = render_release(layout, publication, site_base_url, stamp)
-    _write_atomic(
-        layout.publication_path(publication.target_date),
-        publication.model_dump_json(indent=2),
-    )
-    committed = read_publication(layout, publication.target_date)
-    if committed is None or committed.marker != publication.marker:
-        raise PublicationRefused("committed publication did not survive the round trip")
-    activate_release(layout, release)
-    return release
 
 
 def _status_payload(
@@ -160,7 +134,9 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
 
         try:
-            release = _publish_publication(
+            # publish_site owns the upgrade guard: a retry window may replace
+            # today's issue only with a better one, never an equal or poorer.
+            release = publish_site(
                 layout, outcome.publication, _site_base_url(config, secrets)
             )
         except PublicationRefused as error:
