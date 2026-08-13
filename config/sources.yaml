@@ -1,37 +1,240 @@
 sources:
+  # Frontier labs and platform vendors — first-party material.
   - name: openai-news
+    display_name: OpenAI
     kind: rss
     url: https://openai.com/news/rss.xml
     tier: A
+    channel: official
+    limit: 20
+  - name: anthropic-news
+    display_name: Anthropic
+    kind: html_index
+    url: https://www.anthropic.com/news
+    link_pattern: '^https://www\.anthropic\.com/news/[^/]+$'
+    tier: A
+    channel: official
+    limit: 15
   - name: google-ai
+    display_name: Google AI
     kind: rss
     url: https://blog.google/technology/ai/rss/
     tier: A
+    channel: official
+    limit: 20
   - name: deepmind
+    display_name: Google DeepMind
     kind: rss
     url: https://deepmind.google/blog/rss.xml
     tier: A
+    channel: official
+    limit: 20
+  - name: microsoft-research
+    display_name: Microsoft Research
+    kind: rss
+    url: https://www.microsoft.com/en-us/research/feed/
+    tier: A
+    channel: official
+    limit: 20
+  - name: qwen-blog
+    display_name: Qwen
+    kind: rss
+    url: https://qwenlm.github.io/blog/index.xml
+    tier: A
+    channel: official
+    region: china
+    limit: 20
+  - name: qwen-huggingface-models
+    display_name: Qwen 官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: Qwen
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: mistral-news
+    display_name: Mistral AI
+    kind: rss
+    url: https://mistral.ai/news/rss
+    tier: A
+    channel: official
+    limit: 20
   - name: huggingface-blog
+    display_name: Hugging Face
     kind: rss
     url: https://huggingface.co/blog/feed.xml
     tier: A
+    channel: official
+    limit: 20
+  - name: nvidia-blog
+    display_name: NVIDIA Blog
+    kind: rss
+    url: https://blogs.nvidia.com/feed/
+    tier: B
+    channel: official
+    ai_focused: false
+    limit: 20
+  - name: aws-ml-blog
+    display_name: AWS Machine Learning Blog
+    kind: rss
+    url: https://aws.amazon.com/blogs/machine-learning/feed/
+    tier: B
+    channel: official
+    limit: 20
+  - name: github-ai-blog
+    display_name: GitHub AI & ML
+    kind: rss
+    url: https://github.blog/ai-and-ml/feed/
+    tier: B
+    channel: official
+    limit: 20
+  - name: cloudflare-ai
+    display_name: Cloudflare AI
+    kind: rss
+    url: https://blog.cloudflare.com/tag/ai/rss/
+    tier: B
+    channel: official
+    limit: 20
+  - name: google-developers
+    display_name: Google Developers Blog
+    kind: rss
+    url: https://developers.googleblog.com/feeds/posts/default
+    tier: B
+    channel: official
+    ai_focused: false
+    limit: 20
+  - name: ollama-blog
+    display_name: Ollama
+    kind: rss
+    url: https://ollama.com/blog/rss.xml
+    tier: B
+    channel: official
+    limit: 15
+
+  # Broad discovery and independent reporting — used for recall and corroboration.
+  - name: leiphone
+    display_name: 雷峰网
+    kind: rss
+    url: https://www.leiphone.com/feed
+    tier: B
+    channel: news
+    region: china
+    limit: 30
+  - name: ai-news
+    display_name: AI News
+    kind: rss
+    url: https://news.smol.ai/rss.xml
+    tier: B
+    channel: news
+    limit: 20
+  - name: techcrunch-ai
+    display_name: TechCrunch AI
+    kind: rss
+    url: https://techcrunch.com/category/artificial-intelligence/feed/
+    tier: B
+    channel: news
+    limit: 20
+  - name: the-decoder
+    display_name: The Decoder
+    kind: rss
+    url: https://the-decoder.com/feed/
+    tier: B
+    channel: news
+    limit: 20
+  - name: the-verge-ai
+    display_name: The Verge AI
+    kind: rss
+    url: https://www.theverge.com/rss/ai-artificial-intelligence/index.xml
+    tier: B
+    channel: news
+    limit: 20
+  - name: mit-tech-review-ai
+    display_name: MIT Technology Review
+    kind: rss
+    url: https://www.technologyreview.com/topic/artificial-intelligence/feed/
+    tier: B
+    channel: news
+    limit: 20
+  - name: ars-ai
+    display_name: Ars Technica AI
+    kind: rss
+    url: https://arstechnica.com/ai/feed/
+    tier: B
+    channel: news
+    limit: 20
+  - name: simon-willison
+    display_name: Simon Willison
+    kind: rss
+    url: https://simonwillison.net/atom/everything/
+    tier: B
+    channel: news
+    limit: 20
   - name: hacker-news
+    display_name: Hacker News
     kind: hackernews
     url: https://hacker-news.firebaseio.com/v0
     tier: B
-    limit: 30
+    channel: community
+    ai_focused: false
+    limit: 40
+
+  # Research is deliberately capped so papers cannot crowd out product news.
+  - name: google-research
+    display_name: Google Research
+    kind: rss
+    url: https://research.google/blog/rss/
+    tier: B
+    channel: research
+    limit: 15
+  - name: apple-ml-research
+    display_name: Apple Machine Learning Research
+    kind: rss
+    url: https://machinelearning.apple.com/rss.xml
+    tier: B
+    channel: research
+    limit: 15
   - name: arxiv-ai
+    display_name: arXiv AI
     kind: arxiv
     url: https://export.arxiv.org/api/query
-    tier: B
-    limit: 30
+    tier: C
+    channel: research
+    limit: 15
   - name: huggingface-papers
+    display_name: Hugging Face Papers
     kind: huggingface
     url: https://huggingface.co/api/daily_papers
-    tier: B
-    limit: 20
+    tier: C
+    channel: research
+    limit: 10
+
+  # Developer releases: only a small, high-signal set.
   - name: pydantic-ai-releases
+    display_name: Pydantic AI
     kind: github_releases
     url: https://api.github.com/repos/pydantic/pydantic-ai/releases
     tier: B
-    limit: 10
+    channel: release
+    limit: 5
+  - name: langchain-releases
+    display_name: LangChain
+    kind: github_releases
+    url: https://api.github.com/repos/langchain-ai/langchain/releases
+    tier: B
+    channel: release
+    limit: 5
+  - name: llama-index-releases
+    display_name: LlamaIndex
+    kind: github_releases
+    url: https://api.github.com/repos/run-llama/llama_index/releases
+    tier: B
+    channel: release
+    limit: 5
+  - name: vllm-releases
+    display_name: vLLM
+    kind: github_releases
+    url: https://api.github.com/repos/vllm-project/vllm/releases
+    tier: B
+    channel: release
+    limit: 5

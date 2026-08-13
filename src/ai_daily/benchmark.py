@@ -52,8 +52,7 @@ def score_records(records: list[PredictionRecord]) -> dict[str, float | int | bo
         return {"cases": len(records), "score": 0, "eligible": False}
     schema_rate = sum(record.prediction is not None for record in records) / len(records)
     evidence_rate = sum(
-        record.prediction is not None
-        and record.prediction.evidence_ids == [f"{record.case_id}-1"]
+        record.prediction is not None and record.prediction.evidence_ids == [f"{record.case_id}-1"]
         for record in records
     ) / len(records)
     selection_rate = sum(

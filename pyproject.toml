@@ -7,6 +7,7 @@ dependencies = [
   "feedgen>=1,<2",
   "feedparser>=6,<7",
   "httpx>=0.28,<1",
+  "httpcore>=1,<2",
   "lxml>=5,<7",
   "markdown>=3.7,<4",
   "marko>=2.1,<3",

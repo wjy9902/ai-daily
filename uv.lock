@@ -13,6 +13,7 @@ source = { editable = "." }
 dependencies = [
     { name = "feedgen" },
     { name = "feedparser" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "lxml" },
     { name = "markdown" },
@@ -38,6 +39,7 @@ dev = [
 requires-dist = [
     { name = "feedgen", specifier = ">=1,<2" },
     { name = "feedparser", specifier = ">=6,<7" },
+    { name = "httpcore", specifier = ">=1,<2" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "lxml", specifier = ">=5,<7" },
     { name = "markdown", specifier = ">=3.7,<4" },

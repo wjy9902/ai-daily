@@ -52,3 +52,6 @@ def test_budget_rejects_overages(updates: dict[str, object], message: str) -> No
     ledger = BudgetLedger(config())
     with pytest.raises(BudgetExceeded, match=message):
         ledger.record(run(**updates))
+    assert ledger.input_tokens == updates.get("input_tokens", 90)
+    assert ledger.output_tokens == updates.get("output_tokens", 40)
+    assert ledger.cost_cny == updates.get("cost_cny", 0.5)

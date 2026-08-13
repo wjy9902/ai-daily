@@ -7,6 +7,8 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 type Category = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "快讯"]
+type EditorialCategory = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI"]
+JUDGE_BATCH_SIZE = 10
 
 
 class StrictModel(BaseModel):
@@ -19,24 +21,82 @@ class SourceTier(StrEnum):
     C = "C"
 
 
+class SourceChannel(StrEnum):
+    OFFICIAL = "official"
+    NEWS = "news"
+    COMMUNITY = "community"
+    RESEARCH = "research"
+    RELEASE = "release"
+
+
+class SourceRegion(StrEnum):
+    GLOBAL = "global"
+    CHINA = "china"
+
+
+class SourceTimeKind(StrEnum):
+    PUBLISHED = "published"
+    REPOSITORY_UPDATED = "repository_updated"
+    COMMUNITY_SUBMITTED = "community_submitted"
+
+
+class EditorialTier(StrEnum):
+    LEAD = "lead"
+    FOLLOW = "follow"
+    BRIEF = "brief"
+
+
 class SourceConfig(StrictModel):
     name: str = Field(pattern=r"^[a-z0-9][a-z0-9-]+$")
-    kind: Literal["rss", "hackernews", "github_releases", "arxiv", "huggingface", "html"]
+    display_name: str | None = Field(default=None, min_length=1, max_length=80)
+    kind: Literal[
+        "rss",
+        "hackernews",
+        "github_releases",
+        "arxiv",
+        "huggingface",
+        "huggingface_models",
+        "html_index",
+    ]
     url: HttpUrl
     tier: SourceTier
+    channel: SourceChannel = SourceChannel.NEWS
+    region: SourceRegion = SourceRegion.GLOBAL
+    ai_focused: bool = True
+    link_pattern: str | None = Field(default=None, max_length=300)
+    namespace: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]+$", max_length=80)
     enabled: bool = True
     limit: int = Field(default=30, ge=1, le=100)
     timeout_seconds: float = Field(default=20, gt=0, le=60)
+
+    @model_validator(mode="after")
+    def require_index_pattern(self) -> SourceConfig:
+        if self.kind == "html_index" and not self.link_pattern:
+            raise ValueError("html_index sources require link_pattern")
+        if self.kind != "html_index" and self.link_pattern:
+            raise ValueError("link_pattern is only valid for html_index sources")
+        if self.kind == "huggingface_models" and not self.namespace:
+            raise ValueError("huggingface_models sources require namespace")
+        if self.kind != "huggingface_models" and self.namespace:
+            raise ValueError("namespace is only valid for huggingface_models sources")
+        if self.url.scheme != "https":
+            raise ValueError("sources require HTTPS")
+        return self
 
 
 class RawItem(StrictModel):
     source: str
     source_tier: SourceTier
+    source_label: str = ""
+    source_channel: SourceChannel = SourceChannel.NEWS
+    source_region: SourceRegion = SourceRegion.GLOBAL
+    source_ai_focused: bool = True
     source_item_id: str
     url: HttpUrl
     title: str = Field(min_length=1, max_length=500)
     summary: str = Field(default="", max_length=10000)
     published_at: datetime | None = None
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
     discovered_at: datetime
     author: str | None = None
     metrics: dict[str, int | float | str] = Field(default_factory=dict)
@@ -45,7 +105,7 @@ class RawItem(StrictModel):
 class SourceHealth(StrictModel):
     source: str
     tier: SourceTier
-    status: Literal["ok", "not_modified", "failed"]
+    status: Literal["ok", "partial", "not_modified", "failed"]
     item_count: int = Field(ge=0)
     latency_ms: int = Field(ge=0)
     error: str | None = None
@@ -57,16 +117,22 @@ class Event(StrictModel):
     title: str
     summary: str
     published_at: datetime | None = None
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
     items: list[RawItem] = Field(min_length=1)
     score: float = Field(default=0, ge=0, le=100)
+
+    @property
+    def primary_item(self) -> RawItem:
+        return self.items[0]
 
 
 class Evidence(StrictModel):
     evidence_id: str
     url: HttpUrl
     title: str
-    excerpt: str = Field(max_length=4000)
+    excerpt: str = Field(max_length=6000)
     source: str
+    source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
 
 
 class EvidenceBundle(StrictModel):
@@ -84,16 +150,40 @@ class JudgeDecision(StrictModel):
     evidence_ids: list[str] = Field(min_length=1)
 
 
+class EditorialChoice(StrictModel):
+    event_id: str
+    category: EditorialCategory
+    headline: str = Field(min_length=1, max_length=100)
+    brief: str = Field(min_length=1, max_length=240)
+    importance: int = Field(ge=0, le=100)
+    confidence: float = Field(ge=0, le=1)
+    reason: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(min_length=1)
+
+
+class EditorialSelection(EditorialChoice):
+    tier: EditorialTier
+
+
+class EditorialInsight(StrictModel):
+    text: str = Field(min_length=1, max_length=300)
+    evidence_ids: list[str] = Field(min_length=1)
+
+
+class EditorialPlan(StrictModel):
+    today_highlight: str = Field(min_length=1, max_length=300)
+    selections: list[EditorialSelection] = Field(min_length=1, max_length=30)
+    editor_viewpoint: list[EditorialInsight] = Field(min_length=2, max_length=4)
+
+
 class DraftItem(StrictModel):
     event_id: str
-    category: Category
-    title: str = Field(min_length=1, max_length=120)
     tldr: str = Field(min_length=1, max_length=300)
     facts: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
-        min_length=1, max_length=5
+        min_length=1, max_length=4
     )
-    why_it_matters: str = Field(min_length=1, max_length=800)
-    action: str = Field(min_length=1, max_length=500)
+    why_it_matters: str = Field(min_length=1, max_length=500)
+    action: str | None = Field(default=None, max_length=400)
     caveat: str | None = Field(default=None, max_length=500)
     evidence_ids: list[str] = Field(min_length=1)
 
@@ -107,6 +197,7 @@ class ModelRun(StrictModel):
     attempt: int = Field(ge=1)
     status: Literal["ok", "failed"]
     fallback_reason: str | None = None
+    request_count: int = Field(default=1, ge=1)
     latency_ms: int = Field(ge=0)
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
@@ -164,18 +255,34 @@ class PipelineConfig(StrictModel):
     site_base_url: HttpUrl
     repository: str = Field(pattern=r"^[^/]+/[^/]+$")
     artifacts_dir: str
-    candidate_limit: int = Field(ge=1, le=60)
-    selected_min: int = Field(ge=1)
-    selected_max: int = Field(ge=1, le=20)
+    candidate_limit: int = Field(ge=20, le=100)
+    max_research_candidates: int = Field(ge=0, le=30)
+    max_release_candidates: int = Field(ge=0, le=30)
+    lead_min: int = Field(ge=1, le=8)
+    lead_max: int = Field(ge=1, le=8)
+    follow_min: int = Field(ge=1, le=12)
+    follow_max: int = Field(ge=1, le=12)
+    brief_min: int = Field(ge=1, le=16)
+    brief_max: int = Field(ge=1, le=16)
+    max_research_details: int = Field(ge=0, le=5)
+    max_source_details: int = Field(ge=1, le=5)
     tier_a_min_coverage: float = Field(ge=0, le=1)
     collection_window_hours: int = Field(gt=0, le=72)
     cluster_window_hours: int = Field(gt=0, le=96)
     history_window_days: int = Field(gt=0, le=90)
 
     @model_validator(mode="after")
-    def validate_selection_range(self) -> PipelineConfig:
-        if self.selected_min > self.selected_max:
-            raise ValueError("selected_min cannot exceed selected_max")
+    def validate_selection_ranges(self) -> PipelineConfig:
+        ranges = (
+            (self.lead_min, self.lead_max, "lead"),
+            (self.follow_min, self.follow_max, "follow"),
+            (self.brief_min, self.brief_max, "brief"),
+        )
+        for minimum, maximum, name in ranges:
+            if minimum > maximum:
+                raise ValueError(f"{name}_min cannot exceed {name}_max")
+        if self.max_research_candidates + self.max_release_candidates >= self.candidate_limit:
+            raise ValueError("candidate channel caps must leave room for general news")
         return self
 
 
