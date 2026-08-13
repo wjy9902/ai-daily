@@ -37,12 +37,13 @@ JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
 PLANNING_EVIDENCE_EXCERPT_CHARS = 800
 DRAFT_EVIDENCE_EXCERPT_CHARS = 4_000
 SPECULATIVE_COPY_RE = re.compile(
-    r"(?:传闻|尚未证实|据猜测|或将|或随后|"
+    r"(?:传闻|尚未证实|据猜测|推测|或将|或随后|"
     r"(?:可能|也许|预计|有望).{0,16}(?:发布|推出|上线|开放|宣布|融资|收购|合并))"
 )
 DRAFT_SPECULATION_RE = re.compile(
-    r"(?:可能|也许|或许|预计|推测|猜测|假设|"
-    r"若[^，。；]{0,40}(?:将|会|可能|意味着))"
+    r"(?:也许|或许|预计|推测|猜测|假设|"
+    r"若[^，。；]{0,40}(?:将|会|可能|意味着)|"
+    r"可能.{0,24}(?:发布|推出|上线|开放|宣布|融资|收购|合并|牺牲|换取|改善))"
 )
 
 
@@ -397,8 +398,18 @@ def _validate_draft(
     allowed = {evidence.evidence_id for evidence in bundle.evidence}
     if not set(draft.evidence_ids) <= allowed:
         raise ValueError("editor referenced unknown evidence")
-    factual_fields = [draft.tldr, *draft.facts, draft.why_it_matters]
+    factual_fields = [
+        ("tldr", draft.tldr),
+        *((f"facts[{index}]", fact) for index, fact in enumerate(draft.facts)),
+        ("why_it_matters", draft.why_it_matters),
+    ]
     if draft.action:
-        factual_fields.append(draft.action)
-    if any(DRAFT_SPECULATION_RE.search(value) for value in factual_fields):
-        raise ValueError("editor put speculation outside caveat")
+        factual_fields.append(("action", draft.action))
+    speculative_fields = [
+        field for field, value in factual_fields if DRAFT_SPECULATION_RE.search(value)
+    ]
+    if speculative_fields:
+        raise ValueError(
+            "editor put speculation outside caveat; rewrite fields="
+            f"{speculative_fields} as verified facts or move uncertainty to caveat"
+        )
