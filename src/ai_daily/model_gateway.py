@@ -7,7 +7,7 @@ from typing import Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel
-from pydantic_ai import Agent, ModelSettings
+from pydantic_ai import Agent, ModelRetry, ModelSettings
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -67,6 +67,7 @@ class ModelGateway:
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
+        validator: Callable[[OutputT], None] | None = None,
     ) -> OutputT:
         role_config = self.config.roles[role]
         fallback_reason: str | None = None
@@ -78,6 +79,7 @@ class ModelGateway:
                     output_type,
                     instructions,
                     prompt,
+                    validator,
                 )
             except (UsageLimitExceeded, MissingProviderSecret):
                 raise
@@ -94,6 +96,7 @@ class ModelGateway:
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
+        validator: Callable[[OutputT], None] | None,
     ) -> OutputT:
         self.ledger.reserve_request()
         started = self.clock()
@@ -104,6 +107,8 @@ class ModelGateway:
                 instructions=instructions,
                 retries=OUTPUT_RETRIES,
             )
+            if validator is not None:
+                agent.output_validator(self._semantic_validator(validator))
             result = await agent.run(
                 prompt,
                 model_settings=self._model_settings(invocation.endpoint),
@@ -133,6 +138,19 @@ class ModelGateway:
     def _invocation_request_limit(self) -> int:
         remaining = self.config.budget.request_limit - self.ledger.requests
         return 1 + min(OUTPUT_RETRIES, max(0, remaining))
+
+    @staticmethod
+    def _semantic_validator(
+        validator: Callable[[OutputT], None],
+    ) -> Callable[[OutputT], OutputT]:
+        def validate(output: OutputT) -> OutputT:
+            try:
+                validator(output)
+            except ValueError as error:
+                raise ModelRetry(str(error)) from error
+            return output
+
+        return validate
 
     @staticmethod
     def _model_settings(endpoint: ModelEndpoint) -> ModelSettings:

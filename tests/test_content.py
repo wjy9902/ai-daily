@@ -76,7 +76,12 @@ class FakeGateway:
         self.calls = 0
 
     async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> Any:
         if output_type is JudgeBatch:
             self.calls += 1
@@ -115,7 +120,12 @@ async def test_judge_and_editor_preserve_evidence_ids() -> None:
 
 class BadGateway(FakeGateway):
     async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -134,32 +144,17 @@ async def test_editor_cannot_invent_evidence() -> None:
 
 class DuplicateJudgeGateway(FakeGateway):
     async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, JudgeBatch):
             return JudgeBatch(decisions=[value.decisions[0], value.decisions[0]])
         return value
-
-
-class IncompleteThenValidJudgeGateway(FakeGateway):
-    async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
-    ) -> Any:
-        value = await super().generate(role, output_type, instructions, prompt)
-        if isinstance(value, JudgeBatch) and self.calls == 1:
-            return JudgeBatch(decisions=value.decisions[:-1])
-        return value
-
-
-async def test_judge_repairs_an_incomplete_semantic_output_once() -> None:
-    gateway = IncompleteThenValidJudgeGateway()
-    events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(2)]
-
-    decisions = await judge_events(gateway, events)  # type: ignore[arg-type]
-
-    assert gateway.calls == 2
-    assert {decision.event_id for decision in decisions} == {"event-0", "event-1"}
 
 
 async def test_judge_must_return_each_event_exactly_once() -> None:
@@ -168,7 +163,6 @@ async def test_judge_must_return_each_event_exactly_once() -> None:
         await judge_events(gateway, [event()])  # type: ignore[arg-type]
     except ValueError as error:
         assert "exactly once" in str(error)
-        assert gateway.calls == 2
     else:
         raise AssertionError("duplicate judge decision was accepted")
 
@@ -243,7 +237,12 @@ class PlanningGateway:
         self.candidate_count = 0
 
     async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> Any:
         assert output_type is EditorialPlan
         self.candidate_count = len(json.loads(prompt))
@@ -317,6 +316,7 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "source-quota":
         for event_value in events[:3]:
             event_value.items[0].source = "same-source"
+            event_value.items[0].source_label = "Same Source"
     elif mutation == "category-breadth":
         for selection in plan_value.selections[:9]:
             selection.category = "模型与平台"
@@ -334,7 +334,11 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     captured: dict[str, str] = {}
 
     async def generate(
-        role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> EditorialPlan:
         captured["instructions"] = instructions
         return gateway.output

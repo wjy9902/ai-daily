@@ -64,7 +64,12 @@ class FakeGateway:
         self.fail_plan = fail_plan
 
     async def generate(
-        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
     ) -> Any:
         values = json.loads(prompt)
         if output_type is JudgeBatch:

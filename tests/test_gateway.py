@@ -75,6 +75,7 @@ async def test_generate_falls_back_only_after_a_recoverable_failure(
         output_type: type[JudgeDecision],
         instructions: str,
         prompt: str,
+        validator: object,
     ) -> JudgeDecision:
         calls.append(invocation)
         if invocation.attempt == 1:
@@ -112,6 +113,7 @@ async def test_generate_does_not_fallback_after_unrecoverable_error(
         output_type: type[JudgeDecision],
         instructions: str,
         prompt: str,
+        validator: object,
     ) -> JudgeDecision:
         calls.append(invocation)
         raise ModelHTTPError(401, "unauthorized")
@@ -158,6 +160,101 @@ async def test_generate_repairs_invalid_structured_output_with_same_provider(
     assert result.category == "行业动态"
     assert calls == 2
     assert gateway.ledger.requests == 2
+
+
+async def test_generate_repairs_semantically_invalid_output_with_same_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    calls = 0
+
+    def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        event_id = "wrong-event" if calls == 1 else "event-1"
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": event_id,
+                        "selected": True,
+                        "category": "行业动态",
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "重要事件",
+                        "evidence_ids": ["event-1-1"],
+                    },
+                )
+            ]
+        )
+
+    def validate(output: JudgeDecision) -> None:
+        if output.event_id != "event-1":
+            raise ValueError("event_id must be event-1")
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+
+    result = await gateway.generate(
+        "judge",
+        JudgeDecision,
+        "instructions",
+        "prompt",
+        validator=validate,
+    )
+
+    assert result.event_id == "event-1"
+    assert calls == 2
+    assert gateway.ledger.requests == 2
+
+
+async def test_semantic_validation_failure_does_not_cross_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    endpoints: list[str] = []
+    calls = 0
+
+    def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": "wrong-event",
+                        "selected": True,
+                        "category": "行业动态",
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "重要事件",
+                        "evidence_ids": ["event-1-1"],
+                    },
+                )
+            ]
+        )
+
+    def build_model(endpoint: object) -> FunctionModel:
+        endpoints.append(str(endpoint))
+        return FunctionModel(respond)
+
+    def validate(output: JudgeDecision) -> None:
+        raise ValueError("event_id must be event-1")
+
+    monkeypatch.setattr(gateway, "_build_model", build_model)
+
+    with pytest.raises(ModelInvocationFailed, match="UnexpectedModelBehavior"):
+        await gateway.generate(
+            "judge",
+            JudgeDecision,
+            "instructions",
+            "prompt",
+            validator=validate,
+        )
+
+    assert calls == 2
+    assert len(endpoints) == 1
 
 
 def test_structured_output_retry_cannot_exceed_daily_request_budget() -> None:
