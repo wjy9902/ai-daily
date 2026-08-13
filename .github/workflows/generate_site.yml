@@ -95,6 +95,15 @@ jobs:
           SITE_DESC="每日 AI 前沿技术情报，由 AI 辅助创作"
           find output/public -name "*.html" -exec sed -i \
             -e "s|</head>|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><meta name=\"description\" content=\"${SITE_DESC}\"><meta property=\"og:title\" content=\"${SITE_TITLE}\"><meta property=\"og:description\" content=\"${SITE_DESC}\"><meta property=\"og:image\" content=\"${BASE_URL%/}/icon.png\"><meta property=\"og:type\" content=\"website\"><link rel=\"stylesheet\" href=\"${EDITORIAL_HREF}\"><link rel=\"stylesheet\" href=\"${CSS_HREF}\"><script defer src=\"${JS_SRC}\"></script><link rel=\"icon\" type=\"image/png\" href=\"${ICON_HREF}\"><link rel=\"shortcut icon\" href=\"${ICON_HREF}\"></head>|g" {} \;
+          # Archive banner. This site stopped publishing on 2026-08-13 but is
+          # deliberately left up: every issue URL here is already linked from
+          # elsewhere and indexed, and breaking them to save a static host
+          # would cost more than keeping it. The banner is styled inline so it
+          # survives regardless of what the theme's stylesheet does.
+          NEW_SITE="https://daily.jiayutool.cn/"
+          BANNER="<div style=\"background:#2b2b2b;color:#f5f2ec;padding:12px 16px;text-align:center;font-size:15px;line-height:1.6\">本站已停止更新，内容归档保留。新站：<a href=\"${NEW_SITE}\" style=\"color:#e07a3f;font-weight:600\">daily.jiayutool.cn</a></div>"
+          find output/public -name "*.html" -exec sed -i \
+            -e "s|<body>|<body>${BANNER}|" {} \;
           cp rss.xml output/public/rss.xml
       - name: Setup Pages
         uses: actions/configure-pages@v5
