@@ -1,143 +1,154 @@
-/* 甲鱼AI日报 — Custom Styles (Round 2) */
+@import url("editorial.css");
 
-/* ===== Design Tokens ===== */
 :root {
-  --primary:        #e67e22;
-  --primary-hover:  #cf6d17;
-  --primary-pale:   #fdf6ee;
-  --bg:             #f4f5f7;
-  --surface:        #ffffff;
-  --text:           #1a1a1a;
-  --text-secondary: #4a4a4a;
-  --text-muted:     #8c8c8c;
-  --border:         #e8e8e8;
-  --border-light:   #f0f0f0;
-  --radius:         8px;
-  --radius-sm:      4px;
-  --shadow-sm:      0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-card:    0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.03);
-
-  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC",
-               "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei",
-               "Helvetica Neue", sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono",
-               Consolas, "Courier New", monospace;
-
-  --text-base: 16px;
-  --leading:   1.85;
+  --accent: #d9632d;
+  --accent-dark: #a9441d;
+  --accent-soft: #fff2e8;
+  --paper: #fffefa;
+  --canvas: #f4f1eb;
+  --ink: #20211f;
+  --ink-soft: #555851;
+  --muted: #85877f;
+  --rule: #dedbd3;
+  --rule-soft: #ece9e1;
+  --code-bg: #202321;
+  --radius: 10px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC",
+    "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
-/* ===== Base & Theme Overrides ===== */
+html {
+  background: var(--canvas);
+  scroll-behavior: smooth;
+}
+
 body {
-  font-family: var(--font-body);
-  background: var(--bg);
-  color: var(--text);
-  font-size: var(--text-base);
-  line-height: var(--leading);
-  border-top-color: var(--primary);
+  background: var(--canvas);
+  border-top-color: var(--accent);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.75;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Override theme link color globally */
-a { color: var(--primary); }
-a:hover { color: var(--primary-hover); }
+a {
+  color: var(--accent-dark);
+}
 
-/* Container — respect theme 800px but add padding uniformity */
-.container { padding-bottom: 3rem; }
+a:hover {
+  color: var(--accent);
+}
 
-/* ===== Site Header ===== */
+.container {
+  padding-bottom: 3rem;
+}
+
 #header {
-  padding: 1.5rem 20px;
   align-items: center;
+  padding: 1.55rem 20px 1.25rem;
 }
 
 #header .logo a {
-  font-family: var(--font-body);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 1.45rem;
   font-weight: 800;
-  font-size: 1.5rem;
-  color: var(--text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.035em;
 }
 
 #header .logo a:hover {
-  color: var(--primary);
+  color: var(--accent);
 }
 
 #header .menu ul li a {
-  font-family: var(--font-body);
-  font-size: 0.9rem;
-  color: var(--text-secondary);
-  font-weight: 500;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 0.86rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
 }
 
-#header .menu ul li:before {
-  background: var(--primary);
+#header .menu ul li::before {
+  background: var(--accent);
 }
 
-/* ===== Post Card — Homepage List ===== */
+.mobile-navbar {
+  background: color-mix(in srgb, var(--canvas) 92%, transparent);
+  border-bottom-color: var(--rule);
+  backdrop-filter: blur(12px);
+}
+
+.mobile-navbar .mobile-header-logo .logo {
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-weight: 800;
+}
+
 main .posts {
-  border-bottom: none;
-  margin-bottom: 0;
+  border-bottom: 0;
 }
 
 main .post {
-  background: var(--surface);
+  background: var(--paper);
+  border: 1px solid var(--rule-soft);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-card);
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 0.75rem;
-  transition: box-shadow 0.2s;
+  box-shadow: 0 6px 24px rgb(53 47 38 / 4%);
+  margin-bottom: 0.8rem;
+  padding: 1.2rem 1.45rem;
 }
 
 main .post + .post {
-  border-top: none;
+  border-top: 1px solid var(--rule-soft);
+}
+
+main .posts .post {
+  transition: border-color 160ms ease, transform 160ms ease;
 }
 
 main .posts .post:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.09), 0 0 0 1px rgba(0, 0, 0, 0.03);
+  border-color: #d7c6b7;
+  transform: translateY(-1px);
 }
 
-/* ===== Post Header (shared list + detail) ===== */
 main .post__header {
   padding-bottom: 0;
 }
 
-/* Title — override theme's Athelas/26px/underline-animation */
 main .post__title,
 main .post .post__title {
-  font-family: var(--font-body);
-  font-size: 1.05rem;
-  font-weight: 600;
+  display: block;
+  font-family: var(--font-sans);
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
   line-height: 1.45;
   margin: 0 0 0.35rem;
-  display: block;
 }
 
-/* Remove theme's hover underline pseudo-element */
-main .post__title:before {
+main .post__title::before {
   display: none;
 }
 
 main .post__title a,
 main .post .post__title a {
-  color: var(--text);
+  color: var(--ink);
   text-decoration: none;
 }
 
 main .post__title a:hover,
 main .post .post__title a:hover {
-  color: var(--primary);
+  color: var(--accent-dark);
 }
 
-/* Meta dateline */
 main .post__meta {
-  font-size: 0.8rem;
-  color: var(--text-muted);
+  align-items: center;
+  color: var(--muted);
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.75rem;
-  align-items: center;
+  font-size: 0.78rem;
+  gap: 0.2rem 0.7rem;
   margin: 0;
 }
 
@@ -150,751 +161,217 @@ main .post__source {
 }
 
 main .post__source a {
-  color: var(--text-muted);
+  align-items: center;
+  border-bottom: 1px dashed var(--rule);
+  color: var(--muted);
+  display: inline-flex;
+  min-height: 24px;
   text-decoration: none;
-  border-bottom: 1px dashed var(--border);
-  transition: color 0.15s;
 }
 
 main .post__source a:hover {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
+  border-color: var(--accent);
+  color: var(--accent-dark);
 }
 
-/* Read More link */
 main .read-more {
-  margin-top: 0.5rem;
+  margin-top: 0.45rem;
 }
 
 main .read-more a {
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  color: var(--primary);
-  font-weight: 500;
-  transition: color 0.15s;
-}
-
-main .read-more a:hover {
-  color: var(--primary-hover);
+  color: var(--accent-dark);
+  font-family: var(--font-sans);
+  font-size: 0.83rem;
+  font-weight: 650;
   text-decoration: none;
 }
 
-/* Post summary (usually empty, but just in case) */
 main .post__summary {
   margin-bottom: 0;
 }
 
-/* ===== Detail Page — Article Post ===== */
-/* On detail page, the single .post article gets more room */
 main > .content > article.post {
-  padding: 2rem 1.5rem;
+  border-color: var(--rule);
+  box-shadow: 0 14px 40px rgb(53 47 38 / 6%);
+  padding: 2.1rem clamp(1.35rem, 4vw, 3rem);
 }
 
-/* Detail page title — bigger, more prominent */
-main > .content > article.post .post__title {
-  font-size: 1.35rem;
-  font-weight: 700;
-  line-height: 1.35;
-  margin-bottom: 0.5rem;
-  letter-spacing: -0.01em;
-}
-
-/* Detail page header — add bottom separator */
 main > .content > article.post .post__header {
+  border-bottom: 1px solid var(--rule-soft);
+  margin-bottom: 1.3rem;
   padding-bottom: 1rem;
-  margin-bottom: 0.25rem;
-  border-bottom: 1px solid var(--border-light);
 }
 
-/* Detail page meta — slightly larger */
-main > .content > article.post .post__meta {
-  font-size: 0.82rem;
-  gap: 0.3rem 0.9rem;
+main > .content > article.post .post__title {
+  font-size: clamp(1.25rem, 3vw, 1.6rem);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.35;
+  margin-bottom: 0.55rem;
 }
 
-/* Post reactions (emoji badges from theme) */
-main .post-reactions {
-  margin: 0.75rem 0;
-}
-
-main .post-reactions .reaction-emoji {
-  border-color: var(--border);
-  font-size: 0.85rem;
-}
-
-/* ===== Table of Contents ===== */
-/* Desktop: keep TOC as a right-side sticky/floating directory.
-   Mobile/tablet: fall back to inline card above article. */
 .post-toc {
-  position: fixed;
-  top: 6.25rem;
-  left: calc(50% + 270px);
-  width: 260px;
+  background: rgb(255 254 250 / 96%);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 28px rgb(53 47 38 / 6%);
+  display: block;
+  font-size: 0.8rem;
+  left: calc(50% + 285px);
+  line-height: 1.55;
   max-height: calc(100vh - 8rem);
   overflow: auto;
-  display: block;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.25rem;
-  margin-bottom: 1.25rem;
-  box-shadow: var(--shadow-sm);
-  font-size: 0.85rem;
-  line-height: 1.65;
+  padding: 0.9rem 1rem;
+  position: fixed;
+  top: 6.25rem;
+  width: 250px;
   z-index: 10;
 }
 
 .post-toc .post-toc-title {
-  font-family: var(--font-body);
-  font-size: 0.75rem;
-  font-weight: 600;
+  border-bottom: 1px solid var(--rule-soft);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.1em;
+  margin: 0 0 0.45rem;
+  padding-bottom: 0.45rem;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin: 0 0 0.5rem;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid var(--border-light);
 }
 
 .post-toc .post-toc-content ul {
   list-style: none;
-  padding-left: 0;
   margin: 0;
+  padding-left: 0;
 }
 
 .post-toc .post-toc-content ul ul {
-  padding-left: 1.1em;
-  display: block;
+  padding-left: 0.85rem;
 }
 
 .post-toc .post-toc-content a,
 .post-toc #TableOfContents a {
-  color: var(--text-secondary);
-  text-decoration: none;
+  color: var(--ink-soft);
   display: block;
-  padding: 0.15em 0;
-  transition: color 0.15s;
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  padding: 0.13rem 0;
+  text-decoration: none;
 }
 
 .post-toc .post-toc-content a:hover,
-.post-toc #TableOfContents a:hover {
-  color: var(--primary);
-}
-
+.post-toc #TableOfContents a:hover,
 .post-toc .post-toc-content .toc-link.active {
-  color: var(--primary);
-  font-weight: 500;
+  color: var(--accent-dark);
 }
 
-/* ===== Post Content ===== */
-.post-content {
-  font-size: 1rem;
-  line-height: var(--leading);
-  color: var(--text);
-  word-break: break-word;
-  overflow-wrap: break-word;
+main .pagination {
+  border-top: 0;
+  margin-top: 1.2rem;
 }
 
-.post-content p {
-  margin: 0 0 1.15em;
+main .pagination .page-number,
+main .pagination a {
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
 }
 
-/* --- Headings --- */
-.post-content h1 {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: var(--text);
-  border-bottom: 2px solid var(--primary);
-  padding-bottom: 0.35em;
-  margin: 2em 0 0.75em;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
-}
-
-.post-content h2 {
-  font-size: 1.15rem;
-  font-weight: 600;
-  color: #1a1f36;
-  margin: 1.8em 0 0.6em;
-  padding-bottom: 0.3em;
-  border-bottom: 1px solid var(--border);
-  line-height: 1.45;
-}
-
-.post-content h3 {
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: #2c3e50;
-  margin: 1.5em 0 0.5em;
-  line-height: 1.45;
-}
-
-.post-content h4 {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #34495e;
-  margin: 1.25em 0 0.4em;
-}
-
-/* Override theme's heading font-weight: 400 */
-main .post h2,
-main .post h3,
-main .post h4,
-main .post h5,
-main .post h6 {
-  font-weight: 600;
-}
-
-/* Issue ID codes inside headings — subtle grey label */
-.post-content h2 code,
-.post-content h3 code,
-.post-content h4 code {
-  background: #ebebeb;
-  color: #999;
-  font-size: 0.68em;
-  padding: 0.1em 0.45em;
-  border-radius: 3px;
-  font-weight: 400;
-  vertical-align: middle;
-  font-family: var(--font-mono);
-  letter-spacing: 0;
-}
-
-/* First heading — less top margin */
-.post-content > h1:first-child,
-.post-content > h2:first-child,
-.post-content > h3:first-child {
-  margin-top: 0.25em;
-}
-
-/* --- Links --- */
-.post-content a,
-main .post p > a {
-  color: var(--primary);
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.post-content a:hover,
-main .post p > a:hover {
-  color: var(--primary-hover);
-  border-bottom-color: var(--primary-hover);
-}
-
-/* --- Lists --- */
-.post-content ul,
-.post-content ol {
-  padding-left: 1.6em;
-  margin: 0.5em 0 1.1em;
-}
-
-.post-content li {
-  margin-bottom: 0.45em;
-  line-height: var(--leading);
-}
-
-.post-content li > p {
-  margin-bottom: 0.35em;
-}
-
-.post-content li ul,
-.post-content li ol {
-  margin: 0.3em 0 0.3em;
-}
-
-/* --- Blockquote --- */
-.post-content blockquote,
-main .post blockquote {
-  border-left: 3px solid var(--primary);
-  padding: 0.85em 1.2em;
-  margin: 1.25em 0;
-  background: var(--primary-pale);
-  color: var(--text-secondary);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  font-style: normal;
-  font-size: 0.95em;
-  line-height: 1.8;
-  box-shadow: none;
-  position: static;
-}
-
-.post-content blockquote p:last-child,
-main .post blockquote p:last-child {
-  margin-bottom: 0;
-}
-
-/* Nested blockquotes — reduce visual weight */
-.post-content blockquote blockquote {
-  background: rgba(0, 0, 0, 0.02);
-  border-left-color: var(--border);
-  margin: 0.75em 0;
-}
-
-/* ===== Info-Dense Blockquote — "Intelligence Card" ===== */
-/* Targets structured field blockquotes (TL;DR / 来源 / 核心事实 / …)
-   that directly follow an <h2> article heading.  The simple "今日亮点"
-   summary blockquote follows <h1>, so it is unaffected.
-   Mechanism: Zola's pulldown-cmark emits soft line-breaks (\n) between
-   fields inside a single <p>.  `white-space: pre-line` makes those
-   newlines visible; `strong::before { display: block }` inserts vertical
-   breathing room between fields without touching the HTML. */
-
-.post-content h2 + blockquote {
-  padding: 1em 1.3em;
-}
-
-.post-content h2 + blockquote p {
-  white-space: pre-line;
-  line-height: 1.7;
-}
-
-/* Field labels — orange scanning anchors */
-.post-content h2 + blockquote strong {
-  color: var(--primary-hover);
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
-
-/* Vertical gap before each field label */
-.post-content h2 + blockquote p strong::before {
-  content: '';
-  display: block;
-  height: 0.5em;
-}
-
-/* First field (TL;DR) — no extra gap above */
-.post-content h2 + blockquote p > strong:first-child::before {
-  display: none;
-}
-
-/* --- Inline Code --- */
-.post-content :not(pre) > code,
-main .post :not(pre) > code {
-  background: #f3f4f6;
-  color: #c0392b;
-  padding: 0.15em 0.4em;
-  border-radius: var(--radius-sm);
-  font-size: 0.875em;
-  font-family: var(--font-mono);
-  word-break: break-all;
-}
-
-/* --- Code Block --- */
-.post-content pre {
-  background: #1e1e2e;
-  color: #cdd6f4;
-  padding: 1.1em 1.4em;
-  border-radius: var(--radius);
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  margin: 1.25em 0;
-  font-size: 0.85em;
-  line-height: 1.65;
-  box-shadow: var(--shadow-sm);
-}
-
-.post-content pre > code {
-  background: none;
-  color: inherit;
-  padding: 0;
-  border-radius: 0;
-  font-size: 1em;
-  word-break: normal;
-}
-
-/* --- Strong --- */
-.post-content strong {
-  font-weight: 600;
-  color: #111;
-}
-
-/* --- Images --- */
-.post-content img {
-  max-width: 100%;
-  border-radius: var(--radius);
-  margin: 1.5em auto;
-  display: block;
-  box-shadow: var(--shadow-sm);
-}
-
-/* --- Horizontal Rule --- */
-.post-content hr {
-  border: none;
-  border-top: 1px solid var(--border);
-  margin: 2em 0;
-}
-
-/* --- Tables --- */
-.post-content table,
-main .post table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1.25em 0;
-  font-size: 0.88em;
-  box-shadow: none;
-  display: block;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.post-content thead,
-main .post table thead {
-  background: #f8f9fa;
-}
-
-.post-content th,
-main .post table th {
-  background: #f8f9fa;
-  font-weight: 600;
-  padding: 0.55em 0.9em;
-  border: 1px solid var(--border);
-  text-align: left;
-  white-space: nowrap;
-  font-size: 0.92em;
-  color: var(--text-secondary);
-}
-
-.post-content td,
-main .post table td {
-  padding: 0.5em 0.9em;
-  border: 1px solid var(--border);
-  line-height: 1.6;
-}
-
-.post-content tr:nth-child(even) td {
-  background: #fafafa;
-}
-
-main .post table tr:hover {
-  background-color: var(--primary-pale);
-}
-
-/* ===== Post Footer & Navigation ===== */
-main .post-footer {
-  margin-top: 2.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--border);
-}
-
-/* Tags */
-main .post-tags {
-  padding: 0.75rem 0;
-}
-
-main .post-tags a {
-  display: inline-block;
-  color: var(--primary);
-  background: var(--primary-pale);
-  padding: 0.15em 0.6em;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  margin-right: 0.4rem;
-  margin-bottom: 0.3rem;
-  transition: background 0.15s, color 0.15s;
-  word-break: break-all;
-}
-
-main .post-tags a:hover {
-  background: var(--primary);
+main .pagination .current {
+  background: var(--accent);
   color: #fff;
 }
 
-/* Post Navigation — override theme float with flex */
 main .post-nav {
+  border-top-color: var(--rule);
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 1rem 0;
-}
-
-/* Clear theme float styles */
-.next, .previous {
-  float: none;
-  font-size: inherit;
-  font-weight: inherit;
-}
-
-.next:hover, .previous:hover {
-  transform: none;
+  gap: 0.75rem;
 }
 
 main .post-nav a {
-  flex: 0 1 48%;
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  text-decoration: none;
-  padding: 0.65rem 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  transition: border-color 0.15s, color 0.15s;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
   line-height: 1.45;
-  font-weight: 500;
-  display: block;
-}
-
-main .post-nav a.next {
-  text-align: right;
-  margin-left: auto;
 }
 
 main .post-nav a:hover {
-  color: var(--primary);
-  border-color: var(--primary);
+  color: var(--accent-dark);
 }
 
-/* ===== Pagination ===== */
-main .pagination {
-  display: flex;
+#footer {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+}
+
+#footer a {
+  color: var(--ink-soft);
+}
+
+#btt {
+  align-items: center !important;
+  background: var(--ink) !important;
+  border: 0 !important;
+  box-shadow: 0 5px 18px rgb(32 33 31 / 22%);
+  display: flex !important;
+  font-family: var(--font-sans);
   justify-content: center;
-  gap: 1rem;
-  margin: 1.5rem 0;
-  font-family: var(--font-body);
 }
 
-main .pagination a {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  font-weight: 500;
-  padding: 0.4em 1em;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  transition: border-color 0.15s, color 0.15s;
-  float: none;
-}
-
-main .pagination a:hover {
-  color: var(--primary);
-  border-color: var(--primary);
-}
-
-/* ===== Mobile Navbar ===== */
-#mobile-panel {
-  position: relative;
-  z-index: 1;
-  background: var(--surface);
-  min-height: 100vh;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.mobile-navbar {
-  background: var(--surface);
-}
-
-.mobile-navbar .logo {
-  font-family: var(--font-body);
-  font-weight: 700;
-  color: var(--text);
-}
-
-.mobile-navbar .mobile-navbar-icon span {
-  background-color: var(--text-secondary);
-}
-
-.mobile-menu {
-  background-color: rgba(244, 245, 247, 0.95);
-}
-
-.mobile-menu .mobile-menu-list {
-  border-top-color: var(--border);
-}
-
-.mobile-menu .mobile-menu-item {
-  border-bottom-color: var(--border-light);
-}
-
-.mobile-menu .mobile-menu-list a {
-  font-family: var(--font-body);
-  color: var(--text-secondary);
-}
-
-.mobile-menu .mobile-menu-list a:hover {
-  color: var(--primary);
-}
-
-/* ===== Mobile ===== */
-@media (max-width: 800px) {
-  body {
-    border-top-color: var(--primary);
-    overflow-x: hidden;
-  }
-
-  .container {
-    width: 100%;
-    padding-bottom: 1.5rem;
-    overflow-x: clip;
-  }
-
-  #header {
-    padding: 50px 0 0;
-  }
-
-  main {
-    padding-top: 0.25rem;
-  }
-
-  main .content,
-  #mobile-panel {
-    width: 100%;
-    max-width: 100%;
-    padding: 0 12px;
-    box-sizing: border-box;
-    overflow-x: hidden;
-  }
-
-  main .post {
-    padding: 1rem 1.15rem;
-    margin-bottom: 0.6rem;
-    border-radius: var(--radius);
-  }
-
-  main > .content > article.post {
-    padding: 1.25rem 1.15rem;
-  }
-
-  /* 手机上先隐藏 TOC，优先保证正文可见、可读 */
+@media (max-width: 1180px) {
   .post-toc {
     display: none;
   }
-
-  #btt {
-    right: 1rem !important;
-    bottom: 1rem !important;
-    width: 44px !important;
-    height: 44px !important;
-  }
 }
 
-@media (max-width: 680px) {
-  :root {
-    --text-base: 15px;
-    --leading:   1.8;
+@media (max-width: 760px) {
+  .container {
+    padding-bottom: 1.75rem;
+  }
+
+  main .post {
+    border-left: 0;
+    border-radius: 7px;
+    border-right: 0;
+    margin-bottom: 0.65rem;
+    padding: 1rem 1.1rem;
+  }
+
+  main > .content > article.post {
+    box-shadow: 0 8px 28px rgb(53 47 38 / 5%);
+    padding: 1.25rem 1.05rem;
+  }
+
+  main > .content > article.post .post__header {
+    margin-bottom: 1rem;
   }
 
   .mobile-navbar .mobile-header-logo {
-    margin-right: 0;
     max-width: calc(100% - 64px);
   }
 
   .mobile-navbar .mobile-header-logo .logo {
-    display: inline-block;
-    max-width: 100%;
     font-size: 18px;
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* Detail page title — scale down gracefully */
-  main > .content > article.post .post__title {
-    font-size: 1.15rem;
-    line-height: 1.4;
-  }
-
-  .post-content h1 {
-    font-size: 1.25rem;
-    margin: 1.5em 0 0.6em;
-  }
-
-  .post-content h2 {
-    font-size: 1.05rem;
-    margin: 1.5em 0 0.5em;
-  }
-
-  .post-content h3 {
-    font-size: 1rem;
-  }
-
-  /* Code blocks — prevent overflow */
-  .post-content pre {
-    padding: 0.85em 1em;
-    font-size: 0.8em;
-    border-radius: var(--radius-sm);
-    margin-left: -0.5em;
-    margin-right: -0.5em;
-  }
-
-  /* Tables — ensure scroll on narrow screens */
-  .post-content table {
-    font-size: 0.82em;
-    margin-left: -0.25em;
-    margin-right: -0.25em;
-  }
-
-  /* Blockquote — tighter on mobile */
-  .post-content blockquote,
-  main .post blockquote {
-    padding: 0.65em 0.9em;
-    margin: 1em 0;
-    font-size: 0.92em;
-  }
-
-  /* Intelligence Card — tighter field gaps on mobile */
-  .post-content h2 + blockquote {
-    padding: 0.75em 1em;
-  }
-
-  .post-content h2 + blockquote p strong::before {
-    height: 0.35em;
-  }
-
-  /* Post-nav stacks vertically */
   main .post-nav {
     flex-direction: column;
     gap: 0.5rem;
   }
 
-  main .post-nav a {
-    flex: 1 1 100%;
-    max-width: 100%;
-  }
-
+  main .post-nav a,
   main .post-nav a.next {
+    max-width: 100%;
     text-align: left;
   }
 
-  /* TOC — compact */
-  .post-toc {
-    padding: 0.75rem 1rem;
-    font-size: 0.82rem;
+  #btt {
+    bottom: 1rem !important;
+    height: 42px !important;
+    right: 1rem !important;
+    width: 42px !important;
   }
-
-  /* Meta — allow wrapping, reduce gap */
-  main .post__meta {
-    gap: 0.15rem 0.5rem;
-  }
-
-  /* Pagination */
-  main .pagination {
-    margin: 1rem 0;
-  }
-}
-
-/* ===== Small phone (< 400px) ===== */
-@media (max-width: 400px) {
-  main .post {
-    padding: 0.85rem 1rem;
-    border-radius: var(--radius-sm);
-  }
-
-  main > .content > article.post {
-    padding: 1rem;
-  }
-
-  main > .content > article.post .post__title {
-    font-size: 1.08rem;
-  }
-
-  .post-content pre {
-    margin-left: -0.75em;
-    margin-right: -0.75em;
-    border-radius: 0;
-  }
-}
-
-/* ===== Footnotes ===== */
-main .post .footnote-definition:first-of-type {
-  border-top-color: var(--border);
 }
