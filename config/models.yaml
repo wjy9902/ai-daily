@@ -1,5 +1,8 @@
 budget:
-  request_limit: 30
+  # Shared by every timer window of the same day, not per process. A full
+  # issue costs about 21 requests, so this leaves room for one upgrade attempt
+  # after a degraded morning. Money, not request count, is the real ceiling.
+  request_limit: 45
   input_token_limit: 200000
   output_token_limit: 30000
   cost_cny_limit: 5.0

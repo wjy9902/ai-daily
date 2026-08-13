@@ -571,10 +571,11 @@ async def test_short_feed_excerpts_demote_detailed_stories_to_briefs(tmp_path: P
 
 
 async def test_an_unreachable_editor_still_produces_a_brief_only_issue(tmp_path: Path) -> None:
-    """The editor outage costs the prose, not the issue.
+    """The editor outage costs the prose, not the issue or the judgement.
 
-    The stage raised, so its judge decisions are lost with it and the issue is
-    rebuilt from ranking alone (L2B) rather than from the decisions (L2A).
+    Judging succeeded before the editor failed, so the issue is rebuilt from
+    those decisions (L2A) rather than from ranking alone (L2B). The decisions
+    ride out on the exception; tuple unpacking never runs when a stage raises.
     """
 
     config = load_config(Path("config"))
@@ -592,13 +593,21 @@ async def test_an_unreachable_editor_still_produces_a_brief_only_issue(tmp_path:
     outcome = await pipeline.run(_today(), publish=False)
 
     assert FailureClass.PLAN_FAILED in outcome.tracker.failures
-    assert outcome.publication.level is PublicationLevel.L2B
+    assert outcome.publication.level is PublicationLevel.L2A
     assert outcome.publication.details == []
     assert outcome.publication.viewpoints == []
     assert outcome.publication.briefs
     assert outcome.publication.degradation_reasons == ["编辑规划失败"]
     assert outcome.publication.marker_is_valid()
     assert len(list(tmp_path.rglob("decisions.json"))) == 1
+    # Every brief traces back to something the judge actually selected, which
+    # is what separates L2A from a bare ranking.
+    judged = {
+        decision["event_id"]
+        for decision in json.loads(next(tmp_path.rglob("decisions.json")).read_text())
+        if decision["selected"]
+    }
+    assert {brief.event_id for brief in outcome.publication.briefs} <= judged
 
 
 async def test_editor_promoted_false_negative_is_enriched_after_planning(

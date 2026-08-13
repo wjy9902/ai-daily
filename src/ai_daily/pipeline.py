@@ -60,11 +60,19 @@ class QualityGateFailed(RuntimeError):
 
 
 class ModelStageFailed(RuntimeError):
-    """A model stage failed in a way that maps onto a degraded level."""
+    """A model stage failed in a way that maps onto a degraded level.
 
-    def __init__(self, failure: FailureClass) -> None:
+    Carries whatever the earlier stages did produce. Without this the judge
+    decisions are lost when planning fails, and a run that could have published
+    a judged issue (L2A) falls all the way to bare ranking (L2B).
+    """
+
+    def __init__(
+        self, failure: FailureClass, decisions: list[JudgeDecision] | None = None
+    ) -> None:
         super().__init__(failure.value)
         self.failure = failure
+        self.decisions = decisions or []
 
 
 @dataclass(frozen=True)
@@ -192,13 +200,27 @@ class DailyPipeline:
         self.client = client or httpx.AsyncClient(follow_redirects=True)
         self.collector = collector or Collector()
         self.layout = layout or SiteLayout(Path(self.config.pipeline.artifacts_dir).parent)
-        self.gateway = gateway or ModelGateway(
-            config.models,
-            self.secrets,
-            # The ledger is keyed by date on disk so every timer window of the
-            # same morning draws from one budget rather than a fresh one each.
-            ledger=BudgetLedger(config.models.budget),
+        self.gateway = gateway or ModelGateway(config.models, self.secrets)
+        # An injected gateway keeps its own ledger; tests want that. Only a
+        # gateway we own gets rebound to the day's on-disk budget in run().
+        self._owns_gateway = gateway is None
+
+    def _bind_daily_budget(self, target_date: date) -> None:
+        """Point the ledger at this date's on-disk budget.
+
+        Without this the ceiling is per process, so three timer windows in one
+        morning could each spend the full daily allowance. The path depends on
+        the target date, which is not known until the run starts.
+        """
+
+        if not self._owns_gateway:
+            return
+        ledger = BudgetLedger(
+            self.config.models.budget,
+            store_path=self.layout.budget_path(target_date),
         )
+        ledger.start_run()
+        self.gateway.ledger = ledger
 
     async def run(self, target_date: date, publish: bool) -> RunOutcome:
         """Produce the best issue today's inputs allow.
@@ -211,6 +233,8 @@ class DailyPipeline:
         run_id = f"{target_date.isoformat()}-{uuid.uuid4().hex[:8]}"
         run_dir = Path(self.config.pipeline.artifacts_dir) / target_date.isoformat() / run_id
         tracker = DegradationTracker()
+        self.layout.ensure()
+        self._bind_daily_budget(target_date)
 
         items, health = await self._collect(run_dir, tracker)
         filtered, candidates = await self._candidates(target_date, items, run_dir, tracker)
@@ -270,6 +294,9 @@ class DailyPipeline:
         try:
             decisions, plan, drafts = await self._generate_content(candidates, run_dir, tracker)
         except ModelStageFailed as error:
+            # Tuple unpacking above never runs when the stage raises, so the
+            # partial judge output has to come off the exception.
+            decisions = error.decisions
             tracker.record(error.failure)
 
         if plan is not None:
@@ -406,7 +433,7 @@ class DailyPipeline:
             MissingProviderSecret,
             ValueError,
         ) as error:
-            raise ModelStageFailed(_classify_model_failure(error)) from error
+            raise ModelStageFailed(_classify_model_failure(error), decisions) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
             await self.collector.aclose()
