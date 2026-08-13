@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic_ai.exceptions import UsageLimitExceeded
 
 from ai_daily.artifacts import write_artifact
 from ai_daily.budget import BudgetExceeded, BudgetLedger, StageBudgetExceeded
@@ -93,7 +94,9 @@ MINIMUM_PUBLISHABLE_CANDIDATES = 5
 
 
 def _classify_model_failure(error: Exception) -> FailureClass:
-    if isinstance(error, StageBudgetExceeded | BudgetExceeded):
+    if isinstance(error, StageBudgetExceeded | BudgetExceeded | UsageLimitExceeded):
+        # UsageLimitExceeded is pydantic-ai's own ceiling, raised inside a run
+        # rather than by our ledger. It means the same thing: stop spending.
         return FailureClass.BUDGET_EXHAUSTED
     if isinstance(error, MissingProviderSecret):
         # A revoked or missing key at 04:20 must not cost the day. Nothing
@@ -431,6 +434,7 @@ class DailyPipeline:
             BudgetExceeded,
             ModelInvocationFailed,
             MissingProviderSecret,
+            UsageLimitExceeded,
             ValueError,
         ) as error:
             raise ModelStageFailed(_classify_model_failure(error), decisions) from error

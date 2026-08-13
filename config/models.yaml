@@ -3,8 +3,13 @@ budget:
   # issue costs about 21 requests, so this leaves room for one upgrade attempt
   # after a degraded morning. Money, not request count, is the real ceiling.
   request_limit: 45
-  input_token_limit: 200000
-  output_token_limit: 30000
+  # Token ceilings are a backstop against a runaway loop, not the spending
+  # control. Cost is. The old 30k output ceiling was the binding constraint and
+  # aborted a real run at nine requests, which is the budget stopping work that
+  # the money limit would happily have paid for. These are sized so that ¥5 is
+  # reached first at current DeepSeek prices.
+  input_token_limit: 2000000
+  output_token_limit: 500000
   cost_cny_limit: 5.0
 
 roles:
