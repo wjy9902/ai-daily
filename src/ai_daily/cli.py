@@ -109,6 +109,7 @@ async def _run(args: argparse.Namespace) -> int:
             "target_date": target.isoformat(),
             "mode": args.mode,
             "budget": pipeline.gateway.ledger.snapshot(),
+            "degradation_detail": dict(outcome.tracker.details),
             "sources": [item.model_dump(mode="json") for item in outcome.artifact.health],
         }
 

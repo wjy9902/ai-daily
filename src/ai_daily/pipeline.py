@@ -69,11 +69,15 @@ class ModelStageFailed(RuntimeError):
     """
 
     def __init__(
-        self, failure: FailureClass, decisions: list[JudgeDecision] | None = None
+        self,
+        failure: FailureClass,
+        decisions: list[JudgeDecision] | None = None,
+        detail: str | None = None,
     ) -> None:
-        super().__init__(failure.value)
+        super().__init__(detail or failure.value)
         self.failure = failure
         self.decisions = decisions or []
+        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -270,6 +274,7 @@ class DailyPipeline:
                 "detail_count": len(publication.details),
                 "brief_count": len(publication.briefs),
                 "degradation": [failure.value for failure in tracker.failures],
+                "degradation_detail": dict(tracker.details),
                 **self.gateway.ledger.snapshot(),
             },
         )
@@ -300,7 +305,7 @@ class DailyPipeline:
             # Tuple unpacking above never runs when the stage raises, so the
             # partial judge output has to come off the exception.
             decisions = error.decisions
-            tracker.record(error.failure)
+            tracker.record(error.failure, error.detail)
 
         if plan is not None:
             try:
@@ -437,7 +442,11 @@ class DailyPipeline:
             UsageLimitExceeded,
             ValueError,
         ) as error:
-            raise ModelStageFailed(_classify_model_failure(error), decisions) from error
+            raise ModelStageFailed(
+                _classify_model_failure(error),
+                decisions,
+                f"{type(error).__name__}: {error}",
+            ) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
             await self.collector.aclose()

@@ -1,13 +1,19 @@
 from pathlib import Path
 
 
-def test_daily_workflow_contains_all_beijing_schedule_conversions() -> None:
+def test_daily_workflow_no_longer_publishes_on_a_schedule() -> None:
+    """Publication moved to the self-hosted timer; two schedules would collide.
+
+    The workflow is kept, and kept dispatchable, so the old path remains one
+    click away if the new host has to be abandoned. What must not come back is
+    the cron: that would have GitHub and the server publishing the same day
+    from different pipelines.
+    """
+
     workflow = Path(".github/workflows/daily.yml").read_text()
-    assert 'cron: "20 20 * * *"' in workflow
-    assert 'cron: "5 21 * * *"' in workflow
-    assert 'cron: "45 21 * * *"' in workflow
-    assert "DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}" in workflow
-    assert "DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}" in workflow
+    assert "schedule:" not in workflow
+    assert "cron:" not in workflow
+    assert "workflow_dispatch:" in workflow
 
 
 def test_site_workflow_is_reusable_and_locked() -> None:

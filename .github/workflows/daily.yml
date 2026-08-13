@@ -1,10 +1,11 @@
 name: Generate AI Daily
 
+# Publication moved to daily.jiayutool.cn on 2026-08-13, where it runs from a
+# systemd timer. The schedule is removed rather than the whole workflow so the
+# old path stays one dispatch away if the new host has to be abandoned; see
+# ops/RESTORE.md. Leaving the cron on would have two systems publishing the
+# same day from different pipelines.
 on:
-  schedule:
-    - cron: "20 20 * * *"
-    - cron: "5 21 * * *"
-    - cron: "45 21 * * *"
   workflow_dispatch:
     inputs:
       target_date:

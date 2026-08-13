@@ -87,10 +87,16 @@ class DegradationTracker:
     """Accumulates failures during a run and reports the level they allow."""
 
     failures: list[FailureClass] = field(default_factory=list)
+    #: The underlying error behind each failure, for the operator.
+    #: Degrading without recording why turns a diagnosable fault into a silent
+    #: one: the reader sees a smaller issue and nobody can say what broke.
+    details: dict[str, str] = field(default_factory=dict)
 
-    def record(self, failure: FailureClass) -> None:
+    def record(self, failure: FailureClass, detail: str | None = None) -> None:
         if failure not in self.failures:
             self.failures.append(failure)
+        if detail:
+            self.details.setdefault(failure.value, detail[:500])
 
     def ceiling(self) -> PublicationLevel:
         """The best level still permitted by everything recorded so far."""
