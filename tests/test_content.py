@@ -1109,13 +1109,52 @@ def test_two_distinct_registrable_domains_may_lead() -> None:
 def test_syndicated_copies_of_one_publisher_may_not_lead() -> None:
     """Two URLs from the same publisher are one source, not corroboration."""
 
-    assert not lead_is_corroborated(
-        _lead_event(["https://www.example.com/story", "https://news.example.com/story"])
+    event = _lead_event(
+        ["https://www.example.com/story", "https://news.example.com/story"]
     )
+    syndicated = event.model_copy(
+        update={
+            "items": [
+                item.model_copy(update={"source_tier": SourceTier.B})
+                for item in event.items
+            ]
+        }
+    )
+    assert not lead_is_corroborated(syndicated)
 
 
-def test_a_single_non_official_source_may_not_lead() -> None:
-    assert not lead_is_corroborated(_lead_event(["https://example.com/story"]))
+def test_a_single_tier_a_publication_may_lead() -> None:
+    """Tier A is this project's existing statement of which mastheads it trusts.
+
+    Without this, a day whose real news was a model release and a supply-chain
+    attack led with a benchmark announcement, because clustering never merges
+    a story across outlets and only official blogs could qualify.
+    """
+
+    event = _lead_event(["https://www.qbitai.com/2026/08/1.html"])
+    tier_a = event.model_copy(
+        update={
+            "items": [
+                item.model_copy(update={"source_tier": SourceTier.A})
+                for item in event.items
+            ]
+        }
+    )
+    assert lead_is_corroborated(tier_a)
+
+
+def test_a_single_lower_tier_source_may_not_lead() -> None:
+    event = _lead_event(["https://example.com/story"])
+    for tier in (SourceTier.B, SourceTier.C):
+        lowered = event.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"source_tier": tier})
+                    for item in event.items
+                ]
+            }
+        )
+        assert not lead_is_corroborated(lowered)
 
 
 def test_an_uncorroborated_lead_is_demoted_not_rejected() -> None:
@@ -1192,7 +1231,10 @@ def test_plan_validation_leaves_corroboration_to_the_enforcer() -> None:
         update={
             "items": [
                 events[0].items[0].model_copy(
-                    update={"source_channel": SourceChannel.NEWS}
+                    update={
+                        "source_channel": SourceChannel.NEWS,
+                        "source_tier": SourceTier.B,
+                    }
                 )
             ]
         }

@@ -28,6 +28,7 @@ from ai_daily.models import (
     JudgeDecision,
     PipelineConfig,
     SourceChannel,
+    SourceTier,
     StrictModel,
 )
 from ai_daily.normalize import canonicalize_url
@@ -212,15 +213,32 @@ def registrable_domain(url: str) -> str:
 
 
 def lead_is_corroborated(event: Event) -> bool:
-    """True when ``event`` is fit to lead the issue.
+    """True when ``event`` is well enough sourced to lead the issue.
 
-    Either first-party — it carries an ``official`` or ``release`` item, so the
-    party that made the news said so itself — or reported by at least two
-    distinct registrable domains, so a syndicated copy or an aggregator repost
-    of one story cannot pose as its own corroboration.
+    Any one of three things qualifies:
+
+    * **First-party** — an ``official`` or ``release`` item, so the party that
+      made the news said so itself.
+    * **Two independent publishers** — at least two distinct registrable
+      domains, so a syndicated copy or an aggregator repost of one story
+      cannot pose as its own corroboration.
+    * **One Tier A publication** — a masthead this project already classifies
+      as first-rank.
+
+    That third clause is a deliberate concession to how the pipeline actually
+    behaves. Clustering does not merge the same story across outlets today, so
+    every candidate arrives single-sourced and the two-publisher clause is
+    effectively unreachable. Without it, the only stories that could lead were
+    corporate blog posts, and a day whose real news was a DeepSeek release, a
+    Qwen open-sourcing and a supply-chain attack led instead with a benchmark
+    announcement. Source tier is this project's existing statement of which
+    mastheads it trusts, so leaning on it is not a new judgement — and a lone
+    Tier B or C report still cannot lead.
     """
 
     if any(item.source_channel in FIRST_PARTY_CHANNELS for item in event.items):
+        return True
+    if any(item.source_tier is SourceTier.A for item in event.items):
         return True
     return len({registrable_domain(str(item.url)) for item in event.items}) >= 2
 
