@@ -28,6 +28,7 @@ from ai_daily.models import (
     JudgeDecision,
     RawItem,
     SourceTier,
+    SourceTimeKind,
 )
 
 
@@ -462,6 +463,8 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("category-breadth", "lacks category breadth"),
         ("speculative-headline", "unverified speculation"),
         ("speculative-brief", "unverified speculation"),
+        ("sample-extrapolation", "beyond cited samples"),
+        ("repository-release-insight", "coordinated release"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -496,6 +499,12 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
         plan_value.selections[0].headline = "新模型或随后发布开源权重"
     elif mutation == "speculative-brief":
         plan_value.selections[0].brief = "暂无权重确认，但社区认为开源可能性高。"
+    elif mutation == "sample-extrapolation":
+        plan_value.editor_viewpoint[0].text = "两个平台数据表明用户选择已全面改变。"
+    elif mutation == "repository-release-insight":
+        events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        plan_value.editor_viewpoint[0].text = "模型权重与API双轨发布。"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 

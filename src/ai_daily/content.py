@@ -48,6 +48,13 @@ DRAFT_SPECULATION_RE = re.compile(
 EVIDENCE_PIPELINE_META_RE = re.compile(
     r"(?:证据|摘要|材料).{0,20}(?:截断|被截|未完整|不完整)"
 )
+REPOSITORY_RELEASE_RE = re.compile(
+    r"(?:同步|同时|双轨).{0,12}(?:发布|推出|上线|开放)|"
+    r"(?:发布|推出|上线|开放).{0,12}(?:同步|同时|双轨)"
+)
+SAMPLE_EXTRAPOLATION_RE = re.compile(
+    r"(?:表明|意味着|说明).{0,40}(?:用户选择|整体市场|全行业|市场格局)"
+)
 
 
 def evidence_bundle(
@@ -296,17 +303,27 @@ def _validate_factual_copy(plan: EditorialPlan) -> None:
                     f"editorial plan {field} contains unverified speculation: "
                     f"event_id={selection.event_id}"
                 )
+    for insight in plan.editor_viewpoint:
+        if SPECULATIVE_COPY_RE.search(insight.text):
+            raise ValueError("editor viewpoint contains unverified speculation")
+        if SAMPLE_EXTRAPOLATION_RE.search(insight.text):
+            raise ValueError("editor viewpoint extrapolates beyond cited samples")
 
 
 def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     selected_evidence: set[str] = set()
+    repository_evidence: set[str] = set()
     for selection in plan.selections:
-        allowed = {
-            item.evidence_id for item in evidence_bundle(events_by_id[selection.event_id]).evidence
-        }
+        bundle = evidence_bundle(events_by_id[selection.event_id])
+        allowed = {item.evidence_id for item in bundle.evidence}
         if not set(selection.evidence_ids) <= allowed:
             raise ValueError("editorial plan referenced unknown evidence")
         selected_evidence.update(selection.evidence_ids)
+        repository_evidence.update(
+            item.evidence_id
+            for item in bundle.evidence
+            if item.source_time_kind.value == "repository_updated"
+        )
     for insight in plan.editor_viewpoint:
         unknown = sorted(set(insight.evidence_ids) - selected_evidence)
         if unknown:
@@ -315,6 +332,10 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
                 "editor viewpoint referenced unselected evidence "
                 f"ids={unknown}; use only selected evidence ids={allowed_ids}"
             )
+        if set(insight.evidence_ids) & repository_evidence and REPOSITORY_RELEASE_RE.search(
+            insight.text
+        ):
+            raise ValueError("editor viewpoint rewrote repository update as coordinated release")
 
 
 def _validate_plan_quotas(
