@@ -40,6 +40,10 @@ SPECULATIVE_COPY_RE = re.compile(
     r"(?:传闻|尚未证实|据猜测|或将|或随后|"
     r"(?:可能|也许|预计|有望).{0,16}(?:发布|推出|上线|开放|宣布|融资|收购|合并))"
 )
+DRAFT_SPECULATION_RE = re.compile(
+    r"(?:可能|也许|或许|预计|推测|猜测|假设|"
+    r"若[^，。；]{0,40}(?:将|会|可能|意味着))"
+)
 
 
 def evidence_bundle(
@@ -375,7 +379,7 @@ async def _draft_one(
             "不得把相关性写成因果，也不得用证据外的人事、战略或竞争变化解释数据。"
             "正文证据已优先于 RSS 摘要；不得声称证据未披露实际已经写明的名称、数字或限制。"
             "若 source_time_kind 为 repository_updated，只能称为仓库更新，"
-            "不能擅自称为在该时间首次发布。"
+            "不能擅自称为在该时间首次发布，也不能用“同步”暗示API与仓库同时更新。"
         ),
         prompt=json.dumps(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},
@@ -393,3 +397,8 @@ def _validate_draft(
     allowed = {evidence.evidence_id for evidence in bundle.evidence}
     if not set(draft.evidence_ids) <= allowed:
         raise ValueError("editor referenced unknown evidence")
+    factual_fields = [draft.tldr, *draft.facts, draft.why_it_matters]
+    if draft.action:
+        factual_fields.append(draft.action)
+    if any(DRAFT_SPECULATION_RE.search(value) for value in factual_fields):
+        raise ValueError("editor put speculation outside caveat")

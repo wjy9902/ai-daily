@@ -197,6 +197,33 @@ async def test_editor_cannot_change_draft_event() -> None:
         await draft_selected(WrongDraftEventGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
+class SpeculativeDraftGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(
+                update={
+                    "why_it_matters": (
+                        "若平台默认切换该模型，可能牺牲质量来改善利润率。"
+                    ),
+                    "caveat": "这只是推测。",
+                }
+            )
+        return value
+
+
+async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> None:
+    with pytest.raises(ValueError, match="speculation outside caveat"):
+        await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+
+
 class InventedJudgeEvidenceGateway(FakeGateway):
     async def generate(
         self,
