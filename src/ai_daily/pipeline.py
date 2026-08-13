@@ -17,6 +17,7 @@ from ai_daily.model_gateway import ModelGateway
 from ai_daily.models import (
     DraftItem,
     EditorialPlan,
+    EditorialTier,
     Event,
     Publication,
     RawItem,
@@ -38,6 +39,9 @@ from ai_daily.sources import Collector
 
 class QualityGateFailed(RuntimeError):
     pass
+
+
+DETAIL_EVIDENCE_MIN_CHARS = 800
 
 
 def filter_fresh_items(
@@ -199,6 +203,16 @@ class DailyPipeline:
         try:
             decisions = await judge_events(self.gateway, candidates)
             write_artifact(run_dir / "decisions.json", decisions)
+            enrichment_ids = {
+                decision.event_id
+                for decision in decisions
+                if decision.selected or decision.relevance >= 70
+            }
+            enrichment = await self.collector.enrich_event_content(
+                candidates,
+                self.config.sources,
+                enrichment_ids,
+            )
             editorial_plan = await plan_digest(
                 self.gateway,
                 candidates,
@@ -206,6 +220,28 @@ class DailyPipeline:
                 self.config.pipeline,
             )
             write_artifact(run_dir / "editorial-plan.json", editorial_plan)
+            detail_ids = {
+                selection.event_id
+                for selection in editorial_plan.selections
+                if selection.tier != EditorialTier.BRIEF
+            }
+            missed_detail_ids = detail_ids - enrichment_ids
+            if missed_detail_ids:
+                enrichment.extend(
+                    await self.collector.enrich_event_content(
+                        candidates,
+                        self.config.sources,
+                        missed_detail_ids,
+                    )
+                )
+            write_artifact(run_dir / "article-enrichment.json", {"items": enrichment})
+            write_artifact(run_dir / "candidates-enriched.json", candidates)
+            evidence_audit = _detail_evidence_audit(editorial_plan, candidates)
+            write_artifact(run_dir / "evidence-quality.json", {"items": evidence_audit})
+            failed = [item for item in evidence_audit if not item["passed"]]
+            if failed:
+                event_ids = ", ".join(str(item["event_id"]) for item in failed)
+                raise QualityGateFailed(f"detailed stories lack article evidence: {event_ids}")
             drafts = await draft_selected(self.gateway, candidates, editorial_plan)
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
@@ -234,3 +270,29 @@ class DailyPipeline:
         coverage = successful / len(tier_a)
         if coverage < self.config.pipeline.tier_a_min_coverage:
             raise QualityGateFailed(f"Tier A source coverage is {coverage:.0%}")
+
+
+def _detail_evidence_audit(
+    plan: EditorialPlan,
+    events: list[Event],
+) -> list[dict[str, object]]:
+    events_by_id = {event.event_id: event for event in events}
+    audit: list[dict[str, object]] = []
+    for selection in plan.selections:
+        if selection.tier == EditorialTier.BRIEF:
+            continue
+        event = events_by_id[selection.event_id]
+        evidence_chars = [len(item.summary or item.title) for item in event.items[:3]]
+        total_chars = sum(evidence_chars)
+        max_chars = max(evidence_chars, default=0)
+        audit.append(
+            {
+                "event_id": selection.event_id,
+                "tier": selection.tier.value,
+                "evidence_chars": evidence_chars,
+                "total_chars": total_chars,
+                "max_chars": max_chars,
+                "passed": max_chars >= DETAIL_EVIDENCE_MIN_CHARS,
+            }
+        )
+    return audit

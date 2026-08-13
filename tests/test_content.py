@@ -10,6 +10,8 @@ from pydantic_ai.models.test import TestModel
 
 from ai_daily.config import load_config
 from ai_daily.content import (
+    DRAFT_EVIDENCE_EXCERPT_CHARS,
+    JUDGE_EVIDENCE_EXCERPT_CHARS,
     JudgeBatch,
     draft_selected,
     judge_events,
@@ -116,6 +118,39 @@ async def test_judge_and_editor_preserve_evidence_ids() -> None:
     drafts = await draft_selected(gateway, [event()], plan())  # type: ignore[arg-type]
     assert decisions[0].evidence_ids == ["event-1-1"]
     assert drafts[0].evidence_ids == ["event-1-1"]
+
+
+class PromptCaptureGateway(FakeGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.prompts: list[tuple[type[BaseModel], object]] = []
+
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        self.prompts.append((output_type, json.loads(prompt)))
+        return await super().generate(role, output_type, instructions, prompt, validator)
+
+
+async def test_judge_uses_compact_evidence_and_draft_uses_full_evidence() -> None:
+    long_summary = "x" * 5_000
+    value = event()
+    item = value.items[0].model_copy(update={"summary": long_summary})
+    value = value.model_copy(update={"summary": long_summary, "items": [item]})
+    gateway = PromptCaptureGateway()
+
+    await judge_events(gateway, [value])  # type: ignore[arg-type]
+    await draft_selected(gateway, [value], plan())  # type: ignore[arg-type]
+
+    judge_payload = next(payload for output, payload in gateway.prompts if output is JudgeBatch)
+    draft_payload = next(payload for output, payload in gateway.prompts if output is DraftItem)
+    assert len(judge_payload[0]["evidence"][0]["excerpt"]) == JUDGE_EVIDENCE_EXCERPT_CHARS  # type: ignore[index]
+    assert len(draft_payload["bundle"]["evidence"][0]["excerpt"]) == DRAFT_EVIDENCE_EXCERPT_CHARS  # type: ignore[index]
 
 
 class BadGateway(FakeGateway):

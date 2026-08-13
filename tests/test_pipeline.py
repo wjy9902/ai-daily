@@ -17,14 +17,18 @@ from ai_daily.models import (
     EditorialPlan,
     EditorialSelection,
     EditorialTier,
+    Event,
     JudgeDecision,
     RawItem,
+    SourceConfig,
     SourceHealth,
     SourceTier,
 )
 from ai_daily.pipeline import (
+    DETAIL_EVIDENCE_MIN_CHARS,
     DailyPipeline,
     QualityGateFailed,
+    _detail_evidence_audit,
     collection_window,
     filter_fresh_items,
 )
@@ -44,7 +48,7 @@ class FakeCollector:
                 source_item_id=str(index),
                 url=f"https://example.com/{index}",
                 title=f"Unique{index} Product{index} Change{index} AI",
-                summary="",
+                summary=(f"evidence{index} topic{index} fact{index} detail{index} " * 60),
                 published_at=now,
                 discovered_at=now,
             )
@@ -60,6 +64,55 @@ class FakeCollector:
             )
         ]
         return items, health
+
+    async def enrich_event_content(
+        self, events: list[Event], sources: list[SourceConfig], event_ids: set[str]
+    ) -> list[dict[str, object]]:
+        return []
+
+
+class SpyEnrichmentCollector(FakeCollector):
+    def __init__(self) -> None:
+        super().__init__()
+        self.event_ids: set[str] = set()
+
+    async def enrich_event_content(
+        self, events: list[Event], sources: list[SourceConfig], event_ids: set[str]
+    ) -> list[dict[str, object]]:
+        self.event_ids.update(event_ids)
+        events[0].items[0].summary += " enriched-marker"
+        events[0].summary = events[0].items[0].summary
+        return [{"event_id": events[0].event_id, "status": "enriched"}]
+
+
+class ShortEvidenceCollector(FakeCollector):
+    async def collect(self, sources: object) -> tuple[list[RawItem], list[SourceHealth]]:
+        items, health = await super().collect(sources)
+        for index, item in enumerate(items):
+            item.summary = f"Short evidence {index}."
+        return items, health
+
+
+class PromotedFalseNegativeCollector(FakeCollector):
+    def __init__(self) -> None:
+        super().__init__()
+        self.enrichment_calls: list[set[str]] = []
+
+    async def collect(self, sources: object) -> tuple[list[RawItem], list[SourceHealth]]:
+        items, health = await super().collect(sources)
+        items[0].summary = "Short but important evidence."
+        return items, health
+
+    async def enrich_event_content(
+        self, events: list[Event], sources: list[SourceConfig], event_ids: set[str]
+    ) -> list[dict[str, object]]:
+        self.enrichment_calls.append(event_ids)
+        for event in events:
+            if event.event_id not in event_ids:
+                continue
+            event.items[0].summary = "Verified full article evidence. " * 40
+            event.summary = event.items[0].summary
+        return [{"event_id": event_id, "status": "enriched"} for event_id in event_ids]
 
 
 class FakeGateway:
@@ -84,6 +137,27 @@ class FakeGateway:
                 raise RuntimeError("editor failed")
             return output_type.model_validate(_grouped_plan_output(_plan_output(values)))
         return _draft_output(values)
+
+
+class FalseNegativeGateway(FakeGateway):
+    def __init__(self, config: object) -> None:
+        super().__init__(config)
+        self.rejected_id: str | None = None
+
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt, validator)
+        if isinstance(value, JudgeBatch) and self.rejected_id is None:
+            value.decisions[0].selected = False
+            value.decisions[0].relevance = 20
+            self.rejected_id = value.decisions[0].event_id
+        return value
 
 
 def _judge_output(values: list[dict[str, object]]) -> JudgeBatch:
@@ -279,11 +353,12 @@ async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> 
     config = load_config(Path("config"))
     config.pipeline.artifacts_dir = str(tmp_path)
     gateway = FakeGateway(config)
+    collector = SpyEnrichmentCollector()
     pipeline = DailyPipeline(
         config,
         Secrets(),
         client=_client(),
-        collector=FakeCollector(),  # type: ignore[arg-type]
+        collector=collector,
         gateway=gateway,  # type: ignore[arg-type]
     )
 
@@ -296,6 +371,13 @@ async def test_full_dry_run_writes_digest_without_publishing(tmp_path: Path) -> 
     assert "## 编辑观点" in body
     assert len(list(tmp_path.rglob("digest.md"))) == 1
     assert artifact.metadata["model_requests"] == artifact.metadata["audited_model_requests"]
+    assert collector.event_ids == {event.event_id for event in artifact.events}
+    enrichment = json.loads(next(tmp_path.rglob("article-enrichment.json")).read_text())
+    assert enrichment["items"][0]["status"] == "enriched"
+    candidates = json.loads(next(tmp_path.rglob("candidates-enriched.json")).read_text())
+    assert any("enriched-marker" in item["summary"] for item in candidates)
+    evidence = json.loads(next(tmp_path.rglob("evidence-quality.json")).read_text())
+    assert all(item["passed"] for item in evidence["items"])
 
 
 async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> None:
@@ -314,6 +396,139 @@ async def test_candidate_shortage_stops_before_model_calls(tmp_path: Path) -> No
         await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
 
     assert gateway.ledger.requests == 0
+
+
+async def test_short_feed_excerpts_block_detailed_stories(tmp_path: Path) -> None:
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=ShortEvidenceCollector(),  # type: ignore[arg-type]
+        gateway=FakeGateway(config),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(QualityGateFailed, match="lack article evidence"):
+        await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+
+    audit_path = next(tmp_path.rglob("evidence-quality.json"))
+    audit = json.loads(audit_path.read_text())
+    assert any(not item["passed"] for item in audit["items"])
+
+
+async def test_editor_promoted_false_negative_is_enriched_after_planning(
+    tmp_path: Path,
+) -> None:
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    collector = PromotedFalseNegativeCollector()
+    gateway = FalseNegativeGateway(config)
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=collector,  # type: ignore[arg-type]
+        gateway=gateway,  # type: ignore[arg-type]
+    )
+
+    artifact, _ = await pipeline.run(datetime.now(ZoneInfo("Asia/Shanghai")).date(), publish=False)
+
+    promoted = next(event for event in artifact.events if event.event_id == gateway.rejected_id)
+    assert gateway.rejected_id not in collector.enrichment_calls[0]
+    assert gateway.rejected_id in collector.enrichment_calls[1]
+    assert len(promoted.items[0].summary) >= DETAIL_EVIDENCE_MIN_CHARS
+
+
+def _audit_event(index: int, sizes: list[int]) -> Event:
+    items = [
+        RawItem(
+            source=f"source-{item_index}",
+            source_tier=SourceTier.A,
+            source_item_id=str(item_index),
+            url=f"https://example.com/{index}/{item_index}",
+            title=f"Evidence {item_index}",
+            summary="x" * size,
+            published_at=datetime(2026, 8, 12, tzinfo=UTC),
+            discovered_at=datetime(2026, 8, 12, tzinfo=UTC),
+        )
+        for item_index, size in enumerate(sizes)
+    ]
+    return Event(
+        event_id=f"event-{index}",
+        canonical_url=items[0].url,
+        title=items[0].title,
+        summary=items[0].summary,
+        published_at=items[0].published_at,
+        items=items,
+    )
+
+
+@pytest.mark.parametrize(("size", "passed"), [(799, False), (800, True)])
+def test_detail_evidence_gate_enforces_boundary(size: int, passed: bool) -> None:
+    event = _audit_event(0, [size])
+    selection = EditorialSelection(
+        event_id=event.event_id,
+        tier=EditorialTier.LEAD,
+        category="模型与平台",
+        headline="Headline",
+        brief="Brief",
+        importance=90,
+        confidence=0.9,
+        reason="Reason",
+        evidence_ids=["event-0-1"],
+    )
+    plan = EditorialPlan(
+        today_highlight="Highlight",
+        selections=[selection],
+        editor_viewpoint=[
+            EditorialInsight(text="One", evidence_ids=["event-0-1"]),
+            EditorialInsight(text="Two", evidence_ids=["event-0-1"]),
+        ],
+    )
+
+    audit = _detail_evidence_audit(plan, [event])
+
+    assert audit[0]["passed"] is passed
+
+
+def test_detail_evidence_uses_first_three_items_and_exempts_briefs() -> None:
+    qualified_secondary = _audit_event(0, [10, 800])
+    ignored_fourth = _audit_event(1, [10, 10, 10, 800])
+    brief = _audit_event(2, [10])
+    selections = [
+        EditorialSelection(
+            event_id=event.event_id,
+            tier=tier,
+            category="模型与平台",
+            headline=f"Headline {event.event_id}",
+            brief="Brief",
+            importance=90 - index,
+            confidence=0.9,
+            reason="Reason",
+            evidence_ids=[f"{event.event_id}-1"],
+        )
+        for index, (event, tier) in enumerate(
+            [
+                (qualified_secondary, EditorialTier.LEAD),
+                (ignored_fourth, EditorialTier.FOLLOW),
+                (brief, EditorialTier.BRIEF),
+            ]
+        )
+    ]
+    plan = EditorialPlan(
+        today_highlight="Highlight",
+        selections=selections,
+        editor_viewpoint=[
+            EditorialInsight(text="One", evidence_ids=["event-0-1"]),
+            EditorialInsight(text="Two", evidence_ids=["event-0-1"]),
+        ],
+    )
+
+    audit = _detail_evidence_audit(plan, [qualified_secondary, ignored_fourth, brief])
+
+    assert [item["passed"] for item in audit] == [True, False]
+    assert [item["event_id"] for item in audit] == ["event-0", "event-1"]
 
 
 async def test_model_request_audit_mismatch_blocks_run(tmp_path: Path) -> None:

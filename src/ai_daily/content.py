@@ -32,16 +32,20 @@ class EditorialPlanOutputBase(StrictModel):
     editor_viewpoint: list[EditorialInsight] = Field(min_length=2, max_length=4)
 
 
-EVIDENCE_EXCERPT_CHARS = 1600
+JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
+PLANNING_EVIDENCE_EXCERPT_CHARS = 1_000
+DRAFT_EVIDENCE_EXCERPT_CHARS = 4_000
 
 
-def evidence_bundle(event: Event) -> EvidenceBundle:
+def evidence_bundle(
+    event: Event, excerpt_chars: int = DRAFT_EVIDENCE_EXCERPT_CHARS
+) -> EvidenceBundle:
     evidence = [
         Evidence(
             evidence_id=f"{event.event_id}-{index}",
             url=item.url,
             title=item.title,
-            excerpt=(item.summary or item.title)[:EVIDENCE_EXCERPT_CHARS],
+            excerpt=(item.summary or item.title)[:excerpt_chars],
             source=item.source_label or item.source,
         )
         for index, item in enumerate(event.items[:3], start=1)
@@ -61,7 +65,7 @@ async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[Judge
 
 
 async def _judge_batch(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
-    bundles = [evidence_bundle(event) for event in events]
+    bundles = [evidence_bundle(event, JUDGE_EVIDENCE_EXCERPT_CHARS) for event in events]
     expected_ids = ", ".join(bundle.event_id for bundle in bundles)
     result = await gateway.generate(
         "judge",
@@ -177,13 +181,13 @@ def _materialize_editorial_plan(output: BaseModel) -> EditorialPlan:
 
 
 def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, object]:
-    bundle = evidence_bundle(event)
+    bundle = evidence_bundle(event, PLANNING_EVIDENCE_EXCERPT_CHARS)
     evidence = [
         {
             "evidence_id": item.evidence_id,
             "source": item.source,
             "title": item.title,
-            "excerpt": item.excerpt[:700],
+            "excerpt": item.excerpt,
             "url": str(item.url),
         }
         for item in bundle.evidence
@@ -341,6 +345,7 @@ async def _draft_one(
             f"这是 {selection.tier.value} 稿件，写 {depth}，避免重复标题和 TL;DR。"
             "why_it_matters 解释影响，不写空泛赞美；action 只有确有可执行建议时才填写。"
             "不要把推测写成事实，信息不足或证据冲突时写入 caveat。"
+            "正文证据已优先于 RSS 摘要；不得声称证据未披露实际已经写明的名称、数字或限制。"
         ),
         prompt=json.dumps(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},

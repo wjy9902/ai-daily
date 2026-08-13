@@ -6,6 +6,7 @@ import ipaddress
 import json
 import re
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -18,6 +19,7 @@ from lxml import html  # type: ignore[import-untyped]
 from pydantic import HttpUrl
 
 from ai_daily.models import (
+    Event,
     RawItem,
     SourceChannel,
     SourceConfig,
@@ -36,14 +38,25 @@ class SourceNotModified(RuntimeError):
 
 
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+ARTICLE_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 5
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+ARTICLE_TEXT_LIMIT = 10_000
+ARTICLE_FETCH_THRESHOLD = 2_000
+ARTICLE_TEXT_MINIMUM = 500
 
 
 @dataclass(frozen=True)
 class PartialSourceResult:
     items: list[RawItem]
     failed_items: int
+
+
+@dataclass(frozen=True)
+class ArticleTarget:
+    event: Event
+    item: RawItem
+    timeout: float
 
 
 class SourceFields(TypedDict):
@@ -139,6 +152,17 @@ def _plain_text(value: str) -> str:
     return " ".join(text.split())
 
 
+def _entry_body(entry: Any) -> str:
+    content_values = [
+        _plain_text(str(value.get("value") or ""))
+        for value in entry.get("content", [])
+        if isinstance(value, dict)
+    ]
+    content = max((value for value in content_values if value), key=len, default="")
+    fallback = _plain_text(str(entry.get("summary") or entry.get("description") or ""))
+    return (content or fallback)[:ARTICLE_TEXT_LIMIT]
+
+
 def _meta(document: html.HtmlElement, property_name: str) -> str:
     values = document.xpath(f'//meta[@property="{property_name}"]/@content')
     return str(values[0]).strip() if values else ""
@@ -169,32 +193,122 @@ def _published_from_document(document: html.HtmlElement) -> datetime | None:
     return _published_from_text(text)
 
 
-def _jsonld_published_values(value: Any) -> list[str]:
+def _iter_jsonld_articles(value: Any) -> Iterator[dict[str, Any]]:
     if isinstance(value, dict):
         raw_types = value.get("@type", [])
         types = raw_types if isinstance(raw_types, list) else [raw_types]
         is_article = any(str(item).lower() in ARTICLE_JSONLD_TYPES for item in types)
-        found = [str(value["datePublished"])] if is_article and value.get("datePublished") else []
+        if is_article:
+            yield value
         for child in value.values():
-            found.extend(_jsonld_published_values(child))
-        return found
-    if isinstance(value, list):
-        found = []
+            yield from _iter_jsonld_articles(child)
+    elif isinstance(value, list):
         for child in value:
-            found.extend(_jsonld_published_values(child))
-        return found
-    return []
+            yield from _iter_jsonld_articles(child)
+
+
+def _jsonld_published_values(value: Any) -> list[str]:
+    return [
+        str(article["datePublished"])
+        for article in _iter_jsonld_articles(value)
+        if article.get("datePublished")
+    ]
+
+
+def _article_text_from_document(document: html.HtmlElement) -> str:
+    structured = _jsonld_article_bodies(document)
+    for element in document.xpath(
+        "//script | //style | //noscript | //nav | //header | //footer | //aside | //form | //svg"
+    ):
+        element.drop_tree()
+    selectors = (
+        '//*[@itemprop="articleBody"]',
+        "//article",
+        '//*[@role="main"]',
+        "//main",
+        '//*[contains(concat(" ", normalize-space(@class), " "), " article-body ")]',
+        '//*[contains(concat(" ", normalize-space(@class), " "), " article-content ")]',
+        '//*[contains(concat(" ", normalize-space(@class), " "), " entry-content ")]',
+        '//*[contains(concat(" ", normalize-space(@class), " "), " entry ")]',
+        '//*[contains(concat(" ", normalize-space(@class), " "), " post-content ")]',
+    )
+    candidates = structured
+    for selector in selectors:
+        values = [
+            " ".join(" ".join(element.itertext()).split()) for element in document.xpath(selector)
+        ]
+        values = [value for value in values if value]
+        if values:
+            candidates.extend(values)
+            break
+    if not candidates:
+        return ""
+    return max(candidates, key=len)[:ARTICLE_TEXT_LIMIT]
+
+
+def _article_text_from_content(content: bytes, url: str) -> str:
+    document = html.fromstring(content, base_url=url)
+    return _article_text_from_document(document)
+
+
+def _article_metadata_from_content(content: bytes, url: str) -> tuple[datetime | None, str]:
+    document = html.fromstring(content, base_url=url)
+    return _published_from_document(document), _article_text_from_document(document)
+
+
+def _jsonld_article_bodies(document: html.HtmlElement) -> list[str]:
+    found: list[str] = []
+    for raw_value in document.xpath('//script[@type="application/ld+json"]/text()'):
+        try:
+            structured = json.loads(str(raw_value))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        found.extend(_jsonld_body_values(structured))
+    return found
+
+
+def _jsonld_body_values(value: Any) -> list[str]:
+    return [
+        _plain_text(str(article["articleBody"]))
+        for article in _iter_jsonld_articles(value)
+        if article.get("articleBody")
+    ]
+
+
+def _normalized_host(value: str) -> str:
+    host = (urlsplit(value).hostname or "").lower()
+    return host.removeprefix("www.")
+
+
+def _article_url_allowed(source: SourceConfig, item: RawItem) -> bool:
+    if source.kind not in {"rss", "html_index"}:
+        return False
+    item_parts = urlsplit(str(item.url))
+    return (
+        item.source == source.name
+        and item_parts.scheme == "https"
+        and _normalized_host(str(item.url)) == _normalized_host(str(source.url))
+    )
 
 
 class Collector:
-    def __init__(self, client: httpx.AsyncClient | None = None, per_host: int = 5) -> None:
+    def __init__(
+        self,
+        client: httpx.AsyncClient | None = None,
+        per_host: int = 5,
+        article_concurrency: int = 8,
+    ) -> None:
         if per_host < 1:
             raise ValueError("per_host must be at least 1")
+        if article_concurrency < 1:
+            raise ValueError("article_concurrency must be at least 1")
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": "ai-daily/0.2 (+https://wjy9902.github.io/ai-daily/)"},
             follow_redirects=False,
         )
         self._per_host = per_host
+        self._article_semaphore = asyncio.Semaphore(article_concurrency)
+        self._article_text_cache: dict[str, str] = {}
         self._host_semaphores: dict[str, asyncio.Semaphore] = {}
         self._validators: dict[str, dict[str, str]] = {}
 
@@ -210,6 +324,95 @@ class Collector:
             health.append(source_health)
         return items, health
 
+    async def enrich_event_content(
+        self,
+        events: list[Event],
+        sources: list[SourceConfig],
+        event_ids: set[str],
+    ) -> list[dict[str, object]]:
+        enabled = [source for source in sources if source.enabled]
+        sources_by_name = {source.name: source for source in enabled}
+        targets, audit = self._enrichment_targets(events, event_ids, sources_by_name)
+        results = await asyncio.gather(
+            *(self._fetch_article_text(str(target.item.url), target.timeout) for target in targets),
+            return_exceptions=True,
+        )
+        audit.extend(
+            self._apply_enrichment_result(target, result)
+            for target, result in zip(targets, results, strict=True)
+        )
+        return audit
+
+    def _enrichment_targets(
+        self,
+        events: list[Event],
+        event_ids: set[str],
+        sources_by_name: dict[str, SourceConfig],
+    ) -> tuple[list[ArticleTarget], list[dict[str, object]]]:
+        targets: list[ArticleTarget] = []
+        audit: list[dict[str, object]] = []
+        for event in events:
+            if event.event_id not in event_ids:
+                continue
+            for item in event.items[:3]:
+                base = self._enrichment_audit(event, item)
+                if len(item.summary) >= ARTICLE_FETCH_THRESHOLD:
+                    audit.append({**base, "status": "existing_full_text"})
+                    continue
+                source = sources_by_name.get(item.source)
+                if source is None or not _article_url_allowed(source, item):
+                    audit.append({**base, "status": "skipped_unconfigured_host"})
+                    continue
+                targets.append(ArticleTarget(event, item, source.timeout_seconds))
+        return targets, audit
+
+    def _apply_enrichment_result(
+        self,
+        target: ArticleTarget,
+        result: str | BaseException,
+    ) -> dict[str, object]:
+        event, item = target.event, target.item
+        base = self._enrichment_audit(event, item)
+        if isinstance(result, BaseException):
+            return {**base, "status": "fetch_failed", "error": type(result).__name__}
+        if len(result) < ARTICLE_TEXT_MINIMUM:
+            return {**base, "status": "insufficient_text", "extracted_chars": len(result)}
+        if len(result) <= len(item.summary):
+            return {**base, "status": "existing_text_richer", "extracted_chars": len(result)}
+        item.summary = result
+        if item is event.primary_item:
+            event.summary = result
+        return {**base, "status": "enriched", "extracted_chars": len(result)}
+
+    async def _fetch_article_text(self, url: str, timeout: float) -> str:
+        if cached := self._article_text_cache.get(url):
+            return cached
+        async with self._article_semaphore:
+            if cached := self._article_text_cache.get(url):
+                return cached
+            response = await self._request(
+                url,
+                timeout=timeout,
+                max_response_bytes=ARTICLE_RESPONSE_BYTES,
+            )
+            response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "").lower()
+            if content_type and "html" not in content_type:
+                raise SourceCollectionError("article response is not HTML")
+            text = await asyncio.to_thread(_article_text_from_content, response.content, url)
+            if text:
+                self._article_text_cache[url] = text
+            return text
+
+    @staticmethod
+    def _enrichment_audit(event: Event, item: RawItem) -> dict[str, object]:
+        return {
+            "event_id": event.event_id,
+            "source": item.source,
+            "url": str(item.url),
+            "existing_chars": len(item.summary),
+        }
+
     async def _collect_one(self, source: SourceConfig) -> tuple[list[RawItem], SourceHealth]:
         started = time.monotonic()
         try:
@@ -218,6 +421,8 @@ class Collector:
             items = result.items if isinstance(result, PartialSourceResult) else result
             if not items:
                 raise SourceCollectionError("source returned no usable items")
+            if not any(item.published_at is not None for item in items):
+                raise SourceCollectionError("source returned no verified publication dates")
             health = SourceHealth(
                 source=source.name,
                 tier=source.tier,
@@ -275,13 +480,14 @@ class Collector:
 
     async def _request(self, url: str, **kwargs: Any) -> httpx.Response:
         allowed_origin = kwargs.pop("allowed_origin", _origin(url))
+        max_response_bytes = kwargs.pop("max_response_bytes", MAX_RESPONSE_BYTES)
         kwargs.pop("follow_redirects", None)
         current = url
         request_kwargs = kwargs
         for redirect_count in range(MAX_REDIRECTS + 1):
             _validate_request_url(current, allowed_origin)
             request = self.client.build_request("GET", current, **request_kwargs)
-            response = await self._send_limited(request)
+            response = await self._send_limited(request, max_response_bytes)
             if response.status_code not in REDIRECT_STATUSES:
                 return response
             location = response.headers.get("Location")
@@ -295,7 +501,9 @@ class Collector:
             }
         raise AssertionError("unreachable")
 
-    async def _send_limited(self, request: httpx.Request) -> httpx.Response:
+    async def _send_limited(
+        self, request: httpx.Request, max_response_bytes: int = MAX_RESPONSE_BYTES
+    ) -> httpx.Response:
         host = request.url.host
         semaphore = self._host_semaphores.setdefault(host, asyncio.Semaphore(self._per_host))
         async with semaphore:
@@ -305,12 +513,12 @@ class Collector:
                     if response.status_code in REDIRECT_STATUSES:
                         return _buffered_response(response, b"")
                     content_length = response.headers.get("Content-Length")
-                    if content_length and int(content_length) > MAX_RESPONSE_BYTES:
+                    if content_length and int(content_length) > max_response_bytes:
                         raise SourceCollectionError("source response exceeds size limit")
                     body = bytearray()
                     async for chunk in response.aiter_bytes():
                         body.extend(chunk)
-                        if len(body) > MAX_RESPONSE_BYTES:
+                        if len(body) > max_response_bytes:
                             raise SourceCollectionError("source response exceeds size limit")
                     return _buffered_response(response, bytes(body))
                 finally:
@@ -344,9 +552,7 @@ class Collector:
                     source_item_id=identifier,
                     url=url,
                     title=str(title).strip(),
-                    summary=_plain_text(
-                        str(entry.get("summary") or entry.get("description") or "")
-                    )[:10000],
+                    summary=_entry_body(entry),
                     published_at=_published(
                         entry.get("published_parsed") or entry.get("published")
                     ),
@@ -380,9 +586,16 @@ class Collector:
         return items
 
     async def _fetch_article_date(self, source: SourceConfig, url: str) -> datetime | None:
-        response = await self._same_origin_get(source, url)
-        document = html.fromstring(response.content, base_url=url)
-        return _published_from_document(document)
+        async with self._article_semaphore:
+            response = await self._same_origin_get(
+                source, url, max_response_bytes=ARTICLE_RESPONSE_BYTES
+            )
+            published, article_text = await asyncio.to_thread(
+                _article_metadata_from_content, response.content, url
+            )
+            if article_text:
+                self._article_text_cache[url] = article_text
+            return published
 
     async def _fetch_hackernews(self, source: SourceConfig) -> list[RawItem]:
         base = str(source.url).rstrip("/")
@@ -429,7 +642,7 @@ class Collector:
                 url=release["html_url"],
                 title=f"{source.display_name or source.name}: "
                 f"{release.get('name') or release['tag_name']}",
-                summary=(release.get("body") or "")[:10000],
+                summary=(release.get("body") or "")[:ARTICLE_TEXT_LIMIT],
                 published_at=_published(release.get("published_at")),
                 discovered_at=now,
                 author=(release.get("author") or {}).get("login"),
@@ -528,16 +741,22 @@ class Collector:
             source_item_id=url,
             url=HttpUrl(url),
             title=title,
-            summary=_plain_text(summary or listing_text)[:10000],
+            summary=_plain_text(summary or listing_text)[:ARTICLE_TEXT_LIMIT],
             published_at=_published_from_document(document) or _published_from_text(listing_text),
             discovered_at=datetime.now(UTC),
         )
 
-    async def _same_origin_get(self, source: SourceConfig, url: str) -> httpx.Response:
+    async def _same_origin_get(
+        self,
+        source: SourceConfig,
+        url: str,
+        max_response_bytes: int = MAX_RESPONSE_BYTES,
+    ) -> httpx.Response:
         response = await self._request(
             url,
             timeout=source.timeout_seconds,
             allowed_origin=_origin(str(source.url)),
+            max_response_bytes=max_response_bytes,
         )
         response.raise_for_status()
         return response
