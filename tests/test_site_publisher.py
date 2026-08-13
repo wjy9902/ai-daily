@@ -239,42 +239,16 @@ def test_a_naive_rerun_of_the_same_level_is_refused_and_keeps_the_record(
     assert_serves(layout, record)
 
 
-def test_the_cli_transaction_commits_nothing_when_the_render_fails(
-    layout: SiteLayout, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = factories.publication()
+def test_the_cli_publishes_through_the_guarded_transaction() -> None:
+    """The CLI must not carry a second publish path of its own.
 
-    def broken_render(*args: object, **kwargs: object) -> Path:
-        raise RuntimeError("renderer died")
+    It used to render, commit and activate inline, which skipped
+    :func:`guard_same_day_overwrite` and let a retry window replace a full
+    issue with a degraded one.
+    """
 
-    monkeypatch.setattr(cli, "render_release", broken_render)
-
-    with pytest.raises(RuntimeError, match="renderer died"):
-        cli._publish_publication(layout, record, SITE)
-
-    assert list(layout.published.iterdir()) == []
-    assert not layout.current.exists()
-
-
-def test_the_cli_transaction_commits_before_it_activates(
-    layout: SiteLayout, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = factories.publication()
-
-    def refuse(target: SiteLayout, release: Path) -> None:
-        raise OSError("power cut between commit and symlink swap")
-
-    monkeypatch.setattr(cli, "activate_release", refuse)
-    with pytest.raises(OSError, match="symlink swap"):
-        cli._publish_publication(layout, record, SITE)
-
-    committed = read_publication(layout, record.target_date)
-    assert committed is not None and committed.marker == record.marker
-    assert not layout.current.exists()
-
-    monkeypatch.undo()
-    assert _run_rebuild(layout) == 0
-    assert_serves(layout, record)
+    assert cli.publish_site is publish_site
+    assert not hasattr(cli, "_publish_publication")
 
 
 # ------------------------------------------------------------------ activation
