@@ -27,6 +27,7 @@ def _event(index: int) -> Event:
         source_item_id=str(index),
         url=f"https://example.com/{index}",
         title=f"Release {index}",
+        published_at=datetime(2026, 8, 12, tzinfo=UTC),
         discovered_at=datetime(2026, 8, 12, tzinfo=UTC),
     )
     return Event(
@@ -34,6 +35,7 @@ def _event(index: int) -> Event:
         canonical_url=item.url,
         title=item.title,
         summary="Official release",
+        published_at=item.published_at,
         items=[item],
     )
 
@@ -88,6 +90,8 @@ def test_digest_restores_editorial_hierarchy_and_human_sources() -> None:
     assert "## 编辑观点" in body
     assert '<a href="https://example.com/0">官方来源 0</a>' in body
     assert ">official-0<" not in body
+    assert body.count("来源发布：08-12 08:00 北京时间") == 3
+    assert '<time datetime="2026-08-12T08:00:00+08:00">' in body
     document = html.fromstring(marko(body))
     assert document.xpath("//h1") == []
     assert document.xpath("//blockquote") == []
@@ -164,3 +168,15 @@ def test_issue_body_size_is_bounded() -> None:
     drafts = [_draft(index, fact_size=500) for index in range(24)]
     with pytest.raises(ValueError, match="Issue body limit"):
         assemble_markdown(date(2026, 8, 12), _plan(selections), drafts, events)
+
+
+def test_selected_event_without_verified_publication_time_is_rejected() -> None:
+    event = _event(0).model_copy(update={"published_at": None})
+
+    with pytest.raises(ValueError, match="verified publication time"):
+        assemble_markdown(
+            date(2026, 8, 12),
+            _plan([_selection(0, EditorialTier.LEAD)]),
+            [_draft(0)],
+            [event],
+        )

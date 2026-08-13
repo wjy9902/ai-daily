@@ -3,7 +3,8 @@ from __future__ import annotations
 import html
 import re
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from ai_daily.content import evidence_bundle
 from ai_daily.models import (
@@ -18,6 +19,7 @@ from ai_daily.site_trust import daily_marker, story_title_marker
 
 WEEKDAYS = "一二三四五六日"
 MARKDOWN_ESCAPE_RE = re.compile(r"([\\`*_[\]<>])")
+BEIJING_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def assemble_markdown(
@@ -40,9 +42,16 @@ def assemble_markdown(
     lines.extend(_contents(plan.selections))
     lines.extend(["---", ""])
     for selection in details:
-        lines.extend(_detail(selection, drafts_by_id[selection.event_id], evidence, target_date))
+        lines.extend(
+            _detail(
+                selection,
+                drafts_by_id[selection.event_id],
+                evidence,
+                events_by_id[selection.event_id].published_at,
+            )
+        )
     briefs = [item for item in plan.selections if item.tier == EditorialTier.BRIEF]
-    lines.extend(_briefs(briefs, evidence))
+    lines.extend(_briefs(briefs, evidence, events_by_id))
     lines.extend(_viewpoint(plan, evidence))
     lines.extend(
         ["---", "", "本期由自动化编辑流水线整理；事实与数据请以链接中的原始来源为准。", ""]
@@ -106,7 +115,7 @@ def _detail(
     selection: EditorialSelection,
     draft: DraftItem,
     evidence: dict[str, Evidence],
-    target_date: date,
+    published_at: datetime | None,
 ) -> list[str]:
     tier_label = "今日重点" if selection.tier == EditorialTier.LEAD else "值得关注"
     tier_class = "lead" if selection.tier == EditorialTier.LEAD else "follow"
@@ -140,12 +149,14 @@ def _detail(
         lines.append(
             f'<p class="story-caveat"><strong>局限/争议：</strong> {html.escape(draft.caveat)}</p>'
         )
+    publication_time = _publication_time(published_at)
     lines.extend(
         [
             "</div>",
             (
                 '<p class="story-meta"><time datetime="'
-                f'{target_date.isoformat()}">{target_date.isoformat()}</time> · '
+                f'{publication_time.isoformat()}">来源发布：'
+                f"{publication_time.strftime('%m-%d %H:%M')} 北京时间</time> · "
                 f"{html.escape(selection.category)}</p>"
             ),
             "",
@@ -154,7 +165,11 @@ def _detail(
     return lines
 
 
-def _briefs(selections: list[EditorialSelection], evidence: dict[str, Evidence]) -> list[str]:
+def _briefs(
+    selections: list[EditorialSelection],
+    evidence: dict[str, Evidence],
+    events_by_id: dict[str, Event],
+) -> list[str]:
     lines = ['<a id="quick-news"></a>', "## 快讯", "", '<ol class="brief-list">']
     for selection in selections:
         sources = _source_links_html(selection.evidence_ids, evidence)
@@ -162,11 +177,14 @@ def _briefs(selections: list[EditorialSelection], evidence: dict[str, Evidence])
         headline = html.escape(selection.headline)
         category = html.escape(selection.category)
         brief = html.escape(selection.brief)
+        publication_time = _publication_time(events_by_id[selection.event_id].published_at)
         lines.append(story_title_marker(selection.headline))
         lines.append(
             f'<li id="story-{event_id}"><strong>{headline}</strong>'
             f'<span class="brief-category">{category}</span>'
-            f'<p>{brief}</p><div class="brief-sources">{sources}</div></li>'
+            f'<p>{brief}</p><div class="brief-sources">{sources} · '
+            f'<time datetime="{publication_time.isoformat()}">来源发布：'
+            f"{publication_time.strftime('%m-%d %H:%M')} 北京时间</time></div></li>"
         )
     lines.extend(["</ol>", ""])
     return lines
@@ -211,6 +229,12 @@ def _source_links_html(evidence_ids: list[str], evidence: dict[str, Evidence]) -
 
 def _evidence_fields(value: Evidence) -> tuple[str, str, str]:
     return value.source, value.title, str(value.url)
+
+
+def _publication_time(value: datetime | None) -> datetime:
+    if value is None or value.utcoffset() is None:
+        raise ValueError("selected event requires a verified publication time")
+    return value.astimezone(BEIJING_TIMEZONE)
 
 
 def _markdown_text(value: str) -> str:
