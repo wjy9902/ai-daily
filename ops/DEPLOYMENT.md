@@ -45,19 +45,38 @@
   噪声，不是覆盖率。探测显示能返回链接后再启用。
 - **降级阶梯**：在无模型密钥的真实条件下跑通，产出 L2B 快讯刊并正常上线，
   横幅明确标注「本期为自动快讯模式」。没有出现零产出。
+- **完整出刊**：2026-08-14 以 L1 出刊，9 篇详报 + 15 条快讯，当日模型花费 ¥0.75（上限 ¥5）。
+- **内存实测**：峰值 155M，`MemoryMax=900M` 有充足余量。
 - **升级守卫**：同日 L2B → L2B 被拒绝（`L2B would not improve it`），不产生多余 release。
 - **systemd 加固**：完整加固下 `Result=success`，CPU 10.3s。
 - **备份**：`backup: pushed 1 issues` → `wjy9902/ai-daily-site-backup`。
 
+## 模型
+
+| 角色 | 主模型 | 回退 |
+|---|---|---|
+| 判定（judge） | `deepseek-v4-flash` | `gpt-5.6-terra` |
+| 编辑（editor） | `deepseek-v4-pro` | `gpt-5.6-terra` |
+
+DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产出推理 token，且推理计入
+`max_output_tokens`——按 JSON 体积设上限会把正文截断，这是 2026-08-13 规划连续失败的直接原因。
+
+`gpt-5.6-terra` 只接受 `temperature=1`。它的单价是**估算值并刻意偏高**，因为日成本上限的
+准确性完全取决于这两个数字；等回退真的被用到之后，用账单实际值订正。
+
+## 已切换
+
+老站 `wjy9902.github.io/ai-daily` 于 2026-08-13 停止更新：`daily.yml` 的 cron 已移除
+（workflow 保留可手动触发），站点作为归档保留、加了指向新站的横幅，**所有旧 issue 链接继续有效**。
+旧 RSS 不再更新。
+
 ## 待办
 
-1. **模型密钥**：`/etc/ai-daily/env` 目前是空值占位，所以每天只能出 L2B。
-   填入 `DASHSCOPE_API_KEY` / `DASHSCOPE_BASE_URL` / `DEEPSEEK_API_KEY` 后自动升到 L0。
-   密钥只有模型 API 权限，没有任何 GitHub 写权限。
-2. **内存基线**：这台机器的 systemd 不暴露 `MemoryPeak`，当前 `MemoryHigh=600M` /
-   `MemoryMax=900M` 是按 1.9G 总内存、已用 650M 推的。跑满一次 L0（含 enrichment）后
-   用 cgroup 的 `memory.peak` 复核一次。
-3. **切换老站**：新站连续两天自动出 L0 之后再做，见迁移计划阶段 5。
+1. **轮换密钥**：DeepSeek 与 OpenAI 的 key 曾以明文出现在配置对话中，应当视为已泄露，
+   在各自控制台重新签发并更新 `/etc/ai-daily/env`。
+2. **回退模型单价**：见上，用账单订正 `config/models.yaml` 里的估算值。
+3. **跨媒体聚类**：目前同一条新闻在不同媒体的报道不会合并，所以「两个独立域佐证」这条
+   实际不可达，头条资格实际上由「第一方」或「Tier A」两条决定。修好聚类会让佐证判断更实。
 
 ## 常用命令
 
