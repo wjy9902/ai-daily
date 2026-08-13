@@ -1,4 +1,5 @@
 import asyncio
+import gzip
 
 import httpx
 import pytest
@@ -81,6 +82,32 @@ async def test_rss_adapter_parses_valid_entries() -> None:
     items, health = await Collector(client).collect([source])
     assert [item.title for item in items] == ["New model"]
     assert items[0].source_label == "Official Feed"
+    assert health[0].status == "ok"
+
+
+async def test_rss_adapter_does_not_decode_gzip_twice() -> None:
+    body = b"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
+    <item><guid>1</guid><title>Compressed model news</title>
+    <link>https://example.com/a</link></item></channel></rss>"""
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"Content-Encoding": "gzip"},
+                content=gzip.compress(body),
+            )
+        )
+    )
+    source = SourceConfig(
+        name="feed",
+        kind="rss",
+        url="https://example.com/rss",
+        tier=SourceTier.A,
+    )
+
+    items, health = await Collector(client).collect([source])
+
+    assert [item.title for item in items] == ["Compressed model news"]
     assert health[0].status == "ok"
 
 

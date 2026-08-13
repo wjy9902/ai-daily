@@ -441,9 +441,15 @@ class Collector:
 
 
 def _buffered_response(response: httpx.Response, content: bytes) -> httpx.Response:
+    consumed_headers = {"content-encoding", "content-length", "transfer-encoding"}
+    headers = [
+        (name, value)
+        for name, value in response.headers.multi_items()
+        if name.lower() not in consumed_headers
+    ]
     return httpx.Response(
         status_code=response.status_code,
-        headers=response.headers,
+        headers=headers,
         content=content,
         request=response.request,
         extensions=response.extensions,
