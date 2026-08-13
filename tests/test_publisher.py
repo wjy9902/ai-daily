@@ -32,10 +32,13 @@ async def test_publish_creates_then_updates_same_issue() -> None:
             return httpx.Response(200, json=issues)
         writes.append(request.method)
         created = True
+        payload = json.loads(request.content)
         return httpx.Response(
             200 if request.method == "PATCH" else 201,
             json={
                 "number": 12,
+                "title": payload["title"],
+                "body": payload["body"],
                 "html_url": "https://github.com/o/r/issues/12",
             },
         )
@@ -81,9 +84,15 @@ async def test_publish_upgrades_an_existing_legacy_marker() -> None:
                 ],
             )
         writes.append(request.method)
+        payload = json.loads(request.content)
         return httpx.Response(
             200,
-            json={"number": 12, "html_url": "https://github.com/o/r/issues/12"},
+            json={
+                "number": 12,
+                "title": payload["title"],
+                "body": payload["body"],
+                "html_url": "https://github.com/o/r/issues/12",
+            },
         )
 
     publisher = GitHubPublisher(
@@ -119,9 +128,15 @@ async def test_publish_ignores_existing_untrusted_issue() -> None:
                 ],
             )
         writes.append(request.method)
+        payload = json.loads(request.content)
         return httpx.Response(
             201,
-            json={"number": 11, "html_url": "https://github.com/o/r/issues/11"},
+            json={
+                "number": 11,
+                "title": payload["title"],
+                "body": payload["body"],
+                "html_url": "https://github.com/o/r/issues/11",
+            },
         )
 
     publisher = GitHubPublisher(
@@ -134,7 +149,7 @@ async def test_publish_ignores_existing_untrusted_issue() -> None:
     assert writes == ["POST"]
 
 
-async def test_publish_does_not_overwrite_unmarked_owner_issue() -> None:
+async def test_publish_fails_closed_on_unmarked_owner_issue() -> None:
     writes: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -156,20 +171,20 @@ async def test_publish_does_not_overwrite_unmarked_owner_issue() -> None:
                 ],
             )
         writes.append(request.method)
-        return httpx.Response(
-            201,
-            json={"number": 11, "html_url": "https://github.com/o/r/issues/11"},
-        )
+        raise AssertionError("conflicting owner issue must block publication")
 
     publisher = GitHubPublisher(
         "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
     target = date(2026, 8, 12)
 
-    publication = await publisher.publish(target, f"{daily_marker(target)}\ncontent")
-
-    assert publication.issue_number == 11
-    assert writes == ["POST"]
+    try:
+        await publisher.publish(target, f"{daily_marker(target)}\ncontent")
+    except RuntimeError as error:
+        assert "owner issue conflicts" in str(error)
+    else:
+        raise AssertionError("conflicting owner issue was accepted")
+    assert writes == []
 
 
 async def test_find_publication_paginates_for_old_daily_issues() -> None:
@@ -242,9 +257,15 @@ async def test_closed_daily_is_not_verified_but_publish_reopens_it() -> None:
                 ],
             )
         writes.append(json.loads(request.content))
+        payload = writes[-1]
         return httpx.Response(
             200,
-            json={"number": 12, "html_url": "https://github.com/o/r/issues/12"},
+            json={
+                "number": 12,
+                "title": payload["title"],
+                "body": payload["body"],
+                "html_url": "https://github.com/o/r/issues/12",
+            },
         )
 
     publisher = GitHubPublisher(
@@ -264,3 +285,66 @@ async def test_closed_daily_is_not_verified_but_publish_reopens_it() -> None:
             "state": "open",
         }
     ]
+
+
+async def test_publish_reconciles_ambiguous_patch_after_transport_error() -> None:
+    target = date(2026, 8, 12)
+    body = f"{daily_marker(target)}\nnew content"
+    patched = False
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal patched
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        issue = {
+            "number": 12,
+            "title": target.isoformat(),
+            "state": "open",
+            "body": body if patched else daily_marker(target),
+            "user": {"login": "github-actions[bot]"},
+            "labels": [{"name": "Daily"}],
+            "url": "https://api.github.com/repos/o/r/issues/12",
+            "html_url": "https://github.com/o/r/issues/12",
+        }
+        if request.method == "GET":
+            return httpx.Response(200, json=[issue])
+        patched = True
+        raise httpx.ReadTimeout("response lost", request=request)
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    publication = await publisher.publish(target, body)
+
+    assert publication.issue_number == 12
+
+
+async def test_publish_rejects_success_response_with_stale_body() -> None:
+    target = date(2026, 8, 12)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            201,
+            json={
+                "number": 12,
+                "title": target.isoformat(),
+                "body": "stale",
+                "html_url": "https://github.com/o/r/issues/12",
+            },
+        )
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    try:
+        await publisher.publish(target, f"{daily_marker(target)}\nnew content")
+    except RuntimeError as error:
+        assert "unconfirmed publication body" in str(error)
+    else:
+        raise AssertionError("stale publication response was accepted")

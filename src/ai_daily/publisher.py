@@ -29,20 +29,13 @@ class GitHubPublisher:
         await self._ensure_daily_label()
         issue = await self._find(target_date, include_closed=True)
         payload = {"title": target_date.isoformat(), "body": body, "labels": ["Daily"]}
-        if issue:
-            payload["state"] = "open"
-            response = await self.client.patch(
-                str(issue["url"]), headers=self.headers, json=payload, timeout=20
-            )
-        else:
-            response = await self.client.post(
-                f"https://api.github.com/repos/{self.repository}/issues",
-                headers=self.headers,
-                json=payload,
-                timeout=20,
-            )
-        response.raise_for_status()
-        value = response.json()
+        try:
+            response = await self._write_issue(issue, payload)
+            response.raise_for_status()
+            value = response.json()
+        except httpx.TransportError:
+            value = await self._reconcile_write(target_date, body)
+        self._validate_published_issue(value, target_date, body)
         return Publication(
             target_date=target_date,
             issue_number=value["number"],
@@ -50,6 +43,34 @@ class GitHubPublisher:
             status="issue_published",
             marker=expected_marker,
         )
+
+    async def _write_issue(
+        self, issue: dict[str, Any] | None, payload: dict[str, Any]
+    ) -> httpx.Response:
+        if issue:
+            payload["state"] = "open"
+            return await self.client.patch(
+                str(issue["url"]), headers=self.headers, json=payload, timeout=20
+            )
+        return await self.client.post(
+            f"https://api.github.com/repos/{self.repository}/issues",
+            headers=self.headers,
+            json=payload,
+            timeout=20,
+        )
+
+    async def _reconcile_write(self, target_date: date, body: str) -> dict[str, Any]:
+        issue = await self._find(target_date, include_closed=False)
+        if issue is None or issue.get("body") != body:
+            raise RuntimeError("publication write could not be confirmed")
+        return issue
+
+    @staticmethod
+    def _validate_published_issue(
+        value: dict[str, Any], target_date: date, body: str
+    ) -> None:
+        if value.get("title") != target_date.isoformat() or value.get("body") != body:
+            raise RuntimeError("GitHub returned an unconfirmed publication body")
 
     async def _ensure_daily_label(self) -> None:
         label_url = f"https://api.github.com/repos/{self.repository}/labels/Daily"
@@ -92,6 +113,14 @@ class GitHubPublisher:
         matches = [issue for issue in title_matches if self._is_trusted_daily(issue, target_date)]
         if len(matches) > 1:
             raise RuntimeError("multiple daily issues exist for the same date")
+        owner = self.repository.split("/", 1)[0]
+        owner_conflicts = [
+            issue
+            for issue in title_matches
+            if issue.get("user", {}).get("login") == owner and issue not in matches
+        ]
+        if owner_conflicts:
+            raise RuntimeError("unmarked owner issue conflicts with the daily publication")
         return matches[0] if matches else None
 
     def _is_trusted_daily(self, issue: dict[str, Any], target_date: date) -> bool:

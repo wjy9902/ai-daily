@@ -26,15 +26,21 @@ def _normalize_document(document: str) -> str:
     title = TITLE_RE.search(document)
     marker = MARKER_RE.search(document)
     created = DATE_RE.search(document)
-    if not title or not marker or not created or title.group(1) != marker.group(1):
+    if marker is None:
         return document
+    if not title or not created:
+        raise ValueError("marked daily issue has invalid frontmatter")
+    if title.group(1) != marker.group(1):
+        raise ValueError("marked daily issue title does not match its marker")
     target_date = title.group(1)
     normalized = DATE_RE.sub(f'date = "{target_date}T00:00:00+08:00"', document, count=1)
     parts = normalized.split("+++", maxsplit=2)
     if len(parts) != 3:
-        return document
+        raise ValueError("marked daily issue has invalid frontmatter delimiters")
     frontmatter = parts[1]
     if "created_at =" not in frontmatter:
+        if EXTRA_RE.search(normalized) is None:
+            raise ValueError("marked daily issue is missing its extra section")
         normalized = EXTRA_RE.sub(
             f'[extra]\ncreated_at = "{created.group(1)}"', normalized, count=1
         )
