@@ -2,9 +2,16 @@
 
 ## 安全前提
 
-本项目只读取 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL`、`DEEPSEEK_API_KEY`、`GITHUB_TOKEN`。密钥只能进入本机环境变量或 GitHub Actions Secrets，禁止写入 `.env.example`、YAML、测试 fixture、日志和 artifact。
+> **本文档描述内容与质量策略。** 部署现状见 [`../ops/DEPLOYMENT.md`](../ops/DEPLOYMENT.md)，
+> 灾难恢复见 [`../ops/RESTORE.md`](../ops/RESTORE.md)。2026-08-13 起发布不再经由
+> GitHub Issue 与 Pages，改为自有服务器上的 systemd timer，本文中涉及 Actions 的部分已相应更新。
 
-生产密钥配置为 GitHub Actions Secrets，不进入仓库、Issue、日志或 artifact。若密钥曾进入提交、构建日志或公开页面，立即在供应商控制台轮换。百炼正式环境使用华北 2 业务空间专属兼容地址。
+本项目只读取模型密钥（当前为 `DEEPSEEK_API_KEY`、`OPENAI_API_KEY`）与站点地址配置。密钥只能进入
+服务器上的 `/etc/ai-daily/env`（属主 `ai-daily`，权限 `0600`），禁止写入 `.env.example`、YAML、
+测试 fixture、日志和 artifact。发布不再需要任何 GitHub 写权限。
+
+若密钥曾进入提交、构建日志、聊天记录或公开页面，立即在供应商控制台轮换——曾经暴露过的密钥，
+即使随后删除，也必须视为已泄露。
 
 ## 来源与选题门禁
 
@@ -56,9 +63,11 @@ uv run python scripts/render_fixture.py \
 - `DASHSCOPE_BASE_URL`
 - `DEEPSEEK_API_KEY`
 
-`GITHUB_TOKEN` 使用 Actions 自动提供的短期 token。日报 job 只有 `contents: read` 与 `issues: write`；Pages 权限隔离在可复用站点工作流。
+服务器不持有任何 GitHub 写权限用于发布。它有两把 deploy key：一把只读，用于拉取本仓库；
+一把可写，只绑定备份仓库 `ai-daily-site-backup`。发布本身完全是本机文件操作。
 
-首次启用前，先在 staging 仓库通过 `workflow_dispatch` 选择 `dry-run`，再选择 `publish`。确认同一日期重复运行仍只有一个带 `Daily` 标签的 Issue，且页面和 RSS 最新条目一致。
+首次启用前先跑 `ai-daily run --mode dry-run`，确认产出级别与条目数合理；再 `--mode publish`。
+同一日期重复运行由升级守卫保护：只有更高级别的刊期才能覆盖当天已发布的内容，同级和降级一律拒绝。
 
 ## 正式调度
 
@@ -75,9 +84,11 @@ uv run python scripts/render_fixture.py \
 | Tier A 覆盖低于 60% | 停止发布 | 网络、解析器、来源变更 |
 | 429、连接失败、可恢复 5xx | 按显式跨 Provider 链切换 | 配额和供应商状态页 |
 | 401/403、schema、参数错误 | 立即失败，不切模型 | Secret、模型名、配置版本 |
-| Issue 已存在、站点未更新 | 只重建 Pages | Pages job 与 isite/Zola 日志 |
+| 记录已提交、站点未更新 | `ai-daily rebuild-site`（不花钱，从 `published/` 重渲染） | `journalctl -u ai-daily` |
 | 06:00 后仍不可见 | Actions 标红 | 若 30 天出现两次 runner 排队，迁移 runner |
 
 ## 回滚
 
-先在 Actions 中禁用 `Generate AI Daily` schedule，保留 `generate_site.yml`。回滚代码只恢复上一版 workflow 和生成器，不删除历史 Issue、Pages 或 RSS。任何提交、推送、Secret 创建和正式启用都需要用户明确授权。
+停刊：`systemctl disable --now ai-daily.timer`。展示层回滚：把 `current` 软链指回上一个 release。
+代码回滚：`ops/deploy.sh --rollback`。历史 Issue、旧 Pages 站点和旧 RSS 一律不删除——
+旧链接已被外部引用和收录，保留它们的成本远低于断链的代价。
