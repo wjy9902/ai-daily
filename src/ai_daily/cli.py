@@ -6,7 +6,7 @@ import json
 import os
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -291,7 +291,9 @@ async def _probe(args: argparse.Namespace) -> int:
         config.pipeline.collection_window_hours,
     )
     print(json.dumps(rows, ensure_ascii=False, indent=2))
-    usable = sum(1 for row in rows if int(row.get("in_window", 0) or 0) > 0)
+    # ``probe_sources`` types its rows as ``dict[str, object]``; this column is
+    # always the count of in-window items.
+    usable = sum(1 for row in rows if int(cast(int, row.get("in_window", 0) or 0)) > 0)
     print(f"\n{usable}/{len(rows)} sources yielded at least one fresh item", flush=True)
     return 0
 
