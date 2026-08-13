@@ -49,6 +49,9 @@ EVIDENCE_PIPELINE_META_RE = re.compile(
     r"(?:证据|摘要|材料).{0,20}(?:截断|被截|未完整|不完整)"
 )
 REPOSITORY_RELEASE_RE = re.compile(r"发布|推出|上线|开放")
+REPOSITORY_FIRST_AVAILABILITY_RE = re.compile(
+    r"首次(?=.{0,20}(?:可用|提供|出现|开源))"
+)
 SAMPLE_EXTRAPOLATION_RE = re.compile(
     r"(?:表明|意味着|说明).{0,40}(?:用户选择|整体市场|全行业|市场格局)"
 )
@@ -265,7 +268,15 @@ def _normalize_repository_plan(plan: EditorialPlan, events: list[Event]) -> Edit
 
 
 def _repository_update_copy(value: str) -> str:
-    return REPOSITORY_RELEASE_RE.sub("更新", value)
+    value = REPOSITORY_RELEASE_RE.sub("更新", value)
+    return REPOSITORY_FIRST_AVAILABILITY_RE.sub("", value)
+
+
+def _has_repository_release_claim(value: str) -> bool:
+    return bool(
+        REPOSITORY_RELEASE_RE.search(value)
+        or REPOSITORY_FIRST_AVAILABILITY_RE.search(value)
+    )
 
 
 def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, object]:
@@ -363,7 +374,7 @@ def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) 
             event = events_by_id[selection.event_id]
             if (
                 event.source_time_kind.value == "repository_updated"
-                and REPOSITORY_RELEASE_RE.search(value)
+                and _has_repository_release_claim(value)
             ):
                 raise ValueError(
                     f"editorial plan {field} rewrote repository update as release: "
@@ -400,7 +411,7 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
                 "editor viewpoint referenced unselected evidence "
                 f"ids={unknown}; use only selected evidence ids={allowed_ids}"
             )
-        if set(insight.evidence_ids) & repository_evidence and REPOSITORY_RELEASE_RE.search(
+        if set(insight.evidence_ids) & repository_evidence and _has_repository_release_claim(
             insight.text
         ):
             raise ValueError("editor viewpoint rewrote repository update as release")
@@ -553,7 +564,7 @@ def _validate_draft(
         for evidence in bundle.evidence
     ):
         release_fields = [
-            field for field, value in factual_fields if REPOSITORY_RELEASE_RE.search(value)
+            field for field, value in factual_fields if _has_repository_release_claim(value)
         ]
         if release_fields:
             raise ValueError(

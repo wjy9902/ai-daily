@@ -225,6 +225,23 @@ async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> Non
         await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
+class FirstAvailabilityDraftGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(
+                update={"why_it_matters": "该模型首次以开源权重形式可用。"}
+            )
+        return value
+
+
 async def test_editor_normalizes_repository_update_copy_before_validation() -> None:
     repository_event = event().model_copy(
         update={
@@ -243,6 +260,25 @@ async def test_editor_normalizes_repository_update_copy_before_validation() -> N
 
     assert drafts[0].tldr == "官方更新了新模型。"
     assert drafts[0].facts == ["官方公告确认更新。"]
+
+
+async def test_editor_removes_unverified_first_availability_claim() -> None:
+    repository_event = event().model_copy(
+        update={
+            "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
+            "items": [
+                event().items[0].model_copy(
+                    update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
+                )
+            ],
+        }
+    )
+
+    drafts = await draft_selected(  # type: ignore[arg-type]
+        FirstAvailabilityDraftGateway(), [repository_event], plan()
+    )
+
+    assert drafts[0].why_it_matters == "该模型以开源权重形式可用。"
 
 
 class SpeculativeActionGateway(FakeGateway):
@@ -508,7 +544,7 @@ async def test_global_editor_normalizes_repository_update_copy() -> None:
     ]
     plan_value = valid_global_plan()
     plan_value.selections[0].headline = "Qwen开源权重发布"
-    plan_value.selections[0].brief = "官方发布Qwen开源权重。"
+    plan_value.selections[0].brief = "官方首次发布Qwen开源权重。"
     plan_value.editor_viewpoint[0].text = "Qwen发布推动开源生态。"
 
     result = await plan_digest(  # type: ignore[arg-type]
@@ -565,6 +601,7 @@ async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> Non
         ("sample-extrapolation", "beyond cited samples"),
         ("repository-release-insight", "update as release"),
         ("repository-release-headline", "headline rewrote repository update"),
+        ("repository-first-availability", "brief rewrote repository update"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -609,6 +646,10 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
         events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
         events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
         plan_value.selections[0].headline = "Qwen开源权重发布"
+    elif mutation == "repository-first-availability":
+        events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        plan_value.selections[0].brief = "Qwen模型首次以开源权重形式可用。"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 
