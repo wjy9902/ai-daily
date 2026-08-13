@@ -299,17 +299,26 @@ def validate_editorial_plan(
         raise ValueError("editorial plan contains duplicate events")
     if not set(ids) <= set(events_by_id):
         raise ValueError("editorial plan referenced an unknown event")
-    _validate_factual_copy(plan)
+    _validate_factual_copy(plan, events_by_id)
     _validate_plan_evidence(plan, events_by_id)
     _validate_plan_quotas(plan.selections, config)
 
 
-def _validate_factual_copy(plan: EditorialPlan) -> None:
+def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     for selection in plan.selections:
         for field, value in (("headline", selection.headline), ("brief", selection.brief)):
             if SPECULATIVE_COPY_RE.search(value):
                 raise ValueError(
                     f"editorial plan {field} contains unverified speculation: "
+                    f"event_id={selection.event_id}"
+                )
+            event = events_by_id[selection.event_id]
+            if (
+                event.source_time_kind.value == "repository_updated"
+                and REPOSITORY_RELEASE_RE.search(value)
+            ):
+                raise ValueError(
+                    f"editorial plan {field} rewrote repository update as release: "
                     f"event_id={selection.event_id}"
                 )
     for insight in plan.editor_viewpoint:
@@ -471,5 +480,17 @@ def _validate_draft(
             "editor put speculation outside caveat; rewrite fields="
             f"{speculative_fields} as verified facts or move uncertainty to caveat"
         )
+    if any(
+        evidence.source_time_kind.value == "repository_updated"
+        for evidence in bundle.evidence
+    ):
+        release_fields = [
+            field for field, value in factual_fields if REPOSITORY_RELEASE_RE.search(value)
+        ]
+        if release_fields:
+            raise ValueError(
+                "editor rewrote repository update as release; rewrite fields="
+                f"{release_fields} using repository-update semantics"
+            )
     if draft.caveat and EVIDENCE_PIPELINE_META_RE.search(draft.caveat):
         raise ValueError("editor exposed evidence pipeline metadata in caveat")

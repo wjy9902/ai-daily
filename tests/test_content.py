@@ -225,6 +225,24 @@ async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> Non
         await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
+async def test_editor_cannot_rewrite_repository_update_as_release() -> None:
+    repository_event = event().model_copy(
+        update={
+            "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
+            "items": [
+                event().items[0].model_copy(
+                    update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
+                )
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="repository update as release"):
+        await draft_selected(  # type: ignore[arg-type]
+            FakeGateway(), [repository_event], plan()
+        )
+
+
 class SpeculativeActionGateway(FakeGateway):
     async def generate(
         self,
@@ -513,6 +531,7 @@ async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> Non
         ("speculative-brief", "unverified speculation"),
         ("sample-extrapolation", "beyond cited samples"),
         ("repository-release-insight", "update as release"),
+        ("repository-release-headline", "headline rewrote repository update"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -553,6 +572,10 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
         events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
         events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
         plan_value.editor_viewpoint[0].text = "Qwen模型发布推动开源生态。"
+    elif mutation == "repository-release-headline":
+        events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+        plan_value.selections[0].headline = "Qwen开源权重发布"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 
