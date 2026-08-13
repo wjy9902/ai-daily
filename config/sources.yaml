@@ -65,6 +65,10 @@ sources:
     tier: B
     channel: official
     limit: 15
+    # Disabled: probed from the Singapore host on 2026-08-13 and the index still
+    # answers 403. A source that fails every run is noise in the health report,
+    # not coverage. Re-enable only after a probe shows it returning links.
+    enabled: false
   - name: qwen-blog
     display_name: Qwen
     kind: rss

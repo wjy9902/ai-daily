@@ -140,6 +140,10 @@ ARTICLE_JSONLD_TYPES = {
     "scholarlyarticle",
     "techarticle",
 }
+#: A date on its own, in the forms Chinese publishers actually emit.
+DATE_TEXT_RE = re.compile(r"\d{4}\s*[-/年]\s*\d{1,2}\s*[-/月]\s*\d{1,2}")
+#: A wall clock and nothing else, so a bare "13:10:50" is not read as a date.
+CLOCK_TEXT_RE = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?")
 
 
 def _published_from_text(value: str, default_timezone: tzinfo = UTC) -> datetime | None:
@@ -209,13 +213,52 @@ def _published_from_document(
             if parsed := _published(value):
                 return parsed
     containers = document.xpath("(//main | //article)[1]")
+    if containers:
+        for value in containers[0].xpath(".//time[@datetime]/@datetime"):
+            if parsed := _published(value):
+                return parsed
+    if parsed := _published_from_date_classes(document, default_timezone):
+        return parsed
     if not containers:
         return None
-    for value in containers[0].xpath(".//time[@datetime]/@datetime"):
-        if parsed := _published(value):
-            return parsed
     text = " ".join(" ".join(containers[0].itertext()).split())[:2000]
     return _published_from_text(text, default_timezone)
+
+
+def _published_from_date_classes(
+    document: html.HtmlElement, default_timezone: tzinfo
+) -> datetime | None:
+    """Read a byline that marks its date with a CSS class instead of markup.
+
+    Several Chinese publishers (量子位 among them) emit no date meta tag, no
+    JSON-LD and no <time> element, only `<span class="date">2026-08-13</span>`
+    followed by `<span class="time">13:10:50</span>`. Without this the source
+    fetches fine and then loses every item to the has-a-publication-time gate.
+
+    Only the first date-like value is used, so a "related articles" sidebar
+    further down the page cannot masquerade as the byline.
+    """
+
+    date_text: str | None = None
+    clock_text: str | None = None
+    for element in document.xpath(
+        "//*[contains(@class, 'date') or contains(@class, 'time')"
+        " or contains(@class, 'publish')][position() < 30]"
+    ):
+        value = " ".join(" ".join(element.itertext()).split())[:60]
+        if not value:
+            continue
+        if date_text is None and DATE_TEXT_RE.search(value):
+            date_text = value
+            continue
+        if clock_text is None and CLOCK_TEXT_RE.fullmatch(value):
+            clock_text = value
+        if date_text is not None and clock_text is not None:
+            break
+    if date_text is None:
+        return None
+    combined = f"{date_text} {clock_text}" if clock_text else date_text
+    return _published_from_text(combined, default_timezone)
 
 
 def _iter_jsonld_articles(value: Any) -> Iterator[dict[str, Any]]:
