@@ -22,7 +22,11 @@ from ai_daily.config import AppConfig, Secrets
 from ai_daily.content import draft_selected, judge_events, plan_digest, validate_editorial_plan
 from ai_daily.degradation import DegradationTracker, FailureClass
 from ai_daily.history import local_historical_index
-from ai_daily.model_gateway import ModelGateway, ModelInvocationFailed
+from ai_daily.model_gateway import (
+    MissingProviderSecret,
+    ModelGateway,
+    ModelInvocationFailed,
+)
 from ai_daily.models import (
     DraftItem,
     EditorialPlan,
@@ -83,8 +87,11 @@ MINIMUM_PUBLISHABLE_CANDIDATES = 5
 def _classify_model_failure(error: Exception) -> FailureClass:
     if isinstance(error, StageBudgetExceeded | BudgetExceeded):
         return FailureClass.BUDGET_EXHAUSTED
-    if isinstance(error, ModelInvocationFailed):
-        return FailureClass.PLAN_FAILED
+    if isinstance(error, MissingProviderSecret):
+        # A revoked or missing key at 04:20 must not cost the day. Nothing
+        # model-driven can run, so the issue falls all the way back to ranking,
+        # and status.json carries the reason.
+        return FailureClass.JUDGE_FAILED
     return FailureClass.PLAN_FAILED
 
 
@@ -393,7 +400,12 @@ class DailyPipeline:
                 editorial_plan = _demote_selections(editorial_plan, failed)
                 write_artifact(run_dir / "editorial-plan-demoted.json", editorial_plan)
             drafts = await draft_selected(self.gateway, candidates, editorial_plan)
-        except (BudgetExceeded, ModelInvocationFailed, ValueError) as error:
+        except (
+            BudgetExceeded,
+            ModelInvocationFailed,
+            MissingProviderSecret,
+            ValueError,
+        ) as error:
             raise ModelStageFailed(_classify_model_failure(error)) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
