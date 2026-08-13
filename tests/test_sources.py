@@ -13,7 +13,12 @@ from ai_daily.models import (
     SourceTier,
     SourceTimeKind,
 )
-from ai_daily.sources import ARTICLE_RESPONSE_BYTES, MAX_RESPONSE_BYTES, Collector
+from ai_daily.sources import (
+    ARTICLE_RESPONSE_BYTES,
+    DEFAULT_USER_AGENT,
+    MAX_RESPONSE_BYTES,
+    Collector,
+)
 
 
 class TrackingTransport(httpx.AsyncBaseTransport):
@@ -45,6 +50,15 @@ def test_collector_rejects_zero_per_host_concurrency() -> None:
 def test_collector_rejects_zero_article_concurrency() -> None:
     with pytest.raises(ValueError, match="article_concurrency"):
         Collector(article_concurrency=0)
+
+
+async def test_default_collector_uses_browser_compatible_identified_user_agent() -> None:
+    collector = Collector()
+
+    assert collector.client.headers["User-Agent"] == DEFAULT_USER_AGENT
+    assert DEFAULT_USER_AGENT.startswith("Mozilla/5.0")
+    assert "ai-daily/0.2" in DEFAULT_USER_AGENT
+    await collector.client.aclose()
 
 
 async def test_collector_limits_concurrency_per_host() -> None:

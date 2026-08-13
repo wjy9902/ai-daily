@@ -45,6 +45,11 @@ REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 ARTICLE_TEXT_LIMIT = 10_000
 ARTICLE_FETCH_THRESHOLD = 2_000
 ARTICLE_TEXT_MINIMUM = 500
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 "
+    "ai-daily/0.2 (+https://wjy9902.github.io/ai-daily/)"
+)
 
 
 @dataclass(frozen=True)
@@ -312,7 +317,7 @@ class Collector:
         if article_concurrency < 1:
             raise ValueError("article_concurrency must be at least 1")
         self.client = client or httpx.AsyncClient(
-            headers={"User-Agent": "ai-daily/0.2 (+https://wjy9902.github.io/ai-daily/)"},
+            headers={"User-Agent": DEFAULT_USER_AGENT},
             follow_redirects=False,
         )
         self._per_host = per_host
