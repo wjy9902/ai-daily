@@ -13,6 +13,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExce
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
+from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
@@ -259,6 +260,12 @@ class ModelGateway:
             deepseek_provider = DeepSeekProvider(api_key=self.secrets.deepseek_api_key)
             deepseek_provider.client.max_retries = 0
             return OpenAIChatModel(endpoint.model, provider=deepseek_provider)
+        elif endpoint.provider == "openai":
+            if not self.secrets.openai_api_key:
+                raise MissingProviderSecret("OPENAI_API_KEY is required")
+            openai_provider = OpenAIProvider(api_key=self.secrets.openai_api_key)
+            openai_provider.client.max_retries = 0
+            return OpenAIChatModel(endpoint.model, provider=openai_provider)
         else:
             raise MissingProviderSecret("Ollama is local-only and must use a separate profile")
 

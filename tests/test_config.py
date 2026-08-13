@@ -14,7 +14,11 @@ def test_project_config_loads_without_secrets() -> None:
     assert config.pipeline.follow_max == 7
     assert config.pipeline.brief_max == 12
     assert len(config.sources) >= 25
-    assert config.models.roles["judge"].primary.provider == "alibaba"
+    # Assert the invariant, not the vendor: which provider leads is an
+    # operational choice that changes with pricing and availability, but every
+    # role must always have a primary and a fallback on different providers.
+    for role in config.models.roles.values():
+        assert role.primary.provider != role.fallback.provider
     text = "\n".join(path.read_text() for path in Path("config").glob("*.yaml"))
     assert "sk-" not in text
     assert "api_key:" not in text.lower()
@@ -22,7 +26,9 @@ def test_project_config_loads_without_secrets() -> None:
 
 def test_model_fallback_must_cross_provider() -> None:
     value = yaml.safe_load(Path("config/models.yaml").read_text())
-    value["roles"]["judge"]["fallback"]["provider"] = "alibaba"
+    value["roles"]["judge"]["fallback"]["provider"] = value["roles"]["judge"]["primary"][
+        "provider"
+    ]
     with pytest.raises(ValidationError, match="different provider"):
         ModelsConfig.model_validate(value)
 

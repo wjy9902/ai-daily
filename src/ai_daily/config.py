@@ -22,6 +22,7 @@ class Secrets(BaseSettings):
     dashscope_api_key: str | None = None
     dashscope_base_url: str | None = None
     deepseek_api_key: str | None = None
+    openai_api_key: str | None = None
     github_token: str | None = None
     github_repository: str | None = None
     site_base_url: str | None = None

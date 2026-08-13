@@ -232,7 +232,7 @@ class Publication(StrictModel):
 
 
 class ModelEndpoint(StrictModel):
-    provider: Literal["alibaba", "deepseek", "ollama"]
+    provider: Literal["alibaba", "deepseek", "openai", "ollama"]
     model: str
     timeout_seconds: float = Field(gt=0, le=180)
     max_output_tokens: int = Field(gt=0, le=30000)

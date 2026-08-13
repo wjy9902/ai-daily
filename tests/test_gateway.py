@@ -15,7 +15,7 @@ from ai_daily.model_gateway import (
     ModelInvocationFailed,
     is_recoverable,
 )
-from ai_daily.models import JudgeDecision
+from ai_daily.models import JudgeDecision, ModelEndpoint
 
 
 def test_only_transient_failures_are_recoverable() -> None:
@@ -59,28 +59,45 @@ async def test_generate_falls_back_after_pydantic_ai_wrapped_timeout(
     result = await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
 
     assert result.event_id == "event-1"
-    assert [call.endpoint.provider for call in calls] == ["alibaba", "deepseek"]
+    role = gateway.config.roles["judge"]
+    assert [call.endpoint.provider for call in calls] == [
+        role.primary.provider,
+        role.fallback.provider,
+    ]
     assert calls[1].fallback_reason == "ModelAPIError"
 
 
 def test_provider_requires_environment_secrets() -> None:
+    """Every configured provider must refuse to run without its own key."""
+
     gateway = ModelGateway(load_config().models, Secrets())
-    endpoint = gateway.config.roles["judge"].primary
-    try:
-        gateway._build_model(endpoint)
-    except MissingProviderSecret as error:
-        assert "DASHSCOPE_API_KEY" in str(error)
-    else:
-        raise AssertionError("missing secrets were accepted")
+    for role in gateway.config.roles.values():
+        for endpoint in (role.primary, role.fallback):
+            try:
+                gateway._build_model(endpoint)
+            except MissingProviderSecret as error:
+                assert "API_KEY" in str(error)
+            else:
+                raise AssertionError(f"{endpoint.provider} accepted missing secrets")
 
 
-def test_alibaba_structured_output_disables_thinking_mode() -> None:
+def test_only_alibaba_gets_the_thinking_mode_override() -> None:
+    """extra_body is provider-specific and must not leak to other providers."""
+
     gateway = ModelGateway(load_config().models, Secrets())
-    alibaba = gateway.config.roles["judge"].primary
-    deepseek = gateway.config.roles["judge"].fallback
-
+    alibaba = ModelEndpoint(
+        provider="alibaba",
+        model="qwen3.8-max",
+        timeout_seconds=45,
+        max_output_tokens=4096,
+        temperature=0.1,
+        input_cost_cny_per_million=2.5,
+        output_cost_cny_per_million=10.0,
+    )
     assert gateway._model_settings(alibaba)["extra_body"] == {"enable_thinking": False}
-    assert gateway._model_settings(deepseek)["extra_body"] is None
+    for role in gateway.config.roles.values():
+        for endpoint in (role.primary, role.fallback):
+            assert gateway._model_settings(endpoint)["extra_body"] is None
 
 
 async def test_provider_sdk_retries_are_disabled() -> None:
@@ -88,6 +105,7 @@ async def test_provider_sdk_retries_are_disabled() -> None:
         dashscope_api_key="test-key",
         dashscope_base_url="https://example.com/v1",
         deepseek_api_key="test-key",
+        openai_api_key="test-key",
     )
     gateway = ModelGateway(load_config().models, secrets)
     for role in gateway.config.roles.values():

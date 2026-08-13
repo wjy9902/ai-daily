@@ -9,15 +9,9 @@ budget:
 
 roles:
   judge:
+    # Relevance filtering is the highest-volume stage (one call per batch of
+    # ten candidates), so the cheap model leads.
     primary:
-      provider: alibaba
-      model: qwen3.8-max
-      timeout_seconds: 45
-      max_output_tokens: 4096
-      temperature: 0.1
-      input_cost_cny_per_million: 2.5
-      output_cost_cny_per_million: 10.0
-    fallback:
       provider: deepseek
       model: deepseek-v4-flash
       timeout_seconds: 60
@@ -25,16 +19,23 @@ roles:
       temperature: 0.1
       input_cost_cny_per_million: 1.01
       output_cost_cny_per_million: 2.02
+    fallback:
+      provider: openai
+      model: gpt-5.6-terra
+      timeout_seconds: 90
+      max_output_tokens: 4096
+      # gpt-5.6-terra rejects any temperature other than 1. Determinism on this
+      # stage comes from the schema and the validators, not from sampling.
+      temperature: 1.0
+      # ESTIMATE, deliberately padded upward. Published pricing was not
+      # verifiable at configuration time, and the daily cost ceiling is only as
+      # honest as these numbers. Over-estimating degrades a run early; under-
+      # estimating overspends real money. Correct these from a billing
+      # statement once the fallback has actually been exercised.
+      input_cost_cny_per_million: 12.0
+      output_cost_cny_per_million: 96.0
   editor:
     primary:
-      provider: alibaba
-      model: qwen3.8-max
-      timeout_seconds: 90
-      max_output_tokens: 8192
-      temperature: 0.2
-      input_cost_cny_per_million: 2.5
-      output_cost_cny_per_million: 10.0
-    fallback:
       provider: deepseek
       model: deepseek-v4-pro
       timeout_seconds: 120
@@ -42,3 +43,12 @@ roles:
       temperature: 0.2
       input_cost_cny_per_million: 3.13
       output_cost_cny_per_million: 6.26
+    fallback:
+      provider: openai
+      model: gpt-5.6-terra
+      timeout_seconds: 150
+      max_output_tokens: 8192
+      temperature: 1.0
+      # Same estimate caveat as above.
+      input_cost_cny_per_million: 12.0
+      output_cost_cny_per_million: 96.0
