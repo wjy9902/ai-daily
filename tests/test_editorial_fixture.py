@@ -4,7 +4,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ai_daily.models import RawItem, SourceChannel, SourceTier
+from ai_daily.models import Event, RawItem, SourceChannel, SourceTier
 from ai_daily.normalize import (
     canonicalize_url,
     cluster_items,
@@ -44,6 +44,29 @@ def _paper(index: int) -> RawItem:
         summary="A routine benchmark paper with limited immediate product impact.",
         published_at=datetime(2026, 8, 12, tzinfo=UTC),
         discovered_at=datetime(2026, 8, 13, tzinfo=UTC),
+    )
+
+
+def _scored_event(index: int, channel: SourceChannel, score: float) -> Event:
+    item = RawItem(
+        source=f"source-{channel.value}-{index}",
+        source_label=f"Source {channel.value} {index}",
+        source_tier=SourceTier.B,
+        source_channel=channel,
+        source_item_id=str(index),
+        url=f"https://example.com/{channel.value}/{index}",
+        title=f"Distinct {channel.value} event {index}",
+        summary=f"Independent evidence {channel.value} {index}",
+        published_at=datetime(2026, 8, 12, tzinfo=UTC),
+        discovered_at=datetime(2026, 8, 13, tzinfo=UTC),
+    )
+    return Event(
+        event_id=f"{channel.value}-{index}",
+        canonical_url=item.url,
+        title=item.title,
+        summary=item.summary,
+        items=[item],
+        score=score,
     )
 
 
@@ -89,3 +112,40 @@ def test_prefilter_keeps_all_golden_news_ahead_of_research_noise() -> None:
 
     candidate_urls = {str(event.canonical_url) for event in candidates}
     assert {canonicalize_url(str(item.url)) for item in golden} <= candidate_urls
+
+
+def test_candidate_pool_caps_research_and_release_surges() -> None:
+    research = [_scored_event(index, SourceChannel.RESEARCH, 100 - index) for index in range(17)]
+    releases = [_scored_event(index, SourceChannel.RELEASE, 80 - index) for index in range(13)]
+    general = [_scored_event(index, SourceChannel.NEWS, 60 - index / 10) for index in range(52)]
+
+    candidates = select_candidate_pool(
+        [*research, *releases, *general],
+        limit=80,
+        research_limit=16,
+        release_limit=12,
+    )
+
+    channels = [candidate.primary_item.source_channel for candidate in candidates]
+    assert len(candidates) == 80
+    assert channels.count(SourceChannel.RESEARCH) == 16
+    assert channels.count(SourceChannel.RELEASE) == 12
+    assert channels.count(SourceChannel.NEWS) == 52
+
+
+def test_candidate_pool_backfills_deferred_channels_when_news_is_sparse() -> None:
+    research = [_scored_event(index, SourceChannel.RESEARCH, 100 - index) for index in range(6)]
+    general = [_scored_event(0, SourceChannel.NEWS, 50)]
+
+    candidates = select_candidate_pool(
+        [*research, *general], limit=5, research_limit=1, release_limit=0
+    )
+
+    assert len(candidates) == 5
+    assert (
+        sum(
+            candidate.primary_item.source_channel == SourceChannel.RESEARCH
+            for candidate in candidates
+        )
+        == 4
+    )

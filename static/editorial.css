@@ -6,8 +6,9 @@
   word-break: break-word;
 }
 
-.post-content > h1:first-child {
+.digest-kicker {
   border-bottom: 3px solid var(--accent);
+  color: var(--ink);
   font-size: clamp(1.45rem, 4vw, 1.9rem);
   font-weight: 850;
   letter-spacing: -0.035em;
@@ -62,23 +63,56 @@ main .post p > a {
 .post-content a:hover,
 main .post p > a:hover {
   border-bottom-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-dark);
 }
 
-.post-content > blockquote:first-of-type {
+.digest-highlight {
   background: var(--accent-soft);
   border: 0;
   border-left: 4px solid var(--accent);
   border-radius: 0 7px 7px 0;
   color: var(--ink-soft);
-  font-size: 0.98rem;
+  font-size: 1rem;
   line-height: 1.7;
   margin: 1rem 0 1.55rem;
   padding: 0.9rem 1.05rem;
 }
 
-.post-content > blockquote:first-of-type strong {
+.digest-highlight strong {
   color: var(--accent-dark);
+}
+
+.digest-index {
+  background: #fbfaf6;
+  border: 1px solid var(--rule-soft);
+  border-radius: 7px;
+  margin: 0.8rem 0 1.6rem;
+}
+
+.digest-index summary {
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 700;
+  padding: 0.75rem 0.9rem;
+}
+
+.digest-index summary:focus-visible {
+  outline: 3px solid var(--accent-dark);
+  outline-offset: 2px;
+}
+
+.digest-index__content {
+  border-top: 1px solid var(--rule-soft);
+  padding: 0.2rem 0.9rem 0.7rem;
+}
+
+.digest-index__content h3 {
+  margin-top: 0.85rem;
+}
+
+.digest-index__content ul {
+  margin-bottom: 0.6rem;
 }
 
 .post-content ul,
@@ -138,7 +172,7 @@ main .post p > a:hover {
 }
 
 .story-tier--lead {
-  background: var(--accent);
+  background: var(--accent-dark);
   color: #fff;
 }
 
@@ -147,33 +181,33 @@ main .post p > a:hover {
   color: #5f5b53;
 }
 
-.post-content h2 + blockquote {
+.post-content h2 + .story-card {
   background: #fbfaf6;
   border: 1px solid var(--rule-soft);
   border-left: 3px solid #c8c0b4;
   border-radius: 0 7px 7px 0;
   box-shadow: 0 5px 18px rgb(53 47 38 / 3%);
   color: var(--ink-soft);
-  font-size: 0.93rem;
+  font-size: 1rem;
   line-height: 1.68;
   margin: 0 0 0.7rem;
   padding: 1rem 1.1rem 0.9rem;
 }
 
-.post-content h2:has(.story-tier--lead) + blockquote {
+.post-content h2 + .story-card--lead {
   background: #fffaf4;
   border-left-color: var(--accent);
 }
 
-.post-content h2 + blockquote p {
+.story-card p {
   margin-bottom: 0.65rem;
 }
 
-.post-content h2 + blockquote p:last-child {
+.story-card p:last-child {
   margin-bottom: 0;
 }
 
-.post-content h2 + blockquote a,
+.story-card a,
 .brief-sources a,
 .post-content h2:last-of-type + ul a {
   display: inline-block;
@@ -181,21 +215,21 @@ main .post p > a:hover {
   padding: 0.12rem 0;
 }
 
-.post-content h2 + blockquote strong {
+.story-card strong {
   color: var(--ink);
   font-weight: 760;
 }
 
-.post-content h2 + blockquote ul {
+.story-card ul {
   margin: 0.18rem 0 0.7rem;
   padding-left: 1.25rem;
 }
 
-.post-content h2 + blockquote li {
+.story-card li {
   margin-bottom: 0.2rem;
 }
 
-.post-content h2 + blockquote + p {
+.story-meta {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -212,11 +246,11 @@ main .post p > a:hover {
   padding: 0.12em 0.34em;
 }
 
-.brief-list {
+.post-content ol.brief-list {
   counter-reset: brief;
   list-style: none;
-  margin: 0.3rem 0 1.6rem !important;
-  padding: 0 !important;
+  margin: 0.3rem 0 1.6rem;
+  padding: 0;
 }
 
 .brief-list > li {
@@ -230,7 +264,7 @@ main .post p > a:hover {
 }
 
 .brief-list > li::before {
-  color: var(--accent);
+  color: var(--accent-dark);
   content: counter(brief, decimal-leading-zero);
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -250,7 +284,7 @@ main .post p > a:hover {
 .brief-category {
   background: #efede7;
   border-radius: 3px;
-  color: var(--muted);
+  color: var(--ink-soft);
   font-size: 0.65rem;
   font-weight: 700;
   grid-column: 3;
@@ -261,7 +295,7 @@ main .post p > a:hover {
 
 .brief-list p {
   color: var(--ink-soft);
-  font-size: 0.86rem;
+  font-size: 1rem;
   grid-column: 2 / span 2;
   line-height: 1.62;
   margin: 0;
@@ -336,8 +370,8 @@ main .post p > a:hover {
     margin-top: 1.85rem;
   }
 
-  .post-content h2 + blockquote {
-    font-size: 0.9rem;
+  .post-content h2 + .story-card {
+    font-size: 1rem;
     margin-left: -0.15rem;
     margin-right: -0.15rem;
     padding: 0.85rem 0.9rem 0.75rem;

@@ -1,9 +1,10 @@
+import json
 from datetime import date
 
 import httpx
 
-from ai_daily.assembler import marker
 from ai_daily.publisher import GitHubPublisher
+from ai_daily.site_trust import daily_marker
 
 
 async def test_publish_creates_then_updates_same_issue() -> None:
@@ -21,7 +22,7 @@ async def test_publish_creates_then_updates_same_issue() -> None:
                     {
                         "number": 12,
                         "title": "2026-08-12",
-                        "body": marker(date(2026, 8, 12)),
+                        "body": daily_marker(date(2026, 8, 12)),
                         "user": {"login": "github-actions[bot]"},
                         "labels": [{"name": "Daily"}],
                         "url": "https://api.github.com/repos/o/r/issues/12",
@@ -41,7 +42,7 @@ async def test_publish_creates_then_updates_same_issue() -> None:
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     publisher = GitHubPublisher("o/r", "token", client)
-    body = f"{marker(date(2026, 8, 12))}\ncontent"
+    body = f"{daily_marker(date(2026, 8, 12))}\ncontent"
     first = await publisher.publish(date(2026, 8, 12), body)
     second = await publisher.publish(date(2026, 8, 12), body)
     assert first.issue_number == second.issue_number == 12
@@ -88,7 +89,7 @@ async def test_publish_upgrades_an_existing_legacy_marker() -> None:
     publisher = GitHubPublisher(
         "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
-    body = f"{marker(date(2026, 8, 12))}\nnew content"
+    body = f"{daily_marker(date(2026, 8, 12))}\nnew content"
 
     publication = await publisher.publish(date(2026, 8, 12), body)
 
@@ -126,8 +127,46 @@ async def test_publish_ignores_existing_untrusted_issue() -> None:
     publisher = GitHubPublisher(
         "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
-    body = f"{marker(date(2026, 8, 12))}\ncontent"
+    body = f"{daily_marker(date(2026, 8, 12))}\ncontent"
     publication = await publisher.publish(date(2026, 8, 12), body)
+
+    assert publication.issue_number == 11
+    assert writes == ["POST"]
+
+
+async def test_publish_does_not_overwrite_unmarked_owner_issue() -> None:
+    writes: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 10,
+                        "title": "2026-08-12",
+                        "body": "unrelated owner note",
+                        "user": {"login": "o"},
+                        "labels": [],
+                        "url": "https://api.github.com/repos/o/r/issues/10",
+                        "html_url": "https://github.com/o/r/issues/10",
+                    }
+                ],
+            )
+        writes.append(request.method)
+        return httpx.Response(
+            201,
+            json={"number": 11, "html_url": "https://github.com/o/r/issues/11"},
+        )
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    target = date(2026, 8, 12)
+
+    publication = await publisher.publish(target, f"{daily_marker(target)}\ncontent")
 
     assert publication.issue_number == 11
     assert writes == ["POST"]
@@ -178,3 +217,50 @@ async def test_find_publication_paginates_for_old_daily_issues() -> None:
     assert publication is not None
     assert publication.issue_number == 101
     assert calls == [1, 2]
+
+
+async def test_closed_daily_is_not_verified_but_publish_reopens_it() -> None:
+    writes: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 12,
+                        "title": "2026-08-12",
+                        "state": "closed",
+                        "body": daily_marker(date(2026, 8, 12)),
+                        "user": {"login": "github-actions[bot]"},
+                        "labels": [{"name": "Daily"}],
+                        "url": "https://api.github.com/repos/o/r/issues/12",
+                        "html_url": "https://github.com/o/r/issues/12",
+                    }
+                ],
+            )
+        writes.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"number": 12, "html_url": "https://github.com/o/r/issues/12"},
+        )
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    target = date(2026, 8, 12)
+
+    assert await publisher.find_publication(target) is None
+    publication = await publisher.publish(target, f"{daily_marker(target)}\ncontent")
+
+    assert publication.issue_number == 12
+    assert writes == [
+        {
+            "title": "2026-08-12",
+            "body": f"{daily_marker(target)}\ncontent",
+            "labels": ["Daily"],
+            "state": "open",
+        }
+    ]

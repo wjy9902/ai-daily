@@ -14,15 +14,10 @@ from ai_daily.models import (
     Event,
     Evidence,
 )
-from ai_daily.site_trust import story_title_marker
+from ai_daily.site_trust import daily_marker, story_title_marker
 
-MARKER_VERSION = "v2"
 WEEKDAYS = "一二三四五六日"
 MARKDOWN_ESCAPE_RE = re.compile(r"([\\`*_[\]<>])")
-
-
-def marker(target_date: date) -> str:
-    return f"<!-- ai-daily:{target_date.isoformat()}:{MARKER_VERSION} -->"
 
 
 def assemble_markdown(
@@ -61,28 +56,49 @@ def assemble_markdown(
 def _header(target_date: date, plan: EditorialPlan) -> list[str]:
     weekday = WEEKDAYS[target_date.weekday()]
     return [
-        marker(target_date),
-        f"# AI 日报 · 周{weekday}",
+        daily_marker(target_date),
+        f'<p class="digest-kicker">AI 日报 · 周{weekday}</p>',
         "",
-        f"> **今日亮点：** {_markdown_text(plan.today_highlight)}",
+        (
+            '<p class="digest-highlight"><strong>今日亮点：</strong> '
+            f"{html.escape(plan.today_highlight)}</p>"
+        ),
         "",
     ]
 
 
 def _contents(selections: list[EditorialSelection]) -> list[str]:
-    lines = ["## 速览目录", ""]
-    sections = (
-        (EditorialTier.LEAD, "今日重点"),
+    leads = [item for item in selections if item.tier == EditorialTier.LEAD]
+    lines = ["## 今日必读", ""]
+    lines.extend(f"- [{_markdown_text(item.headline)}](#story-{item.event_id})" for item in leads)
+    lines.append("")
+    remaining = [item for item in selections if item.tier != EditorialTier.LEAD]
+    if not remaining:
+        return lines
+    lines.extend(
+        [
+            '<details class="digest-index">',
+            f"<summary>展开其余 {len(remaining)} 条目录</summary>",
+            '<div class="digest-index__content">',
+        ]
+    )
+    for tier, title in (
         (EditorialTier.FOLLOW, "值得关注"),
         (EditorialTier.BRIEF, "快讯"),
-    )
-    for tier, title in sections:
+    ):
         values = [item for item in selections if item.tier == tier]
-        lines.extend([f"### {title}", ""])
+        if not values:
+            continue
+        lines.extend([f"<h3>{title}</h3>", "<ul>"])
         lines.extend(
-            f"- [{_markdown_text(item.headline)}](#story-{item.event_id})" for item in values
+            (
+                f'<li><a href="#story-{html.escape(item.event_id, quote=True)}">'
+                f"{html.escape(item.headline)}</a></li>"
+            )
+            for item in values
         )
-        lines.append("")
+        lines.append("</ul>")
+    lines.extend(["</div>", "</details>", ""])
     return lines
 
 
@@ -102,20 +118,39 @@ def _detail(
             f"{_markdown_text(selection.headline)}"
         ),
         "",
-        f"> **TL;DR：** {_markdown_text(draft.tldr)}",
-        ">",
-        f"> **来源：** {_source_links(_detail_evidence_ids(selection, draft), evidence)}",
-        ">",
-        "> **核心事实：**",
-        *[f"> - {_markdown_text(fact)}" for fact in draft.facts],
-        ">",
-        f"> **为什么重要：** {_markdown_text(draft.why_it_matters)}",
+        f'<div class="story-card story-card--{tier_class}">',
+        f'<p class="story-tldr"><strong>TL;DR：</strong> {html.escape(draft.tldr)}</p>',
+        (
+            '<p class="story-sources"><strong>来源：</strong> '
+            f"{_source_links(_detail_evidence_ids(selection, draft), evidence)}</p>"
+        ),
+        '<div class="story-facts"><strong>核心事实：</strong><ul>',
+        *[f"<li>{html.escape(fact)}</li>" for fact in draft.facts],
+        "</ul></div>",
+        (
+            '<p class="story-importance"><strong>为什么重要：</strong> '
+            f"{html.escape(draft.why_it_matters)}</p>"
+        ),
     ]
     if draft.action:
-        lines.extend([">", f"> **可以怎么用：** {_markdown_text(draft.action)}"])
+        lines.append(
+            f'<p class="story-action"><strong>可以怎么用：</strong> {html.escape(draft.action)}</p>'
+        )
     if draft.caveat:
-        lines.extend([">", f"> **局限/争议：** {_markdown_text(draft.caveat)}"])
-    lines.extend(["", f"`{target_date.isoformat()}` · {selection.category}", ""])
+        lines.append(
+            f'<p class="story-caveat"><strong>局限/争议：</strong> {html.escape(draft.caveat)}</p>'
+        )
+    lines.extend(
+        [
+            "</div>",
+            (
+                '<p class="story-meta"><time datetime="'
+                f'{target_date.isoformat()}">{target_date.isoformat()}</time> · '
+                f"{html.escape(selection.category)}</p>"
+            ),
+            "",
+        ]
+    )
     return lines
 
 

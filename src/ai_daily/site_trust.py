@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import re
 from collections.abc import Iterable
+from datetime import date
 from typing import Protocol
 
 DAILY_LABEL = "Daily"
 DAILY_MARKER_RE = re.compile(r"<!-- ai-daily:\d{4}-\d{2}-\d{2}:v\d+ -->")
 TRUSTED_BOT = "github-actions[bot]"
 STORY_MARKER_RE = re.compile(r"<!-- ai-daily-story:([A-Za-z0-9_-]+) -->")
+MARKER_VERSION = "v2"
 
 
 class UserLike(Protocol):
@@ -30,6 +32,10 @@ def has_daily_marker(body: str | None, target_date: str | None = None) -> bool:
     if match is None or target_date is None:
         return match is not None
     return match.group(0).startswith(f"<!-- ai-daily:{target_date}:")
+
+
+def daily_marker(target_date: date) -> str:
+    return f"<!-- ai-daily:{target_date.isoformat()}:{MARKER_VERSION} -->"
 
 
 def story_title_marker(title: str) -> str:
@@ -54,4 +60,22 @@ def is_trusted_issue(issue: IssueLike, owner: str) -> bool:
     labels = {label.name for label in issue.labels}
     return (
         issue.user.login == TRUSTED_BOT and DAILY_LABEL in labels and has_daily_marker(issue.body)
+    )
+
+
+def is_trusted_issue_payload(
+    issue: dict[str, object], owner: str, target_date: str | None = None
+) -> bool:
+    user = issue.get("user")
+    author = user.get("login") if isinstance(user, dict) else None
+    if author == owner:
+        return True
+    raw_labels = issue.get("labels")
+    labels = raw_labels if isinstance(raw_labels, list) else []
+    label_names = {label.get("name") for label in labels if isinstance(label, dict)}
+    body = issue.get("body")
+    return (
+        author == TRUSTED_BOT
+        and DAILY_LABEL in label_names
+        and has_daily_marker(body if isinstance(body, str) else None, target_date)
     )

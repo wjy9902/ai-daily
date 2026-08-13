@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from ai_daily.site_trust import (
-    DAILY_LABEL,
-    TRUSTED_BOT,
-    has_daily_marker,
+    is_trusted_issue_payload,
     marked_story_titles,
 )
 
@@ -23,6 +22,7 @@ NON_STORY_HEADINGS = {
     "快讯",
     "速览",
     "速览目录",
+    "今日必读",
     "编辑观点",
     "模型与平台",
     "前沿研究",
@@ -57,8 +57,19 @@ async def fetch_historical_index(
     repository: str,
     token: str | None,
     days: int,
+    before_date: date,
 ) -> HistoricalIndex:
-    since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+    first_date = before_date - timedelta(days=days)
+    since = (
+        datetime(
+            first_date.year,
+            first_date.month,
+            first_date.day,
+            tzinfo=ZoneInfo("Asia/Shanghai"),
+        )
+        .astimezone(UTC)
+        .isoformat()
+    )
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -66,7 +77,12 @@ async def fetch_historical_index(
     urls: set[str] = set()
     titles: set[str] = set()
     for issue in issues:
-        if "pull_request" in issue or not _trusted_history_issue(issue, repository):
+        if "pull_request" in issue:
+            continue
+        issue_date = _issue_date(issue)
+        if issue_date is None or not first_date <= issue_date < before_date:
+            continue
+        if not _trusted_history_issue(issue, repository, issue_date):
             continue
         raw_body = issue.get("body")
         body = raw_body if isinstance(raw_body, str) else ""
@@ -75,21 +91,19 @@ async def fetch_historical_index(
     return HistoricalIndex(urls=urls, titles=titles)
 
 
-def _trusted_history_issue(issue: dict[str, object], repository: str) -> bool:
+def _issue_date(issue: dict[str, object]) -> date | None:
+    raw_title = issue.get("title")
+    if not isinstance(raw_title, str):
+        return None
+    try:
+        return date.fromisoformat(raw_title)
+    except ValueError:
+        return None
+
+
+def _trusted_history_issue(issue: dict[str, object], repository: str, issue_date: date) -> bool:
     owner = repository.split("/", 1)[0]
-    user = issue.get("user")
-    author = user.get("login") if isinstance(user, dict) else None
-    if author == owner:
-        return True
-    labels = issue.get("labels")
-    label_values = labels if isinstance(labels, list) else []
-    label_names = {label.get("name") for label in label_values if isinstance(label, dict)}
-    body = issue.get("body")
-    return (
-        author == TRUSTED_BOT
-        and DAILY_LABEL in label_names
-        and has_daily_marker(body if isinstance(body, str) else None)
-    )
+    return is_trusted_issue_payload(issue, owner, issue_date.isoformat())
 
 
 async def _fetch_issues(

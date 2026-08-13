@@ -142,6 +142,46 @@ async def test_editor_cannot_invent_evidence() -> None:
         raise AssertionError("invented evidence was accepted")
 
 
+class WrongDraftEventGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(update={"event_id": "wrong-event"})
+        return value
+
+
+async def test_editor_cannot_change_draft_event() -> None:
+    with pytest.raises(ValueError, match="changed event_id"):
+        await draft_selected(WrongDraftEventGateway(), [event()], plan())  # type: ignore[arg-type]
+
+
+class InventedJudgeEvidenceGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, JudgeBatch):
+            value.decisions[0].evidence_ids = ["invented"]
+        return value
+
+
+async def test_judge_cannot_invent_evidence() -> None:
+    with pytest.raises(ValueError, match="unknown evidence"):
+        await judge_events(InventedJudgeEvidenceGateway(), [event()])  # type: ignore[arg-type]
+
+
 class DuplicateJudgeGateway(FakeGateway):
     async def generate(
         self,
@@ -180,6 +220,28 @@ async def test_judge_splits_large_candidate_sets_into_small_batches() -> None:
 
     assert len(decisions) == 21
     assert gateway.calls == 3
+
+
+async def test_judge_stops_after_first_failed_batch() -> None:
+    class FailingGateway(FakeGateway):
+        async def generate(
+            self,
+            role: str,
+            output_type: type[BaseModel],
+            instructions: str,
+            prompt: str,
+            validator: Any = None,
+        ) -> Any:
+            self.calls += 1
+            raise RuntimeError("provider failed")
+
+    gateway = FailingGateway()
+    events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(21)]
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await judge_events(gateway, events)  # type: ignore[arg-type]
+
+    assert gateway.calls == 1
 
 
 def numbered_event(index: int) -> Event:
@@ -285,6 +347,7 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("lead-quota", "lead count"),
         ("research-quota", "too many detailed research"),
         ("category-breadth", "lacks category breadth"),
+        ("brief-category", "brief category"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -315,6 +378,8 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "category-breadth":
         for selection in plan_value.selections[:9]:
             selection.category = "模型与平台"
+    elif mutation == "brief-category":
+        plan_value.selections[0].category = "快讯"
 
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
@@ -340,6 +405,26 @@ def test_unselected_viewpoint_evidence_error_lists_allowed_ids() -> None:
     assert "unselected evidence" in str(error.value)
     assert "event-99-1" in str(error.value)
     assert "event-0-1" in str(error.value)
+
+
+def test_viewpoint_cannot_use_uncited_evidence_from_a_selected_event() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    second_item = (
+        events[0]
+        .items[0]
+        .model_copy(
+            update={
+                "source_item_id": "corroborating",
+                "url": "https://example.com/corroborating",
+            }
+        )
+    )
+    events[0].items.append(second_item)
+    plan_value = valid_global_plan()
+    plan_value.editor_viewpoint[0].evidence_ids = ["event-0-2"]
+
+    with pytest.raises(ValueError, match="unselected evidence"):
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
 
 
 async def test_planning_prompt_uses_configured_detail_caps() -> None:

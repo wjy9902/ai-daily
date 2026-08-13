@@ -6,9 +6,8 @@ from typing import Any
 import httpx
 from pydantic import HttpUrl
 
-from ai_daily.assembler import marker
 from ai_daily.models import Publication
-from ai_daily.site_trust import DAILY_LABEL, TRUSTED_BOT, has_daily_marker
+from ai_daily.site_trust import daily_marker, has_daily_marker, is_trusted_issue_payload
 
 
 class GitHubPublisher:
@@ -24,13 +23,14 @@ class GitHubPublisher:
         }
 
     async def publish(self, target_date: date, body: str) -> Publication:
-        expected_marker = marker(target_date)
+        expected_marker = daily_marker(target_date)
         if expected_marker not in body:
             raise ValueError("publication body is missing its machine marker")
         await self._ensure_daily_label()
-        issue = await self._find(target_date)
+        issue = await self._find(target_date, include_closed=True)
         payload = {"title": target_date.isoformat(), "body": body, "labels": ["Daily"]}
         if issue:
+            payload["state"] = "open"
             response = await self.client.patch(
                 str(issue["url"]), headers=self.headers, json=payload, timeout=20
             )
@@ -67,8 +67,8 @@ class GitHubPublisher:
         created.raise_for_status()
 
     async def find_publication(self, target_date: date) -> Publication | None:
-        expected_marker = marker(target_date)
-        issue = await self._find(target_date)
+        expected_marker = daily_marker(target_date)
+        issue = await self._find(target_date, include_closed=False)
         if not issue:
             return None
         return Publication(
@@ -79,26 +79,30 @@ class GitHubPublisher:
             marker=expected_marker,
         )
 
-    async def _find(self, target_date: date) -> dict[str, Any] | None:
+    async def _find(self, target_date: date, *, include_closed: bool) -> dict[str, Any] | None:
         title_matches = [
             issue
             for issue in await self._issues()
             if "pull_request" not in issue and issue.get("title") == target_date.isoformat()
         ]
+        if not include_closed:
+            title_matches = [
+                issue for issue in title_matches if issue.get("state", "open") == "open"
+            ]
         matches = [issue for issue in title_matches if self._is_trusted_daily(issue, target_date)]
         if len(matches) > 1:
             raise RuntimeError("multiple daily issues exist for the same date")
         return matches[0] if matches else None
 
     def _is_trusted_daily(self, issue: dict[str, Any], target_date: date) -> bool:
-        author = (issue.get("user") or {}).get("login")
-        if author == self.repository.split("/", 1)[0]:
-            return True
-        labels = {label.get("name") for label in issue.get("labels") or []}
-        return (
-            author == TRUSTED_BOT
-            and DAILY_LABEL in labels
-            and has_daily_marker(issue.get("body"), target_date.isoformat())
+        body = issue.get("body")
+        target = target_date.isoformat()
+        return has_daily_marker(
+            body if isinstance(body, str) else None, target
+        ) and is_trusted_issue_payload(
+            issue,
+            self.repository.split("/", 1)[0],
+            target,
         )
 
     async def _issues(self) -> list[dict[str, Any]]:

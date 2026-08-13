@@ -1,13 +1,66 @@
+import asyncio
+
 import httpx
 import pytest
 
 from ai_daily.models import SourceConfig, SourceTier
-from ai_daily.sources import Collector
+from ai_daily.sources import MAX_RESPONSE_BYTES, Collector
+
+
+class TrackingTransport(httpx.AsyncBaseTransport):
+    def __init__(self, expected_concurrency: int) -> None:
+        self.expected_concurrency = expected_concurrency
+        self.active_by_host: dict[str, int] = {}
+        self.max_by_host: dict[str, int] = {}
+        self.global_max = 0
+        self.all_started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
+        self.active_by_host[host] = self.active_by_host.get(host, 0) + 1
+        self.max_by_host[host] = max(self.max_by_host.get(host, 0), self.active_by_host[host])
+        self.global_max = max(self.global_max, sum(self.active_by_host.values()))
+        if self.global_max >= self.expected_concurrency:
+            self.all_started.set()
+        await self.release.wait()
+        self.active_by_host[host] -= 1
+        return httpx.Response(200, content=b"ok")
 
 
 def test_collector_rejects_zero_per_host_concurrency() -> None:
     with pytest.raises(ValueError, match="per_host"):
         Collector(per_host=0)
+
+
+async def test_collector_limits_concurrency_per_host() -> None:
+    transport = TrackingTransport(expected_concurrency=1)
+    collector = Collector(httpx.AsyncClient(transport=transport), per_host=1)
+    tasks = [
+        asyncio.create_task(collector._request("https://one.example/a")),
+        asyncio.create_task(collector._request("https://one.example/b")),
+    ]
+
+    await asyncio.wait_for(transport.all_started.wait(), timeout=1)
+    await asyncio.sleep(0)
+    assert transport.max_by_host == {"one.example": 1}
+    transport.release.set()
+    await asyncio.gather(*tasks)
+
+
+async def test_collector_does_not_serialize_different_hosts() -> None:
+    transport = TrackingTransport(expected_concurrency=2)
+    collector = Collector(httpx.AsyncClient(transport=transport), per_host=1)
+    tasks = [
+        asyncio.create_task(collector._request("https://one.example/a")),
+        asyncio.create_task(collector._request("https://two.example/b")),
+    ]
+
+    await asyncio.wait_for(transport.all_started.wait(), timeout=1)
+    assert transport.global_max == 2
+    assert transport.max_by_host == {"one.example": 1, "two.example": 1}
+    transport.release.set()
+    await asyncio.gather(*tasks)
 
 
 async def test_rss_adapter_parses_valid_entries() -> None:
@@ -42,6 +95,42 @@ async def test_source_failure_is_visible_not_silent() -> None:
     assert items == []
     assert health[0].status == "failed"
     assert health[0].error == "HTTPStatusError"
+
+
+async def test_rss_rejects_cross_origin_redirect_before_requesting_target() -> None:
+    requested_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_hosts.append(request.url.host)
+        return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest"})
+
+    source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
+    ).collect([source])
+
+    assert items == []
+    assert requested_hosts == ["example.com"]
+    assert health[0].status == "failed"
+    assert health[0].error == "SourceCollectionError"
+
+
+async def test_source_rejects_oversized_response_before_buffering_body() -> None:
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"Content-Length": str(MAX_RESPONSE_BYTES + 1)},
+            )
+        )
+    )
+    source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
+
+    items, health = await Collector(client).collect([source])
+
+    assert items == []
+    assert health[0].status == "failed"
+    assert health[0].error == "SourceCollectionError"
 
 
 async def test_empty_source_is_reported_as_failed() -> None:

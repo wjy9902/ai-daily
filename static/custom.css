@@ -1,5 +1,3 @@
-@import url("editorial.css");
-
 :root {
   --accent: #d9632d;
   --accent-dark: #a9441d;
@@ -8,7 +6,7 @@
   --canvas: #f4f1eb;
   --ink: #20211f;
   --ink-soft: #555851;
-  --muted: #85877f;
+  --muted: #6c6e67;
   --rule: #dedbd3;
   --rule-soft: #ece9e1;
   --code-bg: #202321;
@@ -38,7 +36,7 @@ a {
 }
 
 a:hover {
-  color: var(--accent);
+  color: var(--accent-dark);
 }
 
 .container {
@@ -215,9 +213,9 @@ main > .content > article.post .post__title {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
   box-shadow: 0 8px 28px rgb(53 47 38 / 6%);
-  display: block;
+  display: none;
   font-size: 0.8rem;
-  left: calc(50% + 285px);
+  left: calc(50% + 420px);
   line-height: 1.55;
   max-height: calc(100vh - 8rem);
   overflow: auto;
@@ -278,7 +276,7 @@ main .pagination a {
 }
 
 main .pagination .current {
-  background: var(--accent);
+  background: var(--accent-dark);
   color: #fff;
 }
 
@@ -309,18 +307,44 @@ main .post-nav a:hover {
 }
 
 #btt {
-  align-items: center !important;
-  background: var(--ink) !important;
-  border: 0 !important;
+  align-items: center;
+  background: var(--ink);
+  border: 0;
+  border-radius: 50%;
+  bottom: 2rem;
   box-shadow: 0 5px 18px rgb(32 33 31 / 22%);
-  display: flex !important;
+  color: #fff;
+  cursor: pointer;
+  display: flex;
   font-family: var(--font-sans);
+  font-size: 1.15rem;
+  height: 44px;
   justify-content: center;
+  opacity: 0.86;
+  position: fixed;
+  right: 2rem;
+  transition: opacity 160ms ease, transform 160ms ease;
+  width: 44px;
+  z-index: 999;
 }
 
-@media (max-width: 1180px) {
+#btt[hidden] {
+  display: none;
+}
+
+#btt:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+#btt:focus-visible {
+  outline: 3px solid var(--accent-dark);
+  outline-offset: 3px;
+}
+
+@media (min-width: 1380px) {
   .post-toc {
-    display: none;
+    display: block;
   }
 }
 
@@ -369,9 +393,7 @@ main .post-nav a:hover {
   }
 
   #btt {
-    bottom: 1rem !important;
-    height: 42px !important;
-    right: 1rem !important;
-    width: 42px !important;
+    bottom: 1rem;
+    right: 1rem;
   }
 }

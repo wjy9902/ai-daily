@@ -42,9 +42,12 @@ def evidence_bundle(event: Event) -> EvidenceBundle:
 
 
 async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
-    decisions = []
-    for start in range(0, len(events), JUDGE_BATCH_SIZE):
-        batch = events[start : start + JUDGE_BATCH_SIZE]
+    batches = [
+        events[start : start + JUDGE_BATCH_SIZE]
+        for start in range(0, len(events), JUDGE_BATCH_SIZE)
+    ]
+    decisions: list[JudgeDecision] = []
+    for batch in batches:
         decisions.extend(await _judge_batch(gateway, batch))
     return decisions
 
@@ -194,7 +197,7 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
         }
         if not set(selection.evidence_ids) <= allowed:
             raise ValueError("editorial plan referenced unknown evidence")
-        selected_evidence.update(allowed)
+        selected_evidence.update(selection.evidence_ids)
     for insight in plan.editor_viewpoint:
         unknown = sorted(set(insight.evidence_ids) - selected_evidence)
         if unknown:
@@ -249,11 +252,24 @@ async def draft_selected(
     details = [item for item in plan.selections if item.tier != EditorialTier.BRIEF]
     drafts: list[DraftItem] = []
     for selection in details:
-        bundle = evidence_bundle(events_by_id[selection.event_id])
-        draft = await _draft_one(gateway, selection, bundle)
-        _validate_draft(draft, selection, bundle)
-        drafts.append(draft)
+        drafts.append(
+            await _draft_and_validate(
+                gateway,
+                selection,
+                evidence_bundle(events_by_id[selection.event_id]),
+            )
+        )
     return drafts
+
+
+async def _draft_and_validate(
+    gateway: ModelGateway,
+    selection: EditorialSelection,
+    bundle: EvidenceBundle,
+) -> DraftItem:
+    draft = await _draft_one(gateway, selection, bundle)
+    _validate_draft(draft, selection, bundle)
+    return draft
 
 
 async def _draft_one(

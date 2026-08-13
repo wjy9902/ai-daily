@@ -1,9 +1,12 @@
+import asyncio
+
 import httpx
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from ai_daily.budget import BudgetExceeded
 from ai_daily.config import Secrets, load_config
 from ai_daily.model_gateway import (
     Invocation,
@@ -41,6 +44,20 @@ def test_alibaba_structured_output_disables_thinking_mode() -> None:
 
     assert gateway._model_settings(alibaba)["extra_body"] == {"enable_thinking": False}
     assert gateway._model_settings(deepseek)["extra_body"] is None
+
+
+async def test_provider_sdk_retries_are_disabled() -> None:
+    secrets = Secrets(
+        dashscope_api_key="test-key",
+        dashscope_base_url="https://example.com/v1",
+        deepseek_api_key="test-key",
+    )
+    gateway = ModelGateway(load_config().models, secrets)
+    for role in gateway.config.roles.values():
+        for endpoint in (role.primary, role.fallback):
+            model = gateway._build_model(endpoint)
+            assert model.provider.client.max_retries == 0
+            await model.provider.client.close()
 
 
 def test_fallback_audit_preserves_requested_model() -> None:
@@ -257,10 +274,76 @@ async def test_semantic_validation_failure_does_not_cross_provider(
 
     assert calls == 2
     assert len(endpoints) == 1
+    assert gateway.ledger.requests == 2
+    assert gateway.runs[-1].request_count == 2
+    assert gateway.runs[-1].status == "failed"
+    assert gateway.runs[-1].input_tokens > 0
 
 
-def test_structured_output_retry_cannot_exceed_daily_request_budget() -> None:
+async def test_new_invocation_cannot_exceed_daily_request_budget() -> None:
     gateway = ModelGateway(load_config().models, Secrets())
     gateway.ledger.requests = gateway.config.budget.request_limit
 
-    assert gateway._invocation_request_limit() == 1
+    with pytest.raises(BudgetExceeded, match="request"):
+        await gateway._reserve_request_slots()
+
+
+async def test_generate_preserves_budget_exceeded_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+
+    async def invoke(*args: object, **kwargs: object) -> JudgeDecision:
+        raise BudgetExceeded("model request limit exceeded")
+
+    monkeypatch.setattr(gateway, "_invoke_endpoint", invoke)
+
+    with pytest.raises(BudgetExceeded, match="request"):
+        await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+
+async def test_concurrent_invocations_stay_bounded_and_audited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    active = 0
+    maximum = 0
+    calls = 0
+
+    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        nonlocal active, maximum, calls
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        calls += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": f"event-{calls}",
+                        "selected": True,
+                        "category": "行业动态",
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "重要事件",
+                        "evidence_ids": [f"event-{calls}-1"],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+
+    results = await asyncio.gather(
+        *[
+            gateway.generate("judge", JudgeDecision, "instructions", f"prompt-{index}")
+            for index in range(8)
+        ]
+    )
+
+    assert len(results) == 8
+    assert maximum == 1
+    assert gateway.ledger.requests == 8
+    assert sum(run.request_count for run in gateway.runs) == 8

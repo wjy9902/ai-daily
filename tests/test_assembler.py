@@ -82,12 +82,23 @@ def test_digest_restores_editorial_hierarchy_and_human_sources() -> None:
         _selection(2, EditorialTier.BRIEF),
     ]
     body = assemble_markdown(date(2026, 8, 12), _plan(selections), [_draft(0), _draft(1)], events)
-    assert "### 今日重点" in body
-    assert "### 值得关注" in body
+    assert "## 今日必读" in body
+    assert "展开其余 2 条目录" in body
     assert '<ol class="brief-list">' in body
     assert "## 编辑观点" in body
     assert '<a href="https://example.com/0">官方来源 0</a>' in body
     assert ">official-0<" not in body
+    document = html.fromstring(marko(body))
+    assert document.xpath("//h1") == []
+    assert document.xpath("//blockquote") == []
+    assert (
+        len(
+            document.xpath(
+                '//*[contains(concat(" ", normalize-space(@class), " "), " story-card ")]'
+            )
+        )
+        == 2
+    )
 
 
 def test_detail_lists_evidence_used_by_both_plan_and_draft() -> None:

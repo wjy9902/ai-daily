@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import ipaddress
 import re
 import time
 from dataclasses import dataclass
@@ -31,6 +32,11 @@ class SourceCollectionError(RuntimeError):
 
 class SourceNotModified(RuntimeError):
     pass
+
+
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_REDIRECTS = 5
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
 @dataclass(frozen=True)
@@ -107,7 +113,7 @@ class Collector:
             raise ValueError("per_host must be at least 1")
         self.client = client or httpx.AsyncClient(
             headers={"User-Agent": "ai-daily/0.2 (+https://wjy9902.github.io/ai-daily/)"},
-            follow_redirects=True,
+            follow_redirects=False,
         )
         self._per_host = per_host
         self._host_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -189,10 +195,47 @@ class Collector:
         raise AssertionError("unreachable")
 
     async def _request(self, url: str, **kwargs: Any) -> httpx.Response:
-        host = urlsplit(url).hostname or ""
+        allowed_origin = kwargs.pop("allowed_origin", _origin(url))
+        kwargs.pop("follow_redirects", None)
+        current = url
+        request_kwargs = kwargs
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            _validate_request_url(current, allowed_origin)
+            request = self.client.build_request("GET", current, **request_kwargs)
+            response = await self._send_limited(request)
+            if response.status_code not in REDIRECT_STATUSES:
+                return response
+            location = response.headers.get("Location")
+            if not location:
+                raise SourceCollectionError("source redirect has no location")
+            if redirect_count == MAX_REDIRECTS:
+                raise SourceCollectionError("source exceeded redirect limit")
+            current = urljoin(str(request.url), location)
+            request_kwargs = {
+                key: value for key, value in kwargs.items() if key in {"headers", "timeout"}
+            }
+        raise AssertionError("unreachable")
+
+    async def _send_limited(self, request: httpx.Request) -> httpx.Response:
+        host = request.url.host
         semaphore = self._host_semaphores.setdefault(host, asyncio.Semaphore(self._per_host))
         async with semaphore:
-            return await self.client.get(url, **kwargs)
+            async with asyncio.timeout(_total_timeout(request)):
+                response = await self.client.send(request, stream=True, follow_redirects=False)
+                try:
+                    if response.status_code in REDIRECT_STATUSES:
+                        return _buffered_response(response, b"")
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and int(content_length) > MAX_RESPONSE_BYTES:
+                        raise SourceCollectionError("source response exceeds size limit")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
+                        if len(body) > MAX_RESPONSE_BYTES:
+                            raise SourceCollectionError("source response exceeds size limit")
+                    return _buffered_response(response, bytes(body))
+                finally:
+                    await response.aclose()
 
     def _remember_validators(self, name: str, response: httpx.Response) -> None:
         validators = {}
@@ -388,24 +431,48 @@ class Collector:
         )
 
     async def _same_origin_get(self, source: SourceConfig, url: str) -> httpx.Response:
-        source_origin = _origin(str(source.url))
-        current = url
-        for _ in range(6):
-            if _origin(current) != source_origin:
-                raise SourceCollectionError("html article left its configured HTTPS origin")
-            response = await self._request(
-                current,
-                timeout=source.timeout_seconds,
-                follow_redirects=False,
-            )
-            if not response.is_redirect:
-                response.raise_for_status()
-                return response
-            location = response.headers.get("Location")
-            if not location:
-                raise SourceCollectionError("html article redirect has no location")
-            current = urljoin(current, location)
-        raise SourceCollectionError("html article exceeded redirect limit")
+        response = await self._request(
+            url,
+            timeout=source.timeout_seconds,
+            allowed_origin=_origin(str(source.url)),
+        )
+        response.raise_for_status()
+        return response
+
+
+def _buffered_response(response: httpx.Response, content: bytes) -> httpx.Response:
+    return httpx.Response(
+        status_code=response.status_code,
+        headers=response.headers,
+        content=content,
+        request=response.request,
+        extensions=response.extensions,
+    )
+
+
+def _total_timeout(request: httpx.Request) -> float | None:
+    settings = request.extensions.get("timeout")
+    if not isinstance(settings, dict):
+        return None
+    value = settings.get("read")
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _validate_request_url(value: str, allowed_origin: tuple[str, str, int]) -> None:
+    parts = urlsplit(value)
+    if parts.username or parts.password:
+        raise SourceCollectionError("source URL cannot contain credentials")
+    if _origin(value) != allowed_origin or parts.scheme.lower() != "https":
+        raise SourceCollectionError("source redirect left its configured HTTPS origin")
+    host = parts.hostname or ""
+    if host == "localhost" or host.endswith(".localhost"):
+        raise SourceCollectionError("source URL cannot target localhost")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if not address.is_global:
+        raise SourceCollectionError("source URL cannot target a non-public address")
 
 
 def _origin(value: str) -> tuple[str, str, int]:

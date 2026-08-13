@@ -66,8 +66,8 @@ class SourceConfig(StrictModel):
             raise ValueError("html_index sources require link_pattern")
         if self.kind != "html_index" and self.link_pattern:
             raise ValueError("link_pattern is only valid for html_index sources")
-        if self.kind == "html_index" and self.url.scheme != "https":
-            raise ValueError("html_index sources require HTTPS")
+        if self.url.scheme != "https":
+            raise ValueError("sources require HTTPS")
         return self
 
 

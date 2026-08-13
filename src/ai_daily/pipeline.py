@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ai_daily.artifacts import write_artifact
-from ai_daily.assembler import assemble_markdown, marker
+from ai_daily.assembler import assemble_markdown
 from ai_daily.config import AppConfig, Secrets
 from ai_daily.content import draft_selected, judge_events, plan_digest
 from ai_daily.history import fetch_historical_index
@@ -32,6 +32,7 @@ from ai_daily.normalize import (
     select_candidate_pool,
 )
 from ai_daily.publisher import GitHubPublisher
+from ai_daily.site_trust import daily_marker
 from ai_daily.sources import Collector
 
 
@@ -144,6 +145,7 @@ class DailyPipeline:
             repository,
             self.secrets.github_token,
             self.config.pipeline.history_window_days,
+            target_date,
         )
         deduplicated = remove_historical(events, historical_index)
         candidates = select_candidate_pool(
@@ -186,7 +188,7 @@ class DailyPipeline:
         publication = Publication(
             target_date=target_date,
             status="dry_run",
-            marker=marker(target_date),
+            marker=daily_marker(target_date),
         )
         if publish:
             if not self.secrets.github_token:

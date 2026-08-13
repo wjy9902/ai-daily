@@ -11,6 +11,7 @@ on:
       - uv.lock
       - config.toml
       - static/**
+      - src/ai_daily/site_dates.py
       - .github/workflows/generate_site.yml
   issues:
     types:
@@ -75,6 +76,7 @@ jobs:
           gh release download $ISITE_VERSION --repo kemingy/isite -p '*linux_amd64*' --output isite.tar.gz
           tar zxf isite.tar.gz && mv isite /usr/local/bin
           isite generate --user $USER --repo $REPO
+          uv run --frozen python -m ai_daily.site_dates output/content
           git -C output/themes/even checkout --detach "$EVEN_THEME_COMMIT"
           gh release download $ZOLA_VERSION --repo getzola/zola \
             -p '*x86_64-unknown-linux-gnu*' --output zola.tar.gz
@@ -83,15 +85,16 @@ jobs:
           mkdir -p output/static
           cp -r static/. output/static/
           (cd output && zola build --base-url $BASE_URL)
-          # Inject custom CSS, favicon, inline JS, and SEO meta tags (single sed pass)
+          # Inject versioned assets, favicon, and SEO meta tags (single sed pass)
           GIT_SHA=$(git rev-parse --short HEAD)
+          EDITORIAL_HREF="${BASE_URL%/}/editorial.css?v=${GIT_SHA}"
           CSS_HREF="${BASE_URL%/}/custom.css?v=${GIT_SHA}"
+          JS_SRC="${BASE_URL%/}/site.js?v=${GIT_SHA}"
           ICON_HREF="${BASE_URL%/}/icon.png?v=${GIT_SHA}"
-          INLINE_JS="<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.post-content a').forEach(function(a){if(a.hostname!==window.location.hostname){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}});var b=document.createElement('button');b.innerHTML='↑';b.id='btt';b.style.cssText='position:fixed;bottom:2em;right:2em;width:40px;height:40px;border-radius:50%;background:#e67e22;color:#fff;border:none;font-size:1.2em;cursor:pointer;opacity:0;transition:opacity .3s;z-index:999';document.body.appendChild(b);window.addEventListener('scroll',function(){b.style.opacity=window.scrollY>500?'0.8':'0'});b.addEventListener('click',function(){window.scrollTo({top:0,behavior:'smooth'})})});</script>"
           SITE_TITLE="甲鱼AI日报"
           SITE_DESC="每日 AI 前沿技术情报，由 AI 辅助创作"
           find output/public -name "*.html" -exec sed -i \
-            -e "s|</head>|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><meta name=\"description\" content=\"${SITE_DESC}\"><meta property=\"og:title\" content=\"${SITE_TITLE}\"><meta property=\"og:description\" content=\"${SITE_DESC}\"><meta property=\"og:image\" content=\"${BASE_URL%/}/icon.png\"><meta property=\"og:type\" content=\"website\"><link rel=\"stylesheet\" href=\"${CSS_HREF}\">${INLINE_JS}<link rel=\"icon\" type=\"image/png\" href=\"${ICON_HREF}\"><link rel=\"shortcut icon\" href=\"${ICON_HREF}\"></head>|g" {} \;
+            -e "s|</head>|<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><meta name=\"description\" content=\"${SITE_DESC}\"><meta property=\"og:title\" content=\"${SITE_TITLE}\"><meta property=\"og:description\" content=\"${SITE_DESC}\"><meta property=\"og:image\" content=\"${BASE_URL%/}/icon.png\"><meta property=\"og:type\" content=\"website\"><link rel=\"stylesheet\" href=\"${EDITORIAL_HREF}\"><link rel=\"stylesheet\" href=\"${CSS_HREF}\"><script defer src=\"${JS_SRC}\"></script><link rel=\"icon\" type=\"image/png\" href=\"${ICON_HREF}\"><link rel=\"shortcut icon\" href=\"${ICON_HREF}\"></head>|g" {} \;
           cp rss.xml output/public/rss.xml
       - name: Setup Pages
         uses: actions/configure-pages@v5
