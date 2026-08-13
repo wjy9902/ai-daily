@@ -470,7 +470,24 @@ class DailyPipeline:
                 editorial_plan = _demote_selections(editorial_plan, failed)
                 write_artifact(run_dir / "editorial-plan-demoted.json", editorial_plan)
             stage = "draft"
-            drafts = await draft_selected(self.gateway, candidates, editorial_plan)
+            drafts, draft_failures = await draft_selected(
+                self.gateway, candidates, editorial_plan
+            )
+            if draft_failures:
+                # Those stories lose their long form and run as briefs. The
+                # composer demotes them; this only records why.
+                tracker.record(
+                    FailureClass.DRAFT_PARTIAL, "; ".join(draft_failures)
+                )
+            if not drafts and draft_failures:
+                # Deliberately not raised. Raising here would abandon the
+                # editorial plan along with the drafts and drop the issue to
+                # judge output, when what actually survived is a full set of
+                # chosen, ranked, headlined stories. The composer turns
+                # undrafted selections into briefs.
+                tracker.record(
+                    FailureClass.DRAFT_FAILED, "; ".join(draft_failures)
+                )
         except (
             BudgetExceeded,
             ModelInvocationFailed,

@@ -771,19 +771,42 @@ async def draft_selected(
     gateway: ModelGateway,
     events: list[Event],
     plan: EditorialPlan,
-) -> list[DraftItem]:
+) -> tuple[list[DraftItem], list[str]]:
+    """Draft every detailed story, keeping the ones that come back.
+
+    A story that cannot be drafted loses its long form and becomes a brief.
+    Stopping at the first failure discarded eleven finished drafts to punish
+    one, which is what turned a single flaky response into a brief-only issue
+    on a day the editor had planned twenty-four stories.
+
+    Budget and credential errors still stop everything: they will fail
+    identically on the next story.
+
+    Returns the drafts plus a description of each story that could not be
+    written.
+    """
+
     events_by_id = {event.event_id: event for event in events}
     details = [item for item in plan.selections if item.tier != EditorialTier.BRIEF]
     drafts: list[DraftItem] = []
+    failures: list[str] = []
     for selection in details:
-        drafts.append(
-            await _draft_and_validate(
-                gateway,
-                selection,
-                evidence_bundle(events_by_id[selection.event_id]),
+        try:
+            drafts.append(
+                await _draft_and_validate(
+                    gateway,
+                    selection,
+                    evidence_bundle(events_by_id[selection.event_id]),
+                )
             )
-        )
-    return drafts
+        except (BudgetExceeded, MissingProviderSecret, UsageLimitExceeded):
+            raise
+        except Exception as error:
+            failures.append(
+                f"{selection.event_id} ({selection.headline[:30]}): "
+                f"{type(error).__name__}: {error}"
+            )
+    return drafts, failures
 
 
 async def _draft_and_validate(

@@ -136,7 +136,7 @@ class FakeGateway:
 async def test_judge_and_editor_preserve_evidence_ids() -> None:
     gateway = FakeGateway()
     decisions, _ = await judge_events(gateway, [event()])  # type: ignore[arg-type]
-    drafts = await draft_selected(gateway, [event()], plan())  # type: ignore[arg-type]
+    drafts, _ = await draft_selected(gateway, [event()], plan())  # type: ignore[arg-type]
     assert decisions[0].evidence_ids == ["event-1-1"]
     assert drafts[0].evidence_ids == ["event-1-1"]
 
@@ -190,12 +190,12 @@ class BadGateway(FakeGateway):
 
 
 async def test_editor_cannot_invent_evidence() -> None:
-    try:
-        await draft_selected(BadGateway(), [event()], plan())  # type: ignore[arg-type]
-    except ValueError as error:
-        assert "unknown evidence" in str(error)
-    else:
-        raise AssertionError("invented evidence was accepted")
+    drafts, failures = await draft_selected(  # type: ignore[arg-type]
+        BadGateway(), [event()], plan()
+    )
+
+    assert drafts == [], "invented evidence was accepted"
+    assert failures and "unknown evidence" in failures[0]
 
 
 class WrongDraftEventGateway(FakeGateway):
@@ -214,8 +214,9 @@ class WrongDraftEventGateway(FakeGateway):
 
 
 async def test_editor_cannot_change_draft_event() -> None:
-    with pytest.raises(ValueError, match="changed event_id"):
-        await draft_selected(WrongDraftEventGateway(), [event()], plan())  # type: ignore[arg-type]
+    _, failures = await draft_selected(WrongDraftEventGateway(), [event()], plan())  # type: ignore[arg-type]
+    assert failures, "a rejected draft must be reported"
+    assert "changed event_id" in failures[0]
 
 
 class SpeculativeDraftGateway(FakeGateway):
@@ -241,8 +242,9 @@ class SpeculativeDraftGateway(FakeGateway):
 
 
 async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> None:
-    with pytest.raises(ValueError, match="speculation outside caveat"):
-        await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+    _, failures = await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+    assert failures, "a rejected draft must be reported"
+    assert "speculation outside caveat" in failures[0]
 
 
 class FirstAvailabilityDraftGateway(FakeGateway):
@@ -274,7 +276,7 @@ async def test_editor_normalizes_repository_update_copy_before_validation() -> N
         }
     )
 
-    drafts = await draft_selected(  # type: ignore[arg-type]
+    drafts, _ = await draft_selected(  # type: ignore[arg-type]
         FakeGateway(), [repository_event], plan()
     )
 
@@ -294,7 +296,7 @@ async def test_editor_removes_unverified_first_availability_claim() -> None:
         }
     )
 
-    drafts = await draft_selected(  # type: ignore[arg-type]
+    drafts, _ = await draft_selected(  # type: ignore[arg-type]
         FirstAvailabilityDraftGateway(), [repository_event], plan()
     )
 
@@ -317,7 +319,7 @@ class SpeculativeActionGateway(FakeGateway):
 
 
 async def test_editor_drops_speculative_optional_action() -> None:
-    drafts = await draft_selected(SpeculativeActionGateway(), [event()], plan())  # type: ignore[arg-type]
+    drafts, _ = await draft_selected(SpeculativeActionGateway(), [event()], plan())  # type: ignore[arg-type]
 
     assert drafts[0].action is None
 
@@ -338,8 +340,9 @@ class PipelineMetadataDraftGateway(FakeGateway):
 
 
 async def test_editor_cannot_expose_evidence_pipeline_metadata() -> None:
-    with pytest.raises(ValueError, match="pipeline metadata"):
-        await draft_selected(PipelineMetadataDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+    _, failures = await draft_selected(PipelineMetadataDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+    assert failures, "a rejected draft must be reported"
+    assert "pipeline metadata" in failures[0]
 
 
 class InventedJudgeEvidenceGateway(FakeGateway):
@@ -1016,8 +1019,9 @@ class QuoteMismatchGateway(FakeGateway):
 
 
 async def test_editor_cannot_cite_a_quote_that_is_not_in_the_evidence() -> None:
-    with pytest.raises(ValueError, match="not present in evidence_id"):
-        await draft_selected(QuoteMismatchGateway(), [event()], plan())  # type: ignore[arg-type]
+    _, failures = await draft_selected(QuoteMismatchGateway(), [event()], plan())  # type: ignore[arg-type]
+    assert failures, "a rejected draft must be reported"
+    assert "not present in evidence_id" in failures[0]
 
 
 async def test_draft_instructions_require_verbatim_quotes() -> None:

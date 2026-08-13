@@ -39,7 +39,7 @@ class FailureClass(StrEnum):
     """Some stories could not be drafted and were demoted to briefs."""
 
     DRAFT_FAILED = "draft_failed"
-    """No story could be drafted."""
+    """No story could be drafted, but the editorial plan survived."""
 
     DETAIL_EVIDENCE_THIN = "detail_evidence_thin"
     """A detailed story never reached the evidence floor, even after repair."""
@@ -64,7 +64,11 @@ FAILURE_CEILING: dict[FailureClass, PublicationLevel] = {
     FailureClass.JUDGE_FAILED: PublicationLevel.L2B,
     FailureClass.PLAN_FAILED: PublicationLevel.L2A,
     FailureClass.DRAFT_PARTIAL: PublicationLevel.L1,
-    FailureClass.DRAFT_FAILED: PublicationLevel.L2A,
+    # L1, not L2A: when only drafting fails the editorial plan is intact, so
+    # the issue still has chosen, ranked, headlined stories — it just has no
+    # long-form prose. Calling that "the editor failed" understates what
+    # survived and reads as a worse issue than it is.
+    FailureClass.DRAFT_FAILED: PublicationLevel.L1,
     FailureClass.DETAIL_EVIDENCE_THIN: PublicationLevel.L1,
     FailureClass.LEAD_UNCORROBORATED: PublicationLevel.L1,
     FailureClass.BUDGET_EXHAUSTED: PublicationLevel.L2A,
@@ -79,7 +83,7 @@ FAILURE_REASON: dict[FailureClass, str] = {
     FailureClass.JUDGE_FAILED: "筛选环节失败",
     FailureClass.PLAN_FAILED: "编辑规划失败",
     FailureClass.DRAFT_PARTIAL: "部分详报起草失败",
-    FailureClass.DRAFT_FAILED: "详报起草失败",
+    FailureClass.DRAFT_FAILED: "详报起草失败，本期只保留编辑选题",
     FailureClass.DETAIL_EVIDENCE_THIN: "详报证据不足",
     FailureClass.LEAD_UNCORROBORATED: "重点缺少第一方或独立佐证，已降级",
     FailureClass.BUDGET_EXHAUSTED: "当日模型预算用尽",

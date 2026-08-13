@@ -17,7 +17,7 @@ DOCUMENTED_CEILING = [
     (FailureClass.JUDGE_FAILED, PublicationLevel.L2B),
     (FailureClass.PLAN_FAILED, PublicationLevel.L2A),
     (FailureClass.DRAFT_PARTIAL, PublicationLevel.L1),
-    (FailureClass.DRAFT_FAILED, PublicationLevel.L2A),
+    (FailureClass.DRAFT_FAILED, PublicationLevel.L1),
     (FailureClass.DETAIL_EVIDENCE_THIN, PublicationLevel.L1),
     (FailureClass.LEAD_UNCORROBORATED, PublicationLevel.L1),
     (FailureClass.BUDGET_EXHAUSTED, PublicationLevel.L2A),
