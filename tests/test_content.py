@@ -225,6 +225,27 @@ async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> Non
         await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
+class SpeculativeActionGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(update={"action": "后续可能发布权重，可以尝试本地部署。"})
+        return value
+
+
+async def test_editor_drops_speculative_optional_action() -> None:
+    drafts = await draft_selected(SpeculativeActionGateway(), [event()], plan())  # type: ignore[arg-type]
+
+    assert drafts[0].action is None
+
+
 class PipelineMetadataDraftGateway(FakeGateway):
     async def generate(
         self,

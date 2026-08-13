@@ -405,7 +405,7 @@ async def _draft_and_validate(
     selection: EditorialSelection,
     bundle: EvidenceBundle,
 ) -> DraftItem:
-    draft = await _draft_one(gateway, selection, bundle)
+    draft = _drop_speculative_action(await _draft_one(gateway, selection, bundle))
     _validate_draft(draft, selection, bundle)
     return draft
 
@@ -436,8 +436,16 @@ async def _draft_one(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},
             ensure_ascii=False,
         ),
-        validator=lambda output: _validate_draft(output, selection, bundle),
+        validator=lambda output: _validate_draft(
+            _drop_speculative_action(output), selection, bundle
+        ),
     )
+
+
+def _drop_speculative_action(draft: DraftItem) -> DraftItem:
+    if draft.action and DRAFT_SPECULATION_RE.search(draft.action):
+        return draft.model_copy(update={"action": None})
+    return draft
 
 
 def _validate_draft(
