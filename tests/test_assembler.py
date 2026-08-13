@@ -12,6 +12,7 @@ from ai_daily.models import (
     EditorialSelection,
     EditorialTier,
     Event,
+    FactClaim,
     RawItem,
     SourceChannel,
     SourceTier,
@@ -56,13 +57,20 @@ def _selection(index: int, tier: EditorialTier) -> EditorialSelection:
 
 
 def _draft(index: int, fact_size: int = 20) -> DraftItem:
+    evidence_id = f"event-{index}-1"
+    quote = "官方公告确认该模型已经正式发布。"
     return DraftItem(
         event_id=f"event-{index}",
         tldr="官方发布新模型。",
-        facts=["甲" * fact_size for _ in range(4)],
+        tldr_evidence_id=evidence_id,
+        tldr_quote=quote,
+        facts=[
+            FactClaim(text="甲" * fact_size, evidence_id=evidence_id, quote=quote)
+            for _ in range(4)
+        ],
         why_it_matters="开发者需要评估。",
         action="阅读公告并测试。",
-        evidence_ids=[f"event-{index}-1"],
+        evidence_ids=[evidence_id],
     )
 
 

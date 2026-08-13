@@ -207,14 +207,14 @@ class ModelGateway:
         # persisted. Any ceiling it trips is swallowed here because the caller
         # is already raising the real error; the next call's check_stage() is
         # what turns an exhausted budget into a clean degradation.
-        for record in (
-            lambda: self.ledger.record_requests(request_count, stage),
-            lambda: self.ledger.record(run, stage),
-        ):
-            try:
-                record()
-            except BudgetExceeded:
-                pass
+        try:
+            self.ledger.record_requests(request_count, stage)
+        except BudgetExceeded:
+            pass
+        try:
+            self.ledger.record(run, stage)
+        except BudgetExceeded:
+            pass
 
     @staticmethod
     def _semantic_validator(

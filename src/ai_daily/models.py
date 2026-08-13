@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -176,12 +176,28 @@ class EditorialPlan(StrictModel):
     editor_viewpoint: list[EditorialInsight] = Field(min_length=2, max_length=4)
 
 
+class FactClaim(StrictModel):
+    """A factual sentence bound to the evidence sentence that supports it.
+
+    ``quote`` must be copied verbatim from the excerpt of ``evidence_id``. The
+    12-character floor is deliberate: a two-character quote matches almost any
+    excerpt and therefore proves nothing.
+
+    Mirrors :class:`ai_daily.publication.Claim`, which is what the rendered
+    publication persists.
+    """
+
+    text: str = Field(min_length=1, max_length=500)
+    evidence_id: str = Field(min_length=1, max_length=120)
+    quote: str = Field(min_length=12, max_length=500)
+
+
 class DraftItem(StrictModel):
     event_id: str
     tldr: str = Field(min_length=1, max_length=300)
-    facts: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
-        min_length=1, max_length=4
-    )
+    tldr_evidence_id: str = Field(min_length=1, max_length=120)
+    tldr_quote: str = Field(min_length=12, max_length=500)
+    facts: list[FactClaim] = Field(min_length=1, max_length=4)
     why_it_matters: str = Field(min_length=1, max_length=500)
     action: str | None = Field(default=None, max_length=400)
     caveat: str | None = Field(default=None, max_length=500)

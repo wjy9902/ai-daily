@@ -212,8 +212,7 @@ def _page(
             f"<title>{_t(title)}</title>",
             f'<meta name="description" content="{_t(description)}">',
             f'<link rel="canonical" href="{_url(canonical)}">',
-            f'<link rel="stylesheet" href="{_t(prefix)}static/site.css">',
-            f'<link rel="icon" type="image/png" href="{_t(prefix)}static/icon.png">',
+            f'<link rel="stylesheet" href="{_t(prefix)}assets/site.css">',
             f'<link rel="alternate" type="application/rss+xml" '
             f'title="{_t(SITE_TITLE)}" href="{rss_href}">',
             "</head>",

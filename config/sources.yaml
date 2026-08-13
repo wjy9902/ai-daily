@@ -36,6 +36,35 @@ sources:
     tier: A
     channel: official
     limit: 20
+  # Restored with the move to the Tencent Cloud Singapore egress: this was dropped
+  # only because GitHub Actions runner IPs were blocked, not because the feed changed.
+  - name: microsoft-ai
+    display_name: Microsoft AI
+    kind: html_index
+    url: https://microsoft.ai/blog/
+    link_pattern: '^https://microsoft\.ai/news/[^/]+/?$'
+    tier: A
+    channel: official
+    limit: 20
+  - name: meta-ai
+    display_name: Meta AI
+    kind: rss
+    url: https://about.fb.com/news/tag/ai/feed/
+    tier: A
+    channel: official
+    limit: 20
+  # x.ai puts its index pages behind a Cloudflare challenge that answers 403 to
+  # non-browser clients; article pages themselves answer 200. Kept at tier B so a
+  # blocked index cannot count against Tier A coverage. Promote to A once the
+  # Singapore egress is confirmed to get through.
+  - name: xai-news
+    display_name: xAI
+    kind: html_index
+    url: https://x.ai/news
+    link_pattern: '^https://x\.ai/news/[^/]+$'
+    tier: B
+    channel: official
+    limit: 15
   - name: qwen-blog
     display_name: Qwen
     kind: rss
@@ -44,13 +73,17 @@ sources:
     channel: official
     region: china
     limit: 20
+  # Corroboration only. A repository `lastModified` timestamp is not a release
+  # announcement: re-tagging, README edits and config pushes all move it, and reading
+  # it as news has repeatedly produced false "release" claims. Tier C + community keeps
+  # it out of lead stories; it may only confirm a release another source reported.
   - name: qwen-huggingface-models
     display_name: Qwen 官方模型库
     kind: huggingface_models
     url: https://huggingface.co/api/models
     namespace: Qwen
-    tier: A
-    channel: official
+    tier: C
+    channel: community
     region: china
     limit: 10
   - name: mistral-news
@@ -113,6 +146,16 @@ sources:
     limit: 15
 
   # Broad discovery and independent reporting — used for recall and corroboration.
+  # 量子位 is restored with the Singapore egress for the same reason as microsoft-ai.
+  - name: qbitai
+    display_name: 量子位
+    kind: html_index
+    url: https://www.qbitai.com/
+    link_pattern: '^https://www\.qbitai\.com/[0-9]{4}/[0-9]{2}/[0-9]+\.html$'
+    tier: A
+    channel: news
+    region: china
+    limit: 30
   - name: leiphone
     display_name: 雷峰网
     kind: rss

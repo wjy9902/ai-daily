@@ -12,11 +12,17 @@ from ai_daily.config import load_config
 from ai_daily.content import (
     DRAFT_EVIDENCE_EXCERPT_CHARS,
     JUDGE_EVIDENCE_EXCERPT_CHARS,
+    QUOTE_MIN_CHARS,
     JudgeBatch,
     draft_selected,
     judge_events,
+    normalize_quote_text,
     plan_digest,
+    quote_supports,
+    registrable_domain,
     validate_editorial_plan,
+    validate_evidence_quotes,
+    validate_lead_corroboration,
 )
 from ai_daily.models import (
     DraftItem,
@@ -25,8 +31,12 @@ from ai_daily.models import (
     EditorialSelection,
     EditorialTier,
     Event,
+    Evidence,
+    EvidenceBundle,
+    FactClaim,
     JudgeDecision,
     RawItem,
+    SourceChannel,
     SourceTier,
     SourceTimeKind,
 )
@@ -37,6 +47,7 @@ def event() -> Event:
         source="official",
         source_label="Official Lab",
         source_tier=SourceTier.A,
+        source_channel=SourceChannel.OFFICIAL,
         source_item_id="1",
         url="https://example.com/release",
         title="Official release",
@@ -103,10 +114,17 @@ class FakeGateway:
                     for bundle in bundles
                 ]
             )
+        evidence = json.loads(prompt)["bundle"]["evidence"][0]
+        evidence_id = evidence["evidence_id"]
+        quote = evidence["excerpt"][:60]
         return DraftItem(
             event_id="event-1",
             tldr="官方发布了新模型。",
-            facts=["官方公告确认发布。"],
+            tldr_evidence_id=evidence_id,
+            tldr_quote=quote,
+            facts=[
+                FactClaim(text="官方公告确认发布。", evidence_id=evidence_id, quote=quote)
+            ],
             why_it_matters="开发者可以开始评估。",
             action="阅读官方说明并运行小规模评测。",
             evidence_ids=["event-1-1"],
@@ -259,7 +277,7 @@ async def test_editor_normalizes_repository_update_copy_before_validation() -> N
     )
 
     assert drafts[0].tldr == "官方更新了新模型。"
-    assert drafts[0].facts == ["官方公告确认更新。"]
+    assert [claim.text for claim in drafts[0].facts] == ["官方公告确认更新。"]
 
 
 async def test_editor_removes_unverified_first_availability_claim() -> None:
@@ -792,3 +810,303 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     assert "禁止引用未选候选" in captured["instructions"]
     assert "训练数据覆盖" in captured["instructions"]
     assert "已上线产品范围" in captured["instructions"]
+
+
+WRAPPED_EXCERPT = (
+    "官方公告确认，新模型已经在今天正式发布，\n"
+    "并且已通过 API 提供给所有开发者。\n"
+    "输入价格为每百万 Token 2 美元。"
+)
+OTHER_EXCERPT = "另一家媒体报道了完全不同的一次内部人事调整安排。"
+
+
+def _bundle() -> EvidenceBundle:
+    return EvidenceBundle(
+        event_id="event-1",
+        evidence=[
+            Evidence(
+                evidence_id="event-1-1",
+                url="https://example.com/release",
+                title="Official release",
+                excerpt=WRAPPED_EXCERPT,
+                source="Official Lab",
+            ),
+            Evidence(
+                evidence_id="event-1-2",
+                url="https://other.example.org/report",
+                title="Second report",
+                excerpt=OTHER_EXCERPT,
+                source="Other Media",
+            ),
+        ],
+    )
+
+
+def _quoted_draft(
+    *,
+    tldr_evidence_id: str = "event-1-1",
+    tldr_quote: str = "新模型已经在今天正式发布",
+    fact_evidence_id: str = "event-1-1",
+    fact_quote: str = "输入价格为每百万 Token 2 美元。",
+) -> DraftItem:
+    return DraftItem(
+        event_id="event-1",
+        tldr="官方发布了新模型。",
+        tldr_evidence_id=tldr_evidence_id,
+        tldr_quote=tldr_quote,
+        facts=[
+            FactClaim(
+                text="模型已通过 API 提供。",
+                evidence_id=fact_evidence_id,
+                quote=fact_quote,
+            )
+        ],
+        why_it_matters="开发者可以开始评估。",
+        evidence_ids=["event-1-1"],
+    )
+
+
+def test_normalize_quote_text_removes_whitespace_and_folds_punctuation() -> None:
+    assert normalize_quote_text("模型已经\n通过 API 提供，\t价格不变。") == (
+        "模型已经通过API提供,价格不变."
+    )
+
+
+def test_quote_supports_matches_across_line_wrapping() -> None:
+    assert quote_supports("新模型已经在今天正式发布，并且已通过 API 提供", WRAPPED_EXCERPT)
+
+
+def test_quote_supports_matches_across_fullwidth_and_halfwidth_punctuation() -> None:
+    assert quote_supports("官方公告确认,新模型已经在今天正式发布", WRAPPED_EXCERPT)
+    assert quote_supports("输入价格为每百万Token 2美元．", WRAPPED_EXCERPT)  # noqa: RUF001
+
+
+def test_quote_supports_rejects_a_quote_that_lives_in_a_different_evidence() -> None:
+    assert quote_supports("完全不同的一次内部人事调整安排", OTHER_EXCERPT)
+    assert not quote_supports("完全不同的一次内部人事调整安排", WRAPPED_EXCERPT)
+
+
+@pytest.mark.parametrize("quote", ["已发布", "新模型发布了", "a b c"])
+def test_quote_supports_rejects_quotes_under_the_minimum_length(quote: str) -> None:
+    assert len(normalize_quote_text(quote)) < QUOTE_MIN_CHARS
+    assert not quote_supports(quote, f"前缀 {quote} 后缀")
+
+
+def test_validate_evidence_quotes_accepts_a_grounded_draft() -> None:
+    validate_evidence_quotes(_quoted_draft(), _bundle())
+
+
+def test_validate_evidence_quotes_rejects_an_invented_evidence_id() -> None:
+    with pytest.raises(ValueError) as error:
+        validate_evidence_quotes(_quoted_draft(fact_evidence_id="event-1-9"), _bundle())
+
+    assert "facts[0]" in str(error.value)
+    assert "event-1-9" in str(error.value)
+
+
+def test_validate_evidence_quotes_rejects_a_quote_from_another_evidence() -> None:
+    with pytest.raises(ValueError) as error:
+        validate_evidence_quotes(
+            _quoted_draft(fact_quote="完全不同的一次内部人事调整安排"), _bundle()
+        )
+
+    assert "facts[0]" in str(error.value)
+    assert "event-1-1" in str(error.value)
+
+
+def test_validate_evidence_quotes_rejects_a_tldr_quote_that_is_not_in_its_evidence() -> None:
+    with pytest.raises(ValueError) as error:
+        validate_evidence_quotes(_quoted_draft(tldr_evidence_id="event-1-2"), _bundle())
+
+    assert "tldr" in str(error.value)
+    assert "event-1-2" in str(error.value)
+
+
+def test_validate_evidence_quotes_rejects_a_short_quote() -> None:
+    # Long enough for the pydantic floor, too short once whitespace is stripped.
+    short = "已 经 发 布 了 吧 啊"
+    assert len(short) >= QUOTE_MIN_CHARS
+    assert len(normalize_quote_text(short)) < QUOTE_MIN_CHARS
+    grounded = _bundle().model_copy(
+        update={
+            "evidence": [
+                Evidence(
+                    evidence_id="event-1-1",
+                    url="https://example.com/release",
+                    title="Official release",
+                    excerpt=f"公告：{short}。",
+                    source="Official Lab",
+                )
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError) as error:
+        validate_evidence_quotes(_quoted_draft(tldr_quote=short), grounded)
+
+    assert "tldr" in str(error.value)
+    assert "event-1-1" in str(error.value)
+    assert "shorter than" in str(error.value)
+
+
+class QuoteMismatchGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(
+                update={
+                    "facts": [
+                        value.facts[0].model_copy(
+                            update={"quote": "这句话从未出现在任何证据里面。"}
+                        )
+                    ]
+                }
+            )
+        return value
+
+
+async def test_editor_cannot_cite_a_quote_that_is_not_in_the_evidence() -> None:
+    with pytest.raises(ValueError, match="not present in evidence_id"):
+        await draft_selected(QuoteMismatchGateway(), [event()], plan())  # type: ignore[arg-type]
+
+
+async def test_draft_instructions_require_verbatim_quotes() -> None:
+    captured: dict[str, str] = {}
+    gateway = FakeGateway()
+    inner = gateway.generate
+
+    async def generate(
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        captured["instructions"] = instructions
+        return await inner(role, output_type, instructions, prompt, validator)
+
+    gateway.generate = generate  # type: ignore[method-assign]
+    await draft_selected(gateway, [event()], plan())  # type: ignore[arg-type]
+
+    assert "逐字复制" in captured["instructions"]
+    assert "tldr_quote" in captured["instructions"]
+    assert f"至少 {QUOTE_MIN_CHARS} 个字符" in captured["instructions"]
+    assert "不可信文本" in captured["instructions"]
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://example.com/a", "example.com"),
+        ("https://www.example.com/a", "example.com"),
+        ("https://news.example.com/a", "example.com"),
+        ("https://example.com.cn/a", "example.com.cn"),
+        ("https://www.example.com.cn/a", "example.com.cn"),
+        ("https://example.co.uk/a", "example.co.uk"),
+        ("https://deep.sub.example.co.uk/a", "example.co.uk"),
+        ("https://sub.example.org.cn/a", "example.org.cn"),
+    ],
+)
+def test_registrable_domain_reduces_to_etld_plus_one(url: str, expected: str) -> None:
+    assert registrable_domain(url) == expected
+
+
+def _lead_event(
+    urls: list[str], channel: SourceChannel = SourceChannel.NEWS
+) -> Event:
+    items = [
+        RawItem(
+            source=f"source-{index}",
+            source_label=f"Source {index}",
+            source_tier=SourceTier.B,
+            source_channel=channel,
+            source_item_id=str(index),
+            url=url,
+            title="同一条新闻",
+            summary="同一条新闻的报道内容。",
+            discovered_at=datetime(2026, 8, 12, tzinfo=UTC),
+        )
+        for index, url in enumerate(urls)
+    ]
+    return Event(
+        event_id="event-1",
+        canonical_url=items[0].url,
+        title=items[0].title,
+        summary=items[0].summary,
+        items=items,
+    )
+
+
+def _lead_plan() -> EditorialPlan:
+    return plan()
+
+
+def test_lead_corroboration_accepts_a_first_party_source() -> None:
+    validate_lead_corroboration(
+        _lead_plan(),
+        [_lead_event(["https://example.com/release"], SourceChannel.OFFICIAL)],
+    )
+
+
+def test_lead_corroboration_accepts_a_release_channel_source() -> None:
+    validate_lead_corroboration(
+        _lead_plan(),
+        [_lead_event(["https://example.com/release"], SourceChannel.RELEASE)],
+    )
+
+
+def test_lead_corroboration_accepts_two_distinct_registrable_domains() -> None:
+    validate_lead_corroboration(
+        _lead_plan(),
+        [_lead_event(["https://example.com/story", "https://other.org/story"])],
+    )
+
+
+def test_lead_corroboration_rejects_syndicated_copies_of_one_publisher() -> None:
+    with pytest.raises(ValueError, match="independently corroborated") as error:
+        validate_lead_corroboration(
+            _lead_plan(),
+            [_lead_event(["https://www.example.com/story", "https://news.example.com/story"])],
+        )
+
+    assert "event-1" in str(error.value)
+    assert "example.com" in str(error.value)
+
+
+def test_lead_corroboration_rejects_a_single_non_official_source() -> None:
+    with pytest.raises(ValueError, match="independently corroborated"):
+        validate_lead_corroboration(
+            _lead_plan(), [_lead_event(["https://example.com/story"])]
+        )
+
+
+def test_lead_corroboration_ignores_follow_and_brief_tiers() -> None:
+    for tier in (EditorialTier.FOLLOW, EditorialTier.BRIEF):
+        demoted = _lead_plan()
+        demoted.selections[0].tier = tier
+        validate_lead_corroboration(demoted, [_lead_event(["https://example.com/story"])])
+
+
+def test_editorial_plan_rejects_an_uncorroborated_lead() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    events[0] = events[0].model_copy(
+        update={
+            "items": [
+                events[0].items[0].model_copy(
+                    update={"source_channel": SourceChannel.NEWS}
+                )
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError, match="independently corroborated"):
+        validate_editorial_plan(
+            valid_global_plan(), events, load_config(Path("config")).pipeline
+        )

@@ -1,10 +1,12 @@
 import asyncio
 import gzip
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
 
+from ai_daily.config import Secrets, load_config
 from ai_daily.models import (
     Event,
     RawItem,
@@ -13,11 +15,13 @@ from ai_daily.models import (
     SourceTier,
     SourceTimeKind,
 )
+from ai_daily.pipeline import DailyPipeline
 from ai_daily.sources import (
     ARTICLE_RESPONSE_BYTES,
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BYTES,
     Collector,
+    PublicAsyncHTTPTransport,
     PublicNetworkBackend,
     SourceCollectionError,
     _plain_text,
@@ -65,12 +69,52 @@ def test_collector_rejects_zero_article_concurrency() -> None:
 
 
 async def test_default_collector_uses_browser_compatible_identified_user_agent() -> None:
-    collector = Collector()
+    async with Collector() as collector:
+        assert collector.client.headers["User-Agent"] == DEFAULT_USER_AGENT
+        assert DEFAULT_USER_AGENT.startswith("Mozilla/5.0")
+        assert "ai-daily/0.2" in DEFAULT_USER_AGENT
 
-    assert collector.client.headers["User-Agent"] == DEFAULT_USER_AGENT
-    assert DEFAULT_USER_AGENT.startswith("Mozilla/5.0")
-    assert "ai-daily/0.2" in DEFAULT_USER_AGENT
-    await collector.client.aclose()
+
+async def test_pipeline_collector_requests_use_browser_user_agent_and_pinned_dns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Covers the construction path cli.py uses, not a bare ``Collector()``.
+
+    Production builds the collector through ``DailyPipeline``; when that path injected an
+    outside client, requests went out with httpx's default User-Agent and without the
+    pinned-DNS transport, so check-time and connect-time DNS could disagree.
+    """
+    feed = b"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
+    <item><guid>1</guid><title>New model</title><link>https://example.com/a</link>
+    <pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate></item></channel></rss>"""
+    pinned_requests: list[httpx.Request] = []
+
+    async def pinned_transport_response(
+        _self: PublicAsyncHTTPTransport, request: httpx.Request
+    ) -> httpx.Response:
+        pinned_requests.append(request)
+        return httpx.Response(200, content=feed)
+
+    def unexpected_request(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"source request bypassed the pinned transport: {request.url}")
+
+    monkeypatch.setattr(
+        PublicAsyncHTTPTransport, "handle_async_request", pinned_transport_response
+    )
+    source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
+    pipeline = DailyPipeline(
+        load_config(Path("config")),
+        Secrets(),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(unexpected_request)),
+    )
+
+    async with pipeline.collector as collector:
+        items, health = await collector.collect([source])
+
+    assert health[0].status == "ok"
+    assert [item.title for item in items] == ["New model"]
+    assert [request.headers["User-Agent"] for request in pinned_requests] == [DEFAULT_USER_AGENT]
+    await pipeline.client.aclose()
 
 
 def test_plain_text_accepts_whitespace_only_html() -> None:
@@ -112,7 +156,7 @@ async def test_pinned_backend_connects_to_the_validated_address(
 
 async def test_collector_limits_concurrency_per_host() -> None:
     transport = TrackingTransport(expected_concurrency=1)
-    collector = Collector(httpx.AsyncClient(transport=transport), per_host=1)
+    collector = Collector(transport, per_host=1)
     tasks = [
         asyncio.create_task(collector._request("https://one.example/a")),
         asyncio.create_task(collector._request("https://one.example/b")),
@@ -127,7 +171,7 @@ async def test_collector_limits_concurrency_per_host() -> None:
 
 async def test_collector_does_not_serialize_different_hosts() -> None:
     transport = TrackingTransport(expected_concurrency=2)
-    collector = Collector(httpx.AsyncClient(transport=transport), per_host=1)
+    collector = Collector(transport, per_host=1)
     tasks = [
         asyncio.create_task(collector._request("https://one.example/a")),
         asyncio.create_task(collector._request("https://two.example/b")),
@@ -143,7 +187,7 @@ async def test_collector_does_not_serialize_different_hosts() -> None:
 async def test_article_enrichment_has_a_global_concurrency_limit() -> None:
     transport = TrackingTransport(expected_concurrency=2)
     collector = Collector(
-        httpx.AsyncClient(transport=transport),
+        transport,
         per_host=5,
         article_concurrency=2,
     )
@@ -193,9 +237,7 @@ async def test_rss_adapter_parses_valid_entries() -> None:
     <item><guid>1</guid><title>New model</title><link>https://example.com/a</link>
     <description>Details</description><pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate></item>
     </channel></rss>"""
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
     source = SourceConfig(
         name="feed",
         display_name="Official Feed",
@@ -203,7 +245,7 @@ async def test_rss_adapter_parses_valid_entries() -> None:
         url="https://example.com/rss",
         tier=SourceTier.A,
     )
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
     assert [item.title for item in items] == ["New model"]
     assert items[0].source_label == "Official Feed"
     assert health[0].status == "ok"
@@ -217,9 +259,7 @@ async def test_rss_prefers_full_content_over_teaser_summary() -> None:
     <link>https://example.com/a</link><description>Short teaser.</description>
     <content:encoded><![CDATA[<p>{full_text}</p>]]></content:encoded>
     <pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate></item></channel></rss>""".encode()
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
     source = SourceConfig(
         name="feed",
         kind="rss",
@@ -227,7 +267,7 @@ async def test_rss_prefers_full_content_over_teaser_summary() -> None:
         tier=SourceTier.A,
     )
 
-    items, _ = await Collector(client).collect([source])
+    items, _ = await Collector(transport).collect([source])
 
     assert "LiteLLM versions 1.82.7" in items[0].summary
     assert len(items[0].summary) > len("Short teaser.")
@@ -247,11 +287,9 @@ async def test_rss_empty_full_content_keeps_teaser_summary(encoded: str) -> None
         url="https://example.com/rss",
         tier=SourceTier.A,
     )
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
 
-    items, _ = await Collector(client).collect([source])
+    items, _ = await Collector(transport).collect([source])
 
     assert items[0].summary == "Useful teaser fallback."
 
@@ -263,12 +301,8 @@ async def test_selected_article_content_enrichment_replaces_feed_excerpt() -> No
         f"<article><h1>Supply-chain attack</h1><p>{article_text}</p></article>"
         "<footer>Unrelated footer</footer></body></html>"
     ).encode()
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200, headers={"Content-Type": "text/html"}, content=article
-            )
-        )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, headers={"Content-Type": "text/html"}, content=article)
     )
     source = SourceConfig(
         name="feed",
@@ -297,7 +331,7 @@ async def test_selected_article_content_enrichment_replaces_feed_excerpt() -> No
         items=[item],
     )
 
-    audit = await Collector(client).enrich_event_content([event], [source], {event.event_id})
+    audit = await Collector(transport).enrich_event_content([event], [source], {event.event_id})
 
     assert audit[0]["status"] == "enriched"
     assert "LiteLLM 1.82.7" in item.summary
@@ -308,17 +342,15 @@ async def test_selected_article_content_enrichment_replaces_feed_excerpt() -> No
 
 
 async def test_article_enrichment_uses_the_smaller_article_size_limit() -> None:
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                headers={"Content-Length": str(ARTICLE_RESPONSE_BYTES + 1)},
-            )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"Content-Length": str(ARTICLE_RESPONSE_BYTES + 1)},
         )
     )
     event = _article_event()
 
-    audit = await Collector(client).enrich_event_content(
+    audit = await Collector(transport).enrich_event_content(
         [event], [_article_source()], {event.event_id}
     )
 
@@ -340,7 +372,7 @@ async def test_article_date_fetch_caches_body_for_later_content_enrichment() -> 
         ).encode()
         return httpx.Response(200, headers={"Content-Type": "text/html"}, content=body)
 
-    collector = Collector(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    collector = Collector(httpx.MockTransport(handler))
     source = _article_source()
 
     published = await collector._fetch_article_date(source, "https://example.com/article")
@@ -379,7 +411,7 @@ async def test_article_enrichment_does_not_fetch_unconfigured_hosts() -> None:
         published_at=item.published_at,
         items=[item],
     )
-    collector = Collector(httpx.AsyncClient(transport=httpx.MockTransport(unexpected_request)))
+    collector = Collector(httpx.MockTransport(unexpected_request))
 
     audit = await collector.enrich_event_content([event], [source], {event.event_id})
 
@@ -426,7 +458,7 @@ async def test_community_link_on_configured_host_is_not_treated_as_that_source()
         published_at=item.published_at,
         items=[item],
     )
-    collector = Collector(httpx.AsyncClient(transport=httpx.MockTransport(unexpected_request)))
+    collector = Collector(httpx.MockTransport(unexpected_request))
 
     audit = await collector.enrich_event_content([event], sources, {event.event_id})
 
@@ -468,15 +500,11 @@ def _article_source() -> SourceConfig:
 async def test_article_enrichment_enforces_extracted_text_boundary(text_size: int) -> None:
     event = _article_event()
     article = f"<article>{'x' * text_size}</article>".encode()
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200, headers={"Content-Type": "text/html"}, content=article
-            )
-        )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, headers={"Content-Type": "text/html"}, content=article)
     )
 
-    audit = await Collector(client).enrich_event_content(
+    audit = await Collector(transport).enrich_event_content(
         [event], [_article_source()], {event.event_id}
     )
 
@@ -493,15 +521,13 @@ async def test_article_enrichment_records_fetch_failures_without_mutation(
     status_code: int, content_type: str, error_type: str
 ) -> None:
     event = _article_event("Keep this summary.")
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                status_code, headers={"Content-Type": content_type}, content=b"not html"
-            )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            status_code, headers={"Content-Type": content_type}, content=b"not html"
         )
     )
 
-    audit = await Collector(client).enrich_event_content(
+    audit = await Collector(transport).enrich_event_content(
         [event], [_article_source()], {event.event_id}
     )
 
@@ -529,7 +555,7 @@ async def test_article_enrichment_enforces_existing_text_boundary(
             content=f"<article>{'x' * 500}</article>".encode(),
         )
 
-    collector = Collector(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    collector = Collector(httpx.MockTransport(handler))
 
     audit = await collector.enrich_event_content([event], [_article_source()], {event.event_id})
 
@@ -556,9 +582,7 @@ async def test_rss_enriches_missing_feed_date_from_article_jsonld() -> None:
         url="https://example.com/rss",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "ok"
     assert items[0].published_at.isoformat() == "2026-08-12T00:00:00+00:00"
@@ -583,9 +607,7 @@ async def test_rss_does_not_treat_updated_time_as_publication_time() -> None:
         url="https://example.com/feed",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "ok"
     assert items[0].published_at.isoformat() == "2024-10-15T00:00:00+00:00"
@@ -609,9 +631,7 @@ async def test_rss_does_not_use_navigation_date_as_article_date() -> None:
         url="https://example.com/feed",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "failed"
     assert health[0].error == "SourceCollectionError"
@@ -623,13 +643,11 @@ async def test_rss_adapter_does_not_decode_gzip_twice() -> None:
     <item><guid>1</guid><title>Compressed model news</title>
     <link>https://example.com/a</link><pubDate>Wed, 12 Aug 2026 12:00:00 GMT</pubDate>
     </item></channel></rss>"""
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                headers={"Content-Encoding": "gzip"},
-                content=gzip.compress(body),
-            )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"Content-Encoding": "gzip"},
+            content=gzip.compress(body),
         )
     )
     source = SourceConfig(
@@ -639,20 +657,18 @@ async def test_rss_adapter_does_not_decode_gzip_twice() -> None:
         tier=SourceTier.A,
     )
 
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
 
     assert [item.title for item in items] == ["Compressed model news"]
     assert health[0].status == "ok"
 
 
 async def test_source_failure_is_visible_not_silent() -> None:
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(503, headers={"Retry-After": "0"})
-        )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(503, headers={"Retry-After": "0"})
     )
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
     assert items == []
     assert health[0].status == "failed"
     assert health[0].error == "HTTPStatusError"
@@ -666,9 +682,7 @@ async def test_rss_rejects_cross_origin_redirect_before_requesting_target() -> N
         return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest"})
 
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert items == []
     assert requested_hosts == ["example.com"]
@@ -677,17 +691,15 @@ async def test_rss_rejects_cross_origin_redirect_before_requesting_target() -> N
 
 
 async def test_source_rejects_oversized_response_before_buffering_body() -> None:
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200,
-                headers={"Content-Length": str(MAX_RESPONSE_BYTES + 1)},
-            )
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            headers={"Content-Length": str(MAX_RESPONSE_BYTES + 1)},
         )
     )
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
 
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
 
     assert items == []
     assert health[0].status == "failed"
@@ -696,12 +708,10 @@ async def test_source_rejects_oversized_response_before_buffering_body() -> None
 
 async def test_empty_source_is_reported_as_failed() -> None:
     body = b"<?xml version='1.0'?><rss version='2.0'><channel><title>T</title></channel></rss>"
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=body))
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
 
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
 
     assert items == []
     assert health[0].status == "failed"
@@ -723,7 +733,7 @@ async def test_conditional_request_reports_not_modified() -> None:
         assert request.headers["If-None-Match"] == '"v1"'
         return httpx.Response(304)
 
-    collector = Collector(httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    collector = Collector(httpx.MockTransport(handler))
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
     await collector.collect([source])
     _, health = await collector.collect([source])
@@ -739,7 +749,7 @@ async def test_hackernews_adapter_uses_public_api() -> None:
             json={"id": 1, "type": "story", "title": "AI tool", "time": 1786492800, "score": 100},
         )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    transport = httpx.MockTransport(handler)
     source = SourceConfig(
         name="hn",
         kind="hackernews",
@@ -747,7 +757,7 @@ async def test_hackernews_adapter_uses_public_api() -> None:
         tier=SourceTier.B,
         channel=SourceChannel.COMMUNITY,
     )
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
     assert str(items[0].url).startswith("https://news.ycombinator.com/item?id=1")
     assert items[0].published_at is None
     assert items[0].source_time_kind == SourceTimeKind.COMMUNITY_SUBMITTED
@@ -774,9 +784,7 @@ async def test_huggingface_model_change_watch_uses_official_update_time() -> Non
             "tags": ["base_model:quantized:Qwen/Qwen3.8-2.4T-A95B"],
         },
     ]
-    client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=values))
-    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=values))
     source = SourceConfig(
         name="qwen-models",
         display_name="Qwen Official Models",
@@ -787,7 +795,7 @@ async def test_huggingface_model_change_watch_uses_official_update_time() -> Non
         channel=SourceChannel.OFFICIAL,
     )
 
-    items, health = await Collector(client).collect([source])
+    items, health = await Collector(transport).collect([source])
 
     assert [item.title for item in items] == [
         "Qwen Official Models: Qwen3.8-2.4T-A95B repository update"
@@ -817,9 +825,7 @@ async def test_html_index_fetches_first_party_article_metadata() -> None:
         link_pattern=r"^https://example\.com/news/[^/]+$",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "ok"
     assert items[0].title == "Introducing Model Five"
@@ -844,9 +850,7 @@ async def test_html_index_extracts_visible_article_date_when_metadata_is_missing
         link_pattern=r"^https://example\.com/news/[^/]+$",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "ok"
     assert items[0].published_at.isoformat() == "2026-07-30T00:00:00+00:00"
@@ -868,9 +872,7 @@ async def test_html_index_parses_china_numeric_article_time_as_beijing_time() ->
         tier=SourceTier.A,
         region="china",
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert health[0].status == "ok"
     assert items[0].published_at.isoformat() == "2026-08-13T08:36:53+00:00"
@@ -892,9 +894,7 @@ async def test_html_index_rejects_cross_origin_redirects() -> None:
         tier=SourceTier.A,
     )
 
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler), follow_redirects=True)
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert items == []
     assert health[0].status == "failed"
@@ -923,9 +923,7 @@ async def test_html_index_reports_partial_success_when_one_article_fails() -> No
         link_pattern=r"^https://example\.com/news/[^/]+$",
         tier=SourceTier.A,
     )
-    items, health = await Collector(
-        httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    ).collect([source])
+    items, health = await Collector(httpx.MockTransport(handler)).collect([source])
 
     assert [item.title for item in items] == ["Working AI model"]
     assert health[0].status == "partial"

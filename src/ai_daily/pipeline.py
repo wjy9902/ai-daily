@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -9,17 +10,26 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ai_daily.artifacts import write_artifact
-from ai_daily.assembler import assemble_markdown
+from ai_daily.budget import BudgetExceeded, BudgetLedger, StageBudgetExceeded
+from ai_daily.composer import (
+    ComposeError,
+    build_brief_only_publication,
+    build_full_publication,
+    build_judged_publication,
+    build_ranked_publication,
+)
 from ai_daily.config import AppConfig, Secrets
 from ai_daily.content import draft_selected, judge_events, plan_digest, validate_editorial_plan
-from ai_daily.history import fetch_historical_index
-from ai_daily.model_gateway import ModelGateway
+from ai_daily.degradation import DegradationTracker, FailureClass
+from ai_daily.history import local_historical_index
+from ai_daily.model_gateway import ModelGateway, ModelInvocationFailed
 from ai_daily.models import (
     DraftItem,
     EditorialPlan,
     EditorialSelection,
     EditorialTier,
     Event,
+    JudgeDecision,
     PipelineConfig,
     Publication,
     RawItem,
@@ -36,16 +46,58 @@ from ai_daily.normalize import (
     score_events,
     select_candidate_pool,
 )
-from ai_daily.publisher import GitHubPublisher
-from ai_daily.site_trust import verified_daily_marker
+from ai_daily.publication import DailyPublication, PublicationLevel
+from ai_daily.site_publisher import SiteLayout
 from ai_daily.sources import Collector
 
 
 class QualityGateFailed(RuntimeError):
-    pass
+    """Raised only for misconfiguration, never for a bad news day."""
+
+
+class ModelStageFailed(RuntimeError):
+    """A model stage failed in a way that maps onto a degraded level."""
+
+    def __init__(self, failure: FailureClass) -> None:
+        super().__init__(failure.value)
+        self.failure = failure
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """Everything a caller needs to publish and report on a run."""
+
+    artifact: RunArtifact
+    publication: DailyPublication
+    tracker: DegradationTracker
+    run_dir: Path
 
 
 DETAIL_EVIDENCE_MIN_CHARS = 800
+
+#: Below this many fresh candidates there is no issue worth publishing, and the
+#: site holds yesterday's rather than showing a near-empty page.
+MINIMUM_PUBLISHABLE_CANDIDATES = 5
+
+
+def _classify_model_failure(error: Exception) -> FailureClass:
+    if isinstance(error, StageBudgetExceeded | BudgetExceeded):
+        return FailureClass.BUDGET_EXHAUSTED
+    if isinstance(error, ModelInvocationFailed):
+        return FailureClass.PLAN_FAILED
+    return FailureClass.PLAN_FAILED
+
+
+def _demote_selections(plan: EditorialPlan, event_ids: set[str]) -> EditorialPlan:
+    """Move the named stories down to brief tier, keeping everything else."""
+
+    selections = [
+        selection.model_copy(update={"tier": EditorialTier.BRIEF})
+        if selection.event_id in event_ids
+        else selection
+        for selection in plan.selections
+    ]
+    return plan.model_copy(update={"selections": selections})
 
 
 def filter_fresh_items(
@@ -126,25 +178,46 @@ class DailyPipeline:
         client: httpx.AsyncClient | None = None,
         collector: Collector | None = None,
         gateway: ModelGateway | None = None,
+        layout: SiteLayout | None = None,
     ) -> None:
         self.config = config
         self.secrets = secrets or Secrets()
         self.client = client or httpx.AsyncClient(follow_redirects=True)
-        self.collector = collector or Collector(self.client)
-        self.gateway = gateway or ModelGateway(config.models, self.secrets)
+        self.collector = collector or Collector()
+        self.layout = layout or SiteLayout(Path(self.config.pipeline.artifacts_dir).parent)
+        self.gateway = gateway or ModelGateway(
+            config.models,
+            self.secrets,
+            # The ledger is keyed by date on disk so every timer window of the
+            # same morning draws from one budget rather than a fresh one each.
+            ledger=BudgetLedger(config.models.budget),
+        )
 
-    async def run(self, target_date: date, publish: bool) -> tuple[RunArtifact, str]:
+    async def run(self, target_date: date, publish: bool) -> RunOutcome:
+        """Produce the best issue today's inputs allow.
+
+        No quality problem raises here any more. Each stage records what went
+        wrong and the run falls through to whichever builder that failure still
+        permits, so a bad morning shrinks the issue instead of erasing it.
+        """
+
         run_id = f"{target_date.isoformat()}-{uuid.uuid4().hex[:8]}"
         run_dir = Path(self.config.pipeline.artifacts_dir) / target_date.isoformat() / run_id
-        repository = self.secrets.github_repository or self.config.pipeline.repository
-        items, health = await self._collect(run_dir)
-        filtered, candidates = await self._candidates(target_date, items, run_dir, repository)
-        editorial_plan, drafts = await self._generate_content(candidates, run_dir)
-        audited_requests = sum(run.request_count for run in self.gateway.runs)
-        if audited_requests != self.gateway.ledger.requests:
-            raise QualityGateFailed("model request audit is incomplete")
-        body = assemble_markdown(target_date, editorial_plan, drafts, candidates)
-        publication = await self._publish(target_date, body, repository, publish)
+        tracker = DegradationTracker()
+
+        items, health = await self._collect(run_dir, tracker)
+        filtered, candidates = await self._candidates(target_date, items, run_dir, tracker)
+
+        if tracker.blocked or not candidates:
+            publication = build_brief_only_publication(
+                target_date=target_date,
+                briefs=[],
+                level=PublicationLevel.L3,
+                tracker=tracker,
+            )
+        else:
+            publication = await self._compose(target_date, candidates, run_dir, tracker)
+
         artifact = RunArtifact(
             run_id=run_id,
             target_date=target_date,
@@ -152,23 +225,59 @@ class DailyPipeline:
             health=health,
             events=candidates,
             model_runs=self.gateway.runs,
-            publication=publication,
+            publication=Publication(
+                target_date=target_date,
+                status="issue_published" if publish else "dry_run",
+                marker=publication.marker or "invalid",
+            ),
             metadata={
                 "candidate_count": len(candidates),
-                "selected_count": len(editorial_plan.selections),
-                "detailed_count": len(drafts),
-                "model_requests": self.gateway.ledger.requests,
-                "audited_model_requests": audited_requests,
-                "input_tokens": self.gateway.ledger.input_tokens,
-                "output_tokens": self.gateway.ledger.output_tokens,
-                "cost_cny": round(self.gateway.ledger.cost_cny, 6),
+                "level": publication.level.value,
+                "detail_count": len(publication.details),
+                "brief_count": len(publication.briefs),
+                "degradation": [failure.value for failure in tracker.failures],
+                **self.gateway.ledger.snapshot(),
             },
         )
         write_artifact(run_dir / "run.json", artifact)
-        (run_dir / "digest.md").write_text(body, encoding="utf-8")
-        return artifact, body
+        write_artifact(run_dir / "publication.json", publication)
+        return RunOutcome(
+            artifact=artifact,
+            publication=publication,
+            tracker=tracker,
+            run_dir=run_dir,
+        )
 
-    async def _collect(self, run_dir: Path) -> tuple[list[RawItem], list[SourceHealth]]:
+    async def _compose(
+        self,
+        target_date: date,
+        candidates: list[Event],
+        run_dir: Path,
+        tracker: DegradationTracker,
+    ) -> DailyPublication:
+        """Run the model stages, degrading to the best surviving builder."""
+
+        decisions: list[JudgeDecision] = []
+        plan: EditorialPlan | None = None
+        drafts: list[DraftItem] = []
+        try:
+            decisions, plan, drafts = await self._generate_content(candidates, run_dir, tracker)
+        except ModelStageFailed as error:
+            tracker.record(error.failure)
+
+        if plan is not None:
+            try:
+                return build_full_publication(target_date, plan, drafts, candidates, tracker)
+            except ComposeError:
+                tracker.record(FailureClass.PLAN_FAILED)
+
+        if decisions:
+            return build_judged_publication(target_date, decisions, candidates, tracker)
+        return build_ranked_publication(target_date, candidates, tracker)
+
+    async def _collect(
+        self, run_dir: Path, tracker: DegradationTracker
+    ) -> tuple[list[RawItem], list[SourceHealth]]:
         items, health = await self.collector.collect(self.config.sources)
         write_artifact(
             run_dir / "sources.json",
@@ -177,7 +286,7 @@ class DailyPipeline:
                 "health": [item.model_dump(mode="json") for item in health],
             },
         )
-        self._check_source_health(health)
+        self._check_source_health(health, tracker)
         return items, health
 
     async def _candidates(
@@ -185,7 +294,7 @@ class DailyPipeline:
         target_date: date,
         items: list[RawItem],
         run_dir: Path,
-        repository: str,
+        tracker: DegradationTracker,
     ) -> tuple[list[RawItem], list[Event]]:
         timezone = ZoneInfo(self.config.pipeline.timezone)
         cutoff, run_time = collection_window(
@@ -199,10 +308,8 @@ class DailyPipeline:
             cluster_items(filtered, self.config.pipeline.cluster_window_hours),
             run_time.astimezone(UTC),
         )
-        historical_index = await fetch_historical_index(
-            self.client,
-            repository,
-            self.secrets.github_token,
+        historical_index = local_historical_index(
+            self.layout.published,
             self.config.pipeline.history_window_days,
             target_date,
         )
@@ -219,16 +326,21 @@ class DailyPipeline:
             + self.config.pipeline.follow_min
             + self.config.pipeline.brief_min
         )
-        if len(candidates) < minimum_items:
-            raise QualityGateFailed(f"only {len(candidates)} candidates remain after deduplication")
+        if len(candidates) < MINIMUM_PUBLISHABLE_CANDIDATES:
+            tracker.record(FailureClass.CANDIDATES_EXHAUSTED)
+        elif len(candidates) < minimum_items:
+            tracker.record(FailureClass.CANDIDATES_THIN)
         return filtered, candidates
 
     async def _generate_content(
-        self, candidates: list[Event], run_dir: Path
-    ) -> tuple[EditorialPlan, list[DraftItem]]:
+        self, candidates: list[Event], run_dir: Path, tracker: DegradationTracker
+    ) -> tuple[list[JudgeDecision], EditorialPlan | None, list[DraftItem]]:
+        decisions: list[JudgeDecision] = []
         try:
             decisions = await judge_events(self.gateway, candidates)
             write_artifact(run_dir / "decisions.json", decisions)
+            if not decisions:
+                raise ModelStageFailed(FailureClass.JUDGE_FAILED)
             enrichment_ids = {
                 decision.event_id
                 for decision in decisions
@@ -272,38 +384,40 @@ class DailyPipeline:
                 write_artifact(run_dir / "editorial-plan-adjusted.json", editorial_plan)
             evidence_audit = _detail_evidence_audit(editorial_plan, candidates)
             write_artifact(run_dir / "evidence-quality.json", {"items": evidence_audit})
-            failed = [item for item in evidence_audit if not item["passed"]]
+            failed = {str(item["event_id"]) for item in evidence_audit if not item["passed"]}
             if failed:
-                event_ids = ", ".join(str(item["event_id"]) for item in failed)
-                raise QualityGateFailed(f"detailed stories lack article evidence: {event_ids}")
+                # Repair already tried swapping these out. Rather than losing the
+                # whole issue, the stories that still lack evidence drop out of
+                # the detailed set and the issue publishes as L1.
+                tracker.record(FailureClass.DETAIL_EVIDENCE_THIN)
+                editorial_plan = _demote_selections(editorial_plan, failed)
+                write_artifact(run_dir / "editorial-plan-demoted.json", editorial_plan)
             drafts = await draft_selected(self.gateway, candidates, editorial_plan)
+        except (BudgetExceeded, ModelInvocationFailed, ValueError) as error:
+            raise ModelStageFailed(_classify_model_failure(error)) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
-        return editorial_plan, drafts
+            await self.collector.aclose()
+        return decisions, editorial_plan, drafts
 
-    async def _publish(
-        self, target_date: date, body: str, repository: str, publish: bool
-    ) -> Publication:
-        publication = Publication(
-            target_date=target_date,
-            status="dry_run",
-            marker=verified_daily_marker(body, target_date) or "invalid",
-        )
-        if publish:
-            if not self.secrets.github_token:
-                raise QualityGateFailed("GITHUB_TOKEN is required in publish mode")
-            publisher = GitHubPublisher(repository, self.secrets.github_token, self.client)
-            publication = await publisher.publish(target_date, body)
-        return publication
+    def _check_source_health(
+        self, health: Sequence[SourceHealth], tracker: DegradationTracker
+    ) -> None:
+        """Record coverage, but never stop the run on it.
 
-    def _check_source_health(self, health: Sequence[SourceHealth]) -> None:
+        Coverage counts sources that answered, not sources that yielded fresh
+        news: it can read 100% on a day with nothing worth publishing and 40%
+        on a day with plenty. Whether to publish is decided later, on the
+        actual candidate count.
+        """
+
         tier_a = [item for item in health if item.tier == SourceTier.A]
         if not tier_a:
             raise QualityGateFailed("no Tier A sources are configured")
         successful = sum(item.status in {"ok", "partial", "not_modified"} for item in tier_a)
         coverage = successful / len(tier_a)
         if coverage < self.config.pipeline.tier_a_min_coverage:
-            raise QualityGateFailed(f"Tier A source coverage is {coverage:.0%}")
+            tracker.record(FailureClass.SOURCE_COVERAGE_LOW)
 
 
 def _detail_evidence_audit(

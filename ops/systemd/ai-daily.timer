@@ -1,0 +1,19 @@
+[Unit]
+Description=AI Daily publication windows
+Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/SELF-HOST-MIGRATION.md
+
+[Timer]
+# Server local time is already Asia/Shanghai.
+# 04:20 is the main run. The later windows verify first and cost nothing when
+# the issue is already live at full quality; they only spend model budget when
+# there is something to upgrade.
+OnCalendar=*-*-* 04:20:00
+OnCalendar=*-*-* 05:05:00
+OnCalendar=*-*-* 07:00:00
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=60s
+Unit=ai-daily.service
+
+[Install]
+WantedBy=timers.target

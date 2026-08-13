@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -50,6 +52,47 @@ def _story_titles(body: str) -> set[str]:
         if value and value not in NON_STORY_HEADINGS:
             titles.add(value)
     return titles
+
+
+def local_historical_index(
+    published_dir: Path,
+    days: int,
+    before_date: date,
+) -> HistoricalIndex:
+    """Build the dedupe index from locally published issues.
+
+    This replaces the GitHub API lookup. Reading our own records removes a
+    network dependency from the critical path: an API hiccup used to mean the
+    index came back empty, which silently let yesterday's stories run again.
+    """
+
+    first_date = before_date - timedelta(days=days)
+    urls: set[str] = set()
+    titles: set[str] = set()
+    if not published_dir.exists():
+        return HistoricalIndex(urls=urls, titles=titles)
+
+    for path in published_dir.glob("*.json"):
+        try:
+            issue_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if not first_date <= issue_date < before_date:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for group in ("details", "briefs"):
+            for entry in payload.get(group, []):
+                headline = entry.get("headline")
+                if isinstance(headline, str):
+                    titles.add(headline)
+                for source in entry.get("sources", []):
+                    url = source.get("url")
+                    if isinstance(url, str):
+                        urls.add(url)
+    return HistoricalIndex(urls=urls, titles=titles)
 
 
 async def fetch_historical_index(

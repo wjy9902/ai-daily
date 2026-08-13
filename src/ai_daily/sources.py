@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from email.utils import parsedate_to_datetime
+from types import TracebackType
 from typing import Any, TypedDict, cast
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
@@ -324,9 +325,14 @@ def _article_url_allowed(source: SourceConfig, item: RawItem) -> bool:
 
 
 class Collector:
+    """Owns the HTTP client so every source request uses the browser UA and pinned DNS.
+
+    `transport` exists for tests only; production must use the default pinned transport.
+    """
+
     def __init__(
         self,
-        client: httpx.AsyncClient | None = None,
+        transport: httpx.AsyncBaseTransport | None = None,
         per_host: int = 5,
         article_concurrency: int = 8,
     ) -> None:
@@ -334,17 +340,31 @@ class Collector:
             raise ValueError("per_host must be at least 1")
         if article_concurrency < 1:
             raise ValueError("article_concurrency must be at least 1")
-        self.client = client or httpx.AsyncClient(
+        self.client = httpx.AsyncClient(
             headers={"User-Agent": DEFAULT_USER_AGENT},
             follow_redirects=False,
-            transport=PublicAsyncHTTPTransport(),
+            transport=transport or PublicAsyncHTTPTransport(),
         )
-        self._uses_pinned_dns = client is None
+        self._uses_pinned_dns = transport is None
         self._per_host = per_host
         self._article_semaphore = asyncio.Semaphore(article_concurrency)
         self._article_text_cache: dict[str, str] = {}
         self._host_semaphores: dict[str, asyncio.Semaphore] = {}
         self._validators: dict[str, dict[str, str]] = {}
+
+    async def __aenter__(self) -> Collector:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
+        await self.client.aclose()
 
     async def collect(
         self, sources: list[SourceConfig]
@@ -971,9 +991,11 @@ class PublicNetworkBackend(httpcore.AsyncNetworkBackend):
 
 
 class PublicAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """httpx transport that keeps httpx's TLS, limits and proxy setup but pins DNS."""
+
     def __init__(self) -> None:
         super().__init__()
-        self._pool = httpcore.AsyncConnectionPool(network_backend=PublicNetworkBackend())
+        self._pool._network_backend = PublicNetworkBackend()
 
 
 def _origin(value: str) -> tuple[str, str, int]:

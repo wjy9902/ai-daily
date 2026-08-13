@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from .models import EditorialCategory, EditorialTier, SourceTimeKind
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION: Literal[4] = 4
 
 
 class PublicationLevel(StrEnum):

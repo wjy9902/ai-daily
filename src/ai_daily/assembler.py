@@ -133,7 +133,7 @@ def _detail(
             f"{_source_links(_detail_evidence_ids(selection, draft), evidence)}</p>"
         ),
         '<div class="story-facts"><strong>核心事实：</strong><ul>',
-        *[f"<li>{html.escape(fact)}</li>" for fact in draft.facts],
+        *[f"<li>{html.escape(claim.text)}</li>" for claim in draft.facts],
         "</ul></div>",
         (
             '<p class="story-importance"><strong>为什么重要：</strong> '

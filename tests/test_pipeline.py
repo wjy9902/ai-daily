@@ -18,6 +18,7 @@ from ai_daily.models import (
     EditorialSelection,
     EditorialTier,
     Event,
+    FactClaim,
     JudgeDecision,
     RawItem,
     SourceChannel,
@@ -47,6 +48,7 @@ class FakeCollector:
                 source=f"source-{index}",
                 source_label=f"Source {index}",
                 source_tier=SourceTier.A,
+                source_channel=SourceChannel.OFFICIAL,
                 source_item_id=str(index),
                 url=f"https://example.com/{index}",
                 title=f"Unique{index} Product{index} Change{index} AI",
@@ -71,6 +73,9 @@ class FakeCollector:
         self, events: list[Event], sources: list[SourceConfig], event_ids: set[str]
     ) -> list[dict[str, object]]:
         return []
+
+    async def aclose(self) -> None:
+        return None
 
 
 class SpyEnrichmentCollector(FakeCollector):
@@ -227,12 +232,19 @@ def _grouped_plan_output(plan: EditorialPlan) -> dict[str, object]:
 def _draft_output(value: dict[str, object]) -> DraftItem:
     selection = value["selection"]
     bundle = value["bundle"]
+    evidence = bundle["evidence"][0]  # type: ignore[index]
+    evidence_id = str(evidence["evidence_id"])
+    quote = str(evidence["excerpt"])[:60]
     return DraftItem(
         event_id=str(selection["event_id"]),  # type: ignore[index]
         tldr="这是一项已经确认的重要变化。",
-        facts=["证据确认该变化已经发生。"],
+        tldr_evidence_id=evidence_id,
+        tldr_quote=quote,
+        facts=[
+            FactClaim(text="证据确认该变化已经发生。", evidence_id=evidence_id, quote=quote)
+        ],
         why_it_matters="它会影响实际模型与产品判断。",
-        evidence_ids=[str(bundle["evidence"][0]["evidence_id"])],  # type: ignore[index]
+        evidence_ids=[evidence_id],
     )
 
 
@@ -491,6 +503,7 @@ def _audit_event(index: int, sizes: list[int]) -> Event:
         RawItem(
             source=f"source-{item_index}",
             source_tier=SourceTier.A,
+            source_channel=SourceChannel.OFFICIAL,
             source_item_id=str(item_index),
             url=f"https://example.com/{index}/{item_index}",
             title=f"Evidence {item_index}",

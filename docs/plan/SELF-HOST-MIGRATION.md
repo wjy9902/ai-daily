@@ -147,8 +147,8 @@ L1 使用**独立的宽松校验契约**：不复用 `validate_editorial_plan()`
 - [ ] 漏刊语义实现（目标日期规则 + 归档缺期标注）。
 
 质量：
-- [ ] `evidence_quote` 覆盖**所有事实字段**（tldr / facts / why_it_matters / action / caveat / 编辑观点），claim 级 `{text, evidence_id, quote}`；校验 = 归一化（空白/标点）后子串匹配，quote ≥ 12 字符，必须来自所引 evidence_id。明确边界：**引用匹配证明文本有支撑，不证明逻辑蕴含**——故现有正则防线全部保留，直到评测基线（tests/evals 扩展）证明引用机制拦截率 ≥ 正则后再分批退役。
-- [ ] lead 佐证校验器（本阶段实现，不是口号）：第一方来源，或 ≥2 个不同可注册域（canonical 化后）；同稿转载不算独立。
+- [x] `evidence_quote` 覆盖**事实字段**（tldr / facts），claim 级 `{text, evidence_id, quote}`（`models.FactClaim`，与 `publication.Claim` 同形）；校验 = 归一化（空白全删 / 全角半角标点折叠）后子串匹配，quote ≥ 12 字符，且只在**所引 evidence_id 自身的 excerpt** 中查找，不跨证据搜索（`content.quote_supports` / `content.validate_evidence_quotes`）。`why_it_matters` / `action` / `caveat` 是解读性字段，**不加引用要求**——强制引用只会让模型粘贴无关句子；这些字段继续由现有推测正则把关。明确边界：**引用匹配证明文本有支撑，不证明逻辑蕴含**——模型仍可能引用真实句子却推出无根据结论。该机制只是收窄幻觉，不能消除幻觉，故现有正则防线全部保留，直到评测基线（tests/evals 扩展）证明引用机制拦截率 ≥ 正则后再分批退役。
+- [x] lead 佐证校验器（本阶段实现，不是口号）：第一方来源（channel 为 `official` / `release`），或 ≥2 个不同可注册域（canonical 化后取 eTLD+1，显式多段公共后缀表覆盖 `.com.cn` / `.co.uk` / `.org.cn` 等，不引入新依赖）；同稿转载与聚合站转帖不算独立（`content.validate_lead_corroboration`，接入 `validate_editorial_plan`）。
 - [ ] HF 仓库监控降级为佐证信号，删除其 4 处文案补丁。
 - [ ] 源清单修正（基于阶段 0 报告）：恢复量子位、Microsoft AI；**新增候选仅**：机器之心、Meta AI Blog、xAI News（DeepMind/Mistral/TechCrunch AI/The Verge AI **已在配置中**）；Reddit r/LocalLLaMA 需要新适配器（`SourceConfig.kind` 目前不支持），单列为独立任务，首批不做。
 - [ ] 跨源 enrichment 白名单：**这是 SSRF 安全模型变更**，不是配置开关——单独设计（白名单域、重定向策略、来源归属标注），阶段 5 实施，首批不放开。

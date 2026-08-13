@@ -1,0 +1,35 @@
+# Append to /etc/caddy/Caddyfile alongside the existing zb.jiayutool.cn block.
+# Validate before reloading:  caddy validate --config /etc/caddy/Caddyfile
+daily.jiayutool.cn {
+	root * /www/wwwroot/ai-daily/current
+	encode zstd gzip
+
+	# Operator status lives outside every release so it stays readable when a
+	# render fails, and must never be cached or the reading is meaningless.
+	handle /status.json {
+		root * /www/wwwroot/ai-daily/status
+		header Cache-Control "no-store"
+		file_server
+	}
+
+	# The feed changes daily and is polled by readers; keep it short.
+	handle /rss.xml {
+		header Cache-Control "public, max-age=300"
+		file_server
+	}
+
+	# Content-addressed only by release directory, so a short cache is safe.
+	handle {
+		header Cache-Control "public, max-age=300"
+		header X-Content-Type-Options "nosniff"
+		header Referrer-Policy "strict-origin-when-cross-origin"
+		file_server
+	}
+
+	log {
+		output file /var/log/caddy/daily.jiayutool.cn.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}
