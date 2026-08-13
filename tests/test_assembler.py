@@ -110,6 +110,24 @@ def test_detail_lists_evidence_used_by_both_plan_and_draft() -> None:
     assert '<a href="https://other.example.com/report">交叉验证来源</a>' in body
 
 
+def test_viewpoint_keeps_distinct_articles_from_the_same_source() -> None:
+    first = _event(0)
+    second = _event(1)
+    second.items[0].source_label = first.items[0].source_label
+    selections = [
+        _selection(0, EditorialTier.LEAD),
+        _selection(1, EditorialTier.FOLLOW),
+    ]
+    plan = _plan(selections)
+    plan.editor_viewpoint[0].evidence_ids = ["event-0-1", "event-1-1"]
+
+    body = assemble_markdown(date(2026, 8, 12), plan, [_draft(0), _draft(1)], [first, second])
+    viewpoint = body.split("## 编辑观点", maxsplit=1)[1]
+
+    assert '<a href="https://example.com/0" title="Release 0">官方来源 0 1/2</a>' in viewpoint
+    assert '<a href="https://example.com/1" title="Release 1">官方来源 0 2/2</a>' in viewpoint
+
+
 def test_source_url_cannot_break_out_of_its_link() -> None:
     value = _event(0)
     malicious = value.items[0].model_copy(

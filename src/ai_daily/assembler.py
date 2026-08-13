@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections import Counter
 from datetime import date
 
 from ai_daily.content import evidence_bundle
@@ -148,11 +149,21 @@ def _viewpoint(plan: EditorialPlan, evidence: dict[str, Evidence]) -> list[str]:
 
 def _source_links(evidence_ids: list[str], evidence: dict[str, Evidence]) -> str:
     values = [_evidence_fields(evidence[evidence_id]) for evidence_id in evidence_ids]
-    unique = dict(values)
-    return " · ".join(
-        f'<a href="{html.escape(url, quote=True)}">{html.escape(source)}</a>'
-        for source, url in unique.items()
-    )
+    unique = list(dict.fromkeys(values))
+    source_counts = Counter(source for source, _, _ in unique)
+    source_positions: Counter[str] = Counter()
+    links: list[str] = []
+    for source, title, url in unique:
+        source_positions[source] += 1
+        label = source
+        title_attribute = ""
+        if source_counts[source] > 1:
+            label = f"{source} {source_positions[source]}/{source_counts[source]}"
+            title_attribute = f' title="{html.escape(title, quote=True)}"'
+        links.append(
+            f'<a href="{html.escape(url, quote=True)}"{title_attribute}>{html.escape(label)}</a>'
+        )
+    return " · ".join(links)
 
 
 def _detail_evidence_ids(selection: EditorialSelection, draft: DraftItem) -> list[str]:
@@ -160,16 +171,11 @@ def _detail_evidence_ids(selection: EditorialSelection, draft: DraftItem) -> lis
 
 
 def _source_links_html(evidence_ids: list[str], evidence: dict[str, Evidence]) -> str:
-    values = [_evidence_fields(evidence[evidence_id]) for evidence_id in evidence_ids]
-    unique = dict(values)
-    return " · ".join(
-        f'<a href="{html.escape(url, quote=True)}">{html.escape(source)}</a>'
-        for source, url in unique.items()
-    )
+    return _source_links(evidence_ids, evidence)
 
 
-def _evidence_fields(value: Evidence) -> tuple[str, str]:
-    return value.source, str(value.url)
+def _evidence_fields(value: Evidence) -> tuple[str, str, str]:
+    return value.source, value.title, str(value.url)
 
 
 def _markdown_text(value: str) -> str:
