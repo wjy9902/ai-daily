@@ -79,10 +79,10 @@ class FakeGateway:
         values = json.loads(prompt)
         if output_type is JudgeBatch:
             return _judge_output(values)
-        if output_type is EditorialPlan:
+        if output_type.__name__.startswith("EditorialPlanOutput_"):
             if self.fail_plan:
                 raise RuntimeError("editor failed")
-            return _plan_output(values)
+            return output_type.model_validate(_grouped_plan_output(_plan_output(values)))
         return _draft_output(values)
 
 
@@ -131,6 +131,21 @@ def _plan_output(values: list[dict[str, object]]) -> EditorialPlan:
             ),
         ],
     )
+
+
+def _grouped_plan_output(plan: EditorialPlan) -> dict[str, object]:
+    return {
+        "today_highlight": plan.today_highlight,
+        "editor_viewpoint": plan.editor_viewpoint,
+        **{
+            tier.value: [
+                selection.model_dump(exclude={"tier"})
+                for selection in plan.selections
+                if selection.tier == tier
+            ]
+            for tier in EditorialTier
+        },
+    }
 
 
 def _draft_output(value: dict[str, object]) -> DraftItem:

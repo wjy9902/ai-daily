@@ -305,6 +305,7 @@ class PlanningGateway:
     def __init__(self, output: EditorialPlan) -> None:
         self.output = output
         self.candidate_count = 0
+        self.output_schema: dict[str, Any] = {}
 
     async def generate(
         self,
@@ -314,9 +315,25 @@ class PlanningGateway:
         prompt: str,
         validator: Any = None,
     ) -> Any:
-        assert output_type is EditorialPlan
         self.candidate_count = len(json.loads(prompt))
-        return self.output
+        self.output_schema = output_type.model_json_schema()
+        return output_type.model_validate(_grouped_plan(self.output))
+
+
+def _grouped_plan(value: EditorialPlan) -> dict[str, object]:
+    groups = {
+        tier.value: [
+            selection.model_dump(exclude={"tier"})
+            for selection in value.selections
+            if selection.tier == tier
+        ]
+        for tier in EditorialTier
+    }
+    return {
+        "today_highlight": value.today_highlight,
+        "editor_viewpoint": value.editor_viewpoint,
+        **groups,
+    }
 
 
 async def test_global_editor_compares_all_candidates_and_can_correct_initial_judge() -> None:
@@ -341,6 +358,9 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
 
     assert gateway.candidate_count == 17
     assert result.selections[0].event_id == "event-0"
+    assert gateway.output_schema["properties"]["lead"]["minItems"] == 4
+    assert gateway.output_schema["properties"]["follow"]["maxItems"] == 7
+    assert gateway.output_schema["properties"]["brief"]["minItems"] == 8
 
 
 @pytest.mark.parametrize(
@@ -447,7 +467,7 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
         validator: Any = None,
     ) -> EditorialPlan:
         captured["instructions"] = instructions
-        return gateway.output
+        return output_type.model_validate(_grouped_plan(gateway.output))
 
     gateway.generate = generate  # type: ignore[method-assign]
     events = [numbered_event(index) for index in range(17)]
@@ -471,6 +491,6 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     assert "同一来源通常不超过 3 条" in captured["instructions"]
     assert "重大新闻，可以例外" in captured["instructions"]
     assert "不要为了来源均衡删除重大新闻" in captured["instructions"]
-    assert "快讯由 tier=brief 表示" in captured["instructions"]
-    assert "每条只能引用已经进入 selections 的 evidence_ids" in captured["instructions"]
+    assert "快讯由 brief 数组表示" in captured["instructions"]
+    assert "每条只能引用已经进入三个数组的 evidence_ids" in captured["instructions"]
     assert "禁止引用未选候选" in captured["instructions"]

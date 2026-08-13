@@ -135,9 +135,8 @@ class JudgeDecision(StrictModel):
     evidence_ids: list[str] = Field(min_length=1)
 
 
-class EditorialSelection(StrictModel):
+class EditorialChoice(StrictModel):
     event_id: str
-    tier: EditorialTier
     category: EditorialCategory
     headline: str = Field(min_length=1, max_length=100)
     brief: str = Field(min_length=1, max_length=240)
@@ -145,6 +144,10 @@ class EditorialSelection(StrictModel):
     confidence: float = Field(ge=0, le=1)
     reason: str = Field(min_length=1, max_length=500)
     evidence_ids: list[str] = Field(min_length=1)
+
+
+class EditorialSelection(EditorialChoice):
+    tier: EditorialTier
 
 
 class EditorialInsight(StrictModel):
