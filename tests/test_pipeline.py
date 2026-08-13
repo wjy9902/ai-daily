@@ -30,6 +30,7 @@ from ai_daily.pipeline import (
     DailyPipeline,
     QualityGateFailed,
     _detail_evidence_audit,
+    _repair_detail_evidence,
     collection_window,
     filter_fresh_items,
 )
@@ -574,6 +575,43 @@ def test_detail_evidence_uses_first_three_items_and_exempts_briefs() -> None:
 
     assert [item["passed"] for item in audit] == [True, False]
     assert [item["event_id"] for item in audit] == ["event-0", "event-1"]
+
+
+def test_detail_evidence_repair_swaps_unsupported_detail_with_grounded_brief() -> None:
+    config = load_config(Path("config"))
+    events = [_audit_event(index, [607 if index == 4 else 900]) for index in range(17)]
+    tiers = [EditorialTier.LEAD] * 4 + [EditorialTier.FOLLOW] * 5
+    tiers += [EditorialTier.BRIEF] * 8
+    categories = ["模型与平台", "行业动态", "国内 AI", "值得试的项目"]
+    selections = [
+        EditorialSelection(
+            event_id=event.event_id,
+            tier=tiers[index],
+            category=categories[index % len(categories)],  # type: ignore[arg-type]
+            headline=f"Headline {index}",
+            brief=f"Brief {index}",
+            importance=100 - index,
+            confidence=0.9,
+            reason="Reason",
+            evidence_ids=[f"{event.event_id}-1"],
+        )
+        for index, event in enumerate(events)
+    ]
+    plan = EditorialPlan(
+        today_highlight="Highlight",
+        selections=selections,
+        editor_viewpoint=[
+            EditorialInsight(text="One", evidence_ids=["event-0-1"]),
+            EditorialInsight(text="Two", evidence_ids=["event-1-1"]),
+        ],
+    )
+
+    repaired = _repair_detail_evidence(plan, events, config.pipeline)
+
+    tiers_by_id = {item.event_id: item.tier for item in repaired.selections}
+    assert tiers_by_id["event-4"] == EditorialTier.BRIEF
+    assert tiers_by_id["event-9"] == EditorialTier.FOLLOW
+    assert all(item["passed"] for item in _detail_evidence_audit(repaired, events))
 
 
 async def test_model_request_audit_mismatch_blocks_run(tmp_path: Path) -> None:

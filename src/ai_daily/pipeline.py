@@ -11,14 +11,16 @@ import httpx
 from ai_daily.artifacts import write_artifact
 from ai_daily.assembler import assemble_markdown
 from ai_daily.config import AppConfig, Secrets
-from ai_daily.content import draft_selected, judge_events, plan_digest
+from ai_daily.content import draft_selected, judge_events, plan_digest, validate_editorial_plan
 from ai_daily.history import fetch_historical_index
 from ai_daily.model_gateway import ModelGateway
 from ai_daily.models import (
     DraftItem,
     EditorialPlan,
+    EditorialSelection,
     EditorialTier,
     Event,
+    PipelineConfig,
     Publication,
     RawItem,
     RunArtifact,
@@ -260,6 +262,14 @@ class DailyPipeline:
                 )
             write_artifact(run_dir / "article-enrichment.json", {"items": enrichment})
             write_artifact(run_dir / "candidates-enriched.json", candidates)
+            original_plan = editorial_plan
+            editorial_plan = _repair_detail_evidence(
+                editorial_plan,
+                candidates,
+                self.config.pipeline,
+            )
+            if editorial_plan != original_plan:
+                write_artifact(run_dir / "editorial-plan-adjusted.json", editorial_plan)
             evidence_audit = _detail_evidence_audit(editorial_plan, candidates)
             write_artifact(run_dir / "evidence-quality.json", {"items": evidence_audit})
             failed = [item for item in evidence_audit if not item["passed"]]
@@ -320,3 +330,62 @@ def _detail_evidence_audit(
             }
         )
     return audit
+
+
+def _repair_detail_evidence(
+    plan: EditorialPlan,
+    events: list[Event],
+    config: PipelineConfig,
+) -> EditorialPlan:
+    """Swap unsupported details with grounded briefs while preserving editorial quotas."""
+    repaired = plan
+    while True:
+        failed = [item for item in _detail_evidence_audit(repaired, events) if not item["passed"]]
+        if not failed:
+            return repaired
+        failed_id = str(failed[0]["event_id"])
+        failed_selection = next(item for item in repaired.selections if item.event_id == failed_id)
+        briefs = sorted(
+            (item for item in repaired.selections if item.tier == EditorialTier.BRIEF),
+            key=lambda item: item.importance,
+            reverse=True,
+        )
+        replacement = _valid_detail_replacement(
+            repaired,
+            failed_selection,
+            briefs,
+            events,
+            config,
+        )
+        if replacement is None:
+            return repaired
+        repaired = replacement
+
+
+def _valid_detail_replacement(
+    plan: EditorialPlan,
+    failed: EditorialSelection,
+    briefs: list[EditorialSelection],
+    events: list[Event],
+    config: PipelineConfig,
+) -> EditorialPlan | None:
+    tier_rank = {EditorialTier.LEAD: 0, EditorialTier.FOLLOW: 1, EditorialTier.BRIEF: 2}
+    for candidate in briefs:
+        swapped: list[EditorialSelection] = []
+        for item in plan.selections:
+            if item.event_id == failed.event_id:
+                swapped.append(item.model_copy(update={"tier": EditorialTier.BRIEF}))
+            elif item.event_id == candidate.event_id:
+                swapped.append(item.model_copy(update={"tier": failed.tier}))
+            else:
+                swapped.append(item)
+        swapped.sort(key=lambda item: (tier_rank[item.tier], -item.importance))
+        proposal = plan.model_copy(update={"selections": swapped})
+        if any(not item["passed"] for item in _detail_evidence_audit(proposal, events)):
+            continue
+        try:
+            validate_editorial_plan(proposal, events, config)
+        except ValueError:
+            continue
+        return proposal
+    return None
