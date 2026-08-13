@@ -5,7 +5,7 @@ import yaml
 from pydantic import ValidationError
 
 from ai_daily.config import AppConfig, load_config
-from ai_daily.models import ModelsConfig
+from ai_daily.models import ModelsConfig, SourceConfig, SourceTier
 
 
 def test_project_config_loads_without_secrets() -> None:
@@ -58,3 +58,24 @@ def test_normal_editorial_run_must_fit_model_request_budget() -> None:
 
     with pytest.raises(ValidationError, match="request budget"):
         AppConfig.model_validate(value)
+
+
+def test_huggingface_model_source_requires_namespace() -> None:
+    with pytest.raises(ValidationError, match="require namespace"):
+        SourceConfig(
+            name="models",
+            kind="huggingface_models",
+            url="https://huggingface.co/api/models",
+            tier=SourceTier.A,
+        )
+
+
+def test_namespace_is_rejected_for_unrelated_source_kinds() -> None:
+    with pytest.raises(ValidationError, match="only valid"):
+        SourceConfig(
+            name="feed",
+            kind="rss",
+            url="https://example.com/feed",
+            tier=SourceTier.A,
+            namespace="Qwen",
+        )

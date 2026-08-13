@@ -224,6 +224,9 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "brief 是值得知道但无需展开的消息。"
         "相同事件、同一漏洞的多版本修复、同一发布的转述只能出现一次。"
         "优先真实产品/模型发布、能力或价格变化、重要公司与政策事件、广泛采用的开源工具；"
+        "sources.metrics.timestamp_kind 为 repository_last_modified 时，"
+        "只能把时间描述为官方仓库更新；"
+        "除非证据另有明确发布日期，不能把该时间改写为模型首次发布。"
         "孤立论文和常规版本发布不得主导版面。"
         f"详细区前沿研究最多 {config.max_research_details} 条，"
         f"同一来源通常不超过 {config.max_source_details} 条详细稿件；"
@@ -346,6 +349,7 @@ async def _draft_one(
             "why_it_matters 解释影响，不写空泛赞美；action 只有确有可执行建议时才填写。"
             "不要把推测写成事实，信息不足或证据冲突时写入 caveat。"
             "正文证据已优先于 RSS 摘要；不得声称证据未披露实际已经写明的名称、数字或限制。"
+            "若候选时间来自 repository_last_modified，只能称为仓库更新，不能擅自称为首次发布。"
         ),
         prompt=json.dumps(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},

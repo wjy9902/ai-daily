@@ -22,10 +22,12 @@ from ai_daily.models import (
     Publication,
     RawItem,
     RunArtifact,
+    SourceChannel,
     SourceHealth,
     SourceTier,
 )
 from ai_daily.normalize import (
+    canonicalize_url,
     cluster_items,
     is_ai_related,
     remove_historical,
@@ -47,19 +49,22 @@ DETAIL_EVIDENCE_MIN_CHARS = 800
 def filter_fresh_items(
     items: list[RawItem], cutoff: datetime, run_time: datetime, timezone: ZoneInfo
 ) -> tuple[list[RawItem], dict[str, object]]:
+    relevant = [item for item in items if is_ai_related(item)]
     accepted: list[RawItem] = []
+    accepted_corroboration: list[dict[str, str]] = []
     rejected_undated: list[dict[str, str]] = []
     rejected_outside_window: list[dict[str, str]] = []
     latest_allowed = run_time + timedelta(minutes=5)
-    for item in items:
-        if not is_ai_related(item):
-            continue
+    verified_urls: set[str] = set()
+    for item in relevant:
         item_summary = {
             "source": item.source,
             "title": item.title,
             "url": str(item.url),
         }
         if item.published_at is None:
+            if item.source_channel == SourceChannel.COMMUNITY:
+                continue
             rejected_undated.append(item_summary)
             continue
         published_at = item.published_at.astimezone(timezone)
@@ -69,11 +74,30 @@ def filter_fresh_items(
             )
             continue
         accepted.append(item)
+        verified_urls.add(canonicalize_url(str(item.url)))
+    for item in relevant:
+        if item.published_at is not None or item.source_channel != SourceChannel.COMMUNITY:
+            continue
+        item_summary = {
+            "source": item.source,
+            "title": item.title,
+            "url": str(item.url),
+        }
+        observed_at = item.discovered_at.astimezone(timezone)
+        if (
+            cutoff <= observed_at <= latest_allowed
+            and canonicalize_url(str(item.url)) in verified_urls
+        ):
+            accepted.append(item)
+            accepted_corroboration.append(item_summary)
+        else:
+            rejected_undated.append(item_summary)
     return accepted, {
-        "policy": "verified-publication-time-only",
+        "policy": "verified-publication-time-with-exact-url-community-corroboration",
         "cutoff": cutoff.isoformat(),
         "run_time": run_time.isoformat(),
         "accepted_count": len(accepted),
+        "accepted_corroboration": accepted_corroboration,
         "rejected_undated": rejected_undated,
         "rejected_outside_window": rejected_outside_window,
     }

@@ -49,6 +49,7 @@ class SourceConfig(StrictModel):
         "github_releases",
         "arxiv",
         "huggingface",
+        "huggingface_models",
         "html_index",
     ]
     url: HttpUrl
@@ -57,6 +58,7 @@ class SourceConfig(StrictModel):
     region: SourceRegion = SourceRegion.GLOBAL
     ai_focused: bool = True
     link_pattern: str | None = Field(default=None, max_length=300)
+    namespace: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]+$", max_length=80)
     enabled: bool = True
     limit: int = Field(default=30, ge=1, le=100)
     timeout_seconds: float = Field(default=20, gt=0, le=60)
@@ -67,6 +69,10 @@ class SourceConfig(StrictModel):
             raise ValueError("html_index sources require link_pattern")
         if self.kind != "html_index" and self.link_pattern:
             raise ValueError("link_pattern is only valid for html_index sources")
+        if self.kind == "huggingface_models" and not self.namespace:
+            raise ValueError("huggingface_models sources require namespace")
+        if self.kind != "huggingface_models" and self.namespace:
+            raise ValueError("namespace is only valid for huggingface_models sources")
         if self.url.scheme != "https":
             raise ValueError("sources require HTTPS")
         return self

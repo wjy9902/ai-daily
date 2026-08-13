@@ -281,6 +281,14 @@ def _normalized_host(value: str) -> str:
 
 
 def _article_url_allowed(source: SourceConfig, item: RawItem) -> bool:
+    if source.kind == "huggingface_models":
+        path_parts = [part for part in urlsplit(str(item.url)).path.split("/") if part]
+        return (
+            item.source == source.name
+            and _normalized_host(str(item.url)) == _normalized_host(str(source.url))
+            and len(path_parts) == 2
+            and path_parts[0] == source.namespace
+        )
     if source.kind not in {"rss", "html_index"}:
         return False
     item_parts = urlsplit(str(item.url))
@@ -421,7 +429,9 @@ class Collector:
             items = result.items if isinstance(result, PartialSourceResult) else result
             if not items:
                 raise SourceCollectionError("source returned no usable items")
-            if not any(item.published_at is not None for item in items):
+            if source.channel != SourceChannel.COMMUNITY and not any(
+                item.published_at is not None for item in items
+            ):
                 raise SourceCollectionError("source returned no verified publication dates")
             health = SourceHealth(
                 source=source.name,
@@ -613,7 +623,6 @@ class Collector:
             return cast(dict[str, Any], response.json())
 
         values = await asyncio.gather(*(fetch_item(item_id) for item_id in ids))
-        now = datetime.now(UTC)
         return [
             RawItem(
                 **_source_fields(source),
@@ -623,8 +632,8 @@ class Collector:
                 ),
                 title=item["title"],
                 summary="",
-                published_at=datetime.fromtimestamp(item["time"], tz=UTC),
-                discovered_at=now,
+                published_at=None,
+                discovered_at=datetime.fromtimestamp(item["time"], tz=UTC),
                 author=item.get("by"),
                 metrics={"score": item.get("score", 0), "comments": item.get("descendants", 0)},
             )
@@ -697,6 +706,56 @@ class Collector:
                     published_at=_published(paper.get("publishedAt")),
                     discovered_at=now,
                     metrics={"upvotes": value.get("numUpvotes", 0)},
+                )
+            )
+        return items
+
+    async def _fetch_huggingface_models(self, source: SourceConfig) -> list[RawItem]:
+        response = await self._get(
+            source,
+            params={
+                "author": source.namespace,
+                "sort": "lastModified",
+                "direction": "-1",
+                "limit": source.limit,
+            },
+        )
+        now = datetime.now(UTC)
+        items: list[RawItem] = []
+        for value in response.json():
+            model_id = value.get("modelId") or value.get("id")
+            tags = [str(tag) for tag in value.get("tags", [])]
+            if (
+                not model_id
+                or not str(model_id).startswith(f"{source.namespace}/")
+                or value.get("private")
+                or any(tag.startswith("base_model:quantized:") for tag in tags)
+            ):
+                continue
+            updated = _published(value.get("lastModified"))
+            if updated is None:
+                continue
+            name = str(model_id).split("/", 1)[1]
+            summary = (
+                f"Official {source.namespace} model repository changed at "
+                f"{updated.isoformat()}. Model: {model_id}. "
+                f"Task: {value.get('pipeline_tag') or 'unspecified'}. "
+                f"Tags: {', '.join(tags[:20])}."
+            )
+            items.append(
+                RawItem(
+                    **_source_fields(source),
+                    source_item_id=f"{model_id}@{value.get('sha') or updated.isoformat()}",
+                    url=HttpUrl(f"https://huggingface.co/{model_id}"),
+                    title=f"{source.display_name or source.namespace}: {name} repository update",
+                    summary=summary[:ARTICLE_TEXT_LIMIT],
+                    published_at=updated,
+                    discovered_at=now,
+                    metrics={
+                        "likes": value.get("likes", 0),
+                        "downloads": value.get("downloads", 0),
+                        "timestamp_kind": "repository_last_modified",
+                    },
                 )
             )
         return items

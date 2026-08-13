@@ -44,6 +44,15 @@ sources:
     channel: official
     region: china
     limit: 20
+  - name: qwen-huggingface-models
+    display_name: Qwen 官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: Qwen
+    tier: A
+    channel: official
+    region: china
+    limit: 10
   - name: mistral-news
     display_name: Mistral AI
     kind: rss

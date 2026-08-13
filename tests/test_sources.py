@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import httpx
 import pytest
 
-from ai_daily.models import Event, RawItem, SourceConfig, SourceTier
+from ai_daily.models import Event, RawItem, SourceChannel, SourceConfig, SourceTier
 from ai_daily.sources import ARTICLE_RESPONSE_BYTES, MAX_RESPONSE_BYTES, Collector
 
 
@@ -671,10 +671,59 @@ async def test_hackernews_adapter_uses_public_api() -> None:
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     source = SourceConfig(
-        name="hn", kind="hackernews", url="https://hacker-news.firebaseio.com/v0", tier=SourceTier.B
+        name="hn",
+        kind="hackernews",
+        url="https://hacker-news.firebaseio.com/v0",
+        tier=SourceTier.B,
+        channel=SourceChannel.COMMUNITY,
     )
-    items, _ = await Collector(client).collect([source])
+    items, health = await Collector(client).collect([source])
     assert str(items[0].url).startswith("https://news.ycombinator.com/item?id=1")
+    assert items[0].published_at is None
+    assert items[0].discovered_at == datetime.fromtimestamp(1786492800, tz=UTC)
+    assert health[0].status == "ok"
+
+
+async def test_huggingface_model_change_watch_uses_official_update_time() -> None:
+    values = [
+        {
+            "id": "Qwen/Qwen3.8-2.4T-A95B",
+            "modelId": "Qwen/Qwen3.8-2.4T-A95B",
+            "lastModified": "2026-08-12T10:24:04Z",
+            "sha": "abc123",
+            "pipeline_tag": "text-generation",
+            "tags": ["transformers", "text-generation"],
+            "likes": 635,
+            "downloads": 978,
+        },
+        {
+            "id": "Qwen/Qwen3.8-2.4T-A95B-FP8",
+            "modelId": "Qwen/Qwen3.8-2.4T-A95B-FP8",
+            "lastModified": "2026-08-12T10:23:42Z",
+            "tags": ["base_model:quantized:Qwen/Qwen3.8-2.4T-A95B"],
+        },
+    ]
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=values))
+    )
+    source = SourceConfig(
+        name="qwen-models",
+        display_name="Qwen Official Models",
+        kind="huggingface_models",
+        url="https://huggingface.co/api/models",
+        namespace="Qwen",
+        tier=SourceTier.A,
+        channel=SourceChannel.OFFICIAL,
+    )
+
+    items, health = await Collector(client).collect([source])
+
+    assert [item.title for item in items] == [
+        "Qwen Official Models: Qwen3.8-2.4T-A95B repository update"
+    ]
+    assert items[0].published_at == datetime(2026, 8, 12, 10, 24, 4, tzinfo=UTC)
+    assert items[0].metrics["timestamp_kind"] == "repository_last_modified"
+    assert health[0].status == "ok"
 
 
 async def test_html_index_fetches_first_party_article_metadata() -> None:

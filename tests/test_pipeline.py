@@ -20,6 +20,7 @@ from ai_daily.models import (
     Event,
     JudgeDecision,
     RawItem,
+    SourceChannel,
     SourceConfig,
     SourceHealth,
     SourceTier,
@@ -307,9 +308,53 @@ async def test_candidate_filter_rejects_unverified_publication_dates(
         )
 
     audit = json.loads((tmp_path / "freshness.json").read_text())
-    assert audit["policy"] == "verified-publication-time-only"
+    assert audit["policy"] == ("verified-publication-time-with-exact-url-community-corroboration")
     assert audit["accepted_count"] == 0
     assert len(audit["rejected_undated"]) == len(undated)
+
+
+def test_community_submission_time_only_corrobates_exact_verified_url() -> None:
+    timezone = ZoneInfo("Asia/Shanghai")
+    run_time = datetime(2026, 8, 13, 4, 20, tzinfo=timezone)
+    official = RawItem(
+        source="qwen-models",
+        source_label="Qwen Official Models",
+        source_tier=SourceTier.A,
+        source_channel=SourceChannel.OFFICIAL,
+        source_item_id="official",
+        url="https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B",
+        title="Qwen model repository update",
+        published_at=run_time - timedelta(hours=2),
+        discovered_at=run_time,
+    )
+    matching = RawItem(
+        source="hacker-news",
+        source_label="Hacker News",
+        source_tier=SourceTier.B,
+        source_channel=SourceChannel.COMMUNITY,
+        source_item_id="matching",
+        url=official.url,
+        title="Qwen3.8-2.4T-A95B",
+        published_at=None,
+        discovered_at=run_time - timedelta(hours=1),
+    )
+    unrelated = matching.model_copy(
+        update={
+            "source_item_id": "unrelated",
+            "url": "https://example.com/unverified-ai-news",
+        }
+    )
+
+    accepted, audit = filter_fresh_items(
+        [matching, unrelated, official],
+        run_time - timedelta(hours=36),
+        run_time,
+        timezone,
+    )
+
+    assert accepted == [official, matching]
+    assert [item["url"] for item in audit["accepted_corroboration"]] == [str(matching.url)]  # type: ignore[index]
+    assert [item["url"] for item in audit["rejected_undated"]] == [str(unrelated.url)]  # type: ignore[index]
 
 
 async def test_backfill_scores_against_target_date_not_wall_clock(
