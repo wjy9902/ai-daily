@@ -142,11 +142,33 @@ class DuplicateJudgeGateway(FakeGateway):
         return value
 
 
+class IncompleteThenValidJudgeGateway(FakeGateway):
+    async def generate(
+        self, role: str, output_type: type[BaseModel], instructions: str, prompt: str
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, JudgeBatch) and self.calls == 1:
+            return JudgeBatch(decisions=value.decisions[:-1])
+        return value
+
+
+async def test_judge_repairs_an_incomplete_semantic_output_once() -> None:
+    gateway = IncompleteThenValidJudgeGateway()
+    events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(2)]
+
+    decisions = await judge_events(gateway, events)  # type: ignore[arg-type]
+
+    assert gateway.calls == 2
+    assert {decision.event_id for decision in decisions} == {"event-0", "event-1"}
+
+
 async def test_judge_must_return_each_event_exactly_once() -> None:
+    gateway = DuplicateJudgeGateway()
     try:
-        await judge_events(DuplicateJudgeGateway(), [event()])  # type: ignore[arg-type]
+        await judge_events(gateway, [event()])  # type: ignore[arg-type]
     except ValueError as error:
         assert "exactly once" in str(error)
+        assert gateway.calls == 2
     else:
         raise AssertionError("duplicate judge decision was accepted")
 
