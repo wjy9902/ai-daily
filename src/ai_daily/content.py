@@ -148,14 +148,18 @@ async def plan_digest(
         prompt=json.dumps(payload, ensure_ascii=False),
         validator=lambda value: validate_editorial_plan(
             _drop_unselected_viewpoints(
-                _normalize_repository_plan(_materialize_editorial_plan(value), events)
+                _normalize_plan_copy(
+                    _normalize_repository_plan(_materialize_editorial_plan(value), events)
+                )
             ),
             events,
             config,
         ),
     )
     plan = _drop_unselected_viewpoints(
-        _normalize_repository_plan(_materialize_editorial_plan(output), events)
+        _normalize_plan_copy(
+            _normalize_repository_plan(_materialize_editorial_plan(output), events)
+        )
     )
     validate_editorial_plan(plan, events, config)
     return plan
@@ -227,6 +231,31 @@ def _drop_unselected_viewpoints(plan: EditorialPlan) -> EditorialPlan:
         if set(insight.evidence_ids) <= selected_evidence
     ]
     return plan.model_copy(update={"editor_viewpoint": insights})
+
+
+def _normalize_plan_copy(plan: EditorialPlan) -> EditorialPlan:
+    selections = [
+        selection.model_copy(
+            update={
+                "headline": _drop_speculative_clauses(selection.headline),
+                "brief": _drop_speculative_clauses(selection.brief),
+            }
+        )
+        for selection in plan.selections
+    ]
+    return plan.model_copy(
+        update={
+            "today_highlight": _deterministic_highlight(selections),
+            "selections": selections,
+        }
+    )
+
+
+def _drop_speculative_clauses(value: str) -> str:
+    separator = "；" if "；" in value or "。" not in value else "。"
+    clauses = [clause.strip() for clause in re.split(r"[；。]", value) if clause.strip()]
+    verified = [clause for clause in clauses if not SPECULATIVE_COPY_RE.search(clause)]
+    return separator.join(verified)
 
 
 def _normalize_repository_plan(plan: EditorialPlan, events: list[Event]) -> EditorialPlan:
@@ -366,6 +395,11 @@ def validate_editorial_plan(
 def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     for selection in plan.selections:
         for field, value in (("headline", selection.headline), ("brief", selection.brief)):
+            if not value.strip():
+                raise ValueError(
+                    f"editorial plan {field} has no verified factual copy: "
+                    f"event_id={selection.event_id}"
+                )
             if SPECULATIVE_COPY_RE.search(value):
                 raise ValueError(
                     f"editorial plan {field} contains unverified speculation: "

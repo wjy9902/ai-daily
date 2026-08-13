@@ -552,9 +552,35 @@ async def test_global_editor_normalizes_repository_update_copy() -> None:
     )
 
     assert result.selections[0].headline == "Qwen开源权重更新"
-    assert result.selections[0].brief == "官方更新Qwen开源权重。"
+    assert result.selections[0].brief == "官方更新Qwen开源权重"
     assert result.editor_viewpoint[0].text == "Qwen更新推动开源生态。"
     assert result.today_highlight.startswith("Qwen开源权重更新；")
+
+
+async def test_global_editor_drops_speculative_brief_clause() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=True,
+            category="模型与平台",
+            relevance=80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for value in events
+    ]
+    plan_value = valid_global_plan()
+    plan_value.selections[0].brief = (
+        "模型已通过API提供；权重可能随后发布；支持三档推理等级。"
+    )
+
+    result = await plan_digest(  # type: ignore[arg-type]
+        PlanningGateway(plan_value), events, decisions, load_config(Path("config")).pipeline
+    )
+
+    assert result.selections[0].brief == "模型已通过API提供；支持三档推理等级"
 
 
 async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> None:
