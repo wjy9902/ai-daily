@@ -472,7 +472,7 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "speculative-headline":
         plan_value.selections[0].headline = "新模型或随后发布开源权重"
     elif mutation == "speculative-brief":
-        plan_value.selections[0].brief = "官方尚未证实，预计本周推出。"
+        plan_value.selections[0].brief = "暂无权重确认，但社区认为开源可能性高。"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 

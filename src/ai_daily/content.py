@@ -37,7 +37,7 @@ JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
 PLANNING_EVIDENCE_EXCERPT_CHARS = 800
 DRAFT_EVIDENCE_EXCERPT_CHARS = 4_000
 SPECULATIVE_COPY_RE = re.compile(
-    r"(?:传闻|尚未证实|据猜测|推测|或将|或随后|"
+    r"(?:传闻|尚未证实|据猜测|推测|可能性(?:较?高|较?大)|或将|或随后|"
     r"(?:可能|也许|预计|有望).{0,16}(?:发布|推出|上线|开放|宣布|融资|收购|合并))"
 )
 DRAFT_SPECULATION_RE = re.compile(
