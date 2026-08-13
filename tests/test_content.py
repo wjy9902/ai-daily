@@ -449,6 +449,33 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
     assert gateway.output_schema["properties"]["brief"]["minItems"] == 8
 
 
+async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> None:
+    events = [numbered_event(index) for index in range(18)]
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=True,
+            category="模型与平台",
+            relevance=80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for value in events
+    ]
+    plan_value = valid_global_plan()
+    plan_value.editor_viewpoint.append(
+        EditorialInsight(text="未入选新闻观察。", evidence_ids=["event-17-1"])
+    )
+
+    result = await plan_digest(  # type: ignore[arg-type]
+        PlanningGateway(plan_value), events, decisions, load_config(Path("config")).pipeline
+    )
+
+    assert len(result.editor_viewpoint) == 2
+    assert all("event-17-1" not in item.evidence_ids for item in result.editor_viewpoint)
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     [

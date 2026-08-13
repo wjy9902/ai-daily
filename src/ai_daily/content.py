@@ -144,10 +144,10 @@ async def plan_digest(
         instructions=_planning_instructions(config),
         prompt=json.dumps(payload, ensure_ascii=False),
         validator=lambda value: validate_editorial_plan(
-            _materialize_editorial_plan(value), events, config
+            _drop_unselected_viewpoints(_materialize_editorial_plan(value)), events, config
         ),
     )
-    plan = _materialize_editorial_plan(output)
+    plan = _drop_unselected_viewpoints(_materialize_editorial_plan(output))
     validate_editorial_plan(plan, events, config)
     return plan
 
@@ -206,6 +206,18 @@ def _deterministic_highlight(selections: list[EditorialSelection]) -> str:
     if len(highlight) <= 300:
         return highlight
     return "；".join(lead_headlines[:3])[:300].rstrip("；")
+
+
+def _drop_unselected_viewpoints(plan: EditorialPlan) -> EditorialPlan:
+    selected_evidence = {
+        evidence_id for selection in plan.selections for evidence_id in selection.evidence_ids
+    }
+    insights = [
+        insight
+        for insight in plan.editor_viewpoint
+        if set(insight.evidence_ids) <= selected_evidence
+    ]
+    return plan.model_copy(update={"editor_viewpoint": insights})
 
 
 def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, object]:
@@ -308,6 +320,8 @@ def _validate_factual_copy(plan: EditorialPlan) -> None:
 
 
 def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
+    if not 2 <= len(plan.editor_viewpoint) <= 4:
+        raise ValueError("editorial plan must retain 2-4 grounded viewpoints")
     selected_evidence: set[str] = set()
     repository_evidence: set[str] = set()
     for selection in plan.selections:
