@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -8,7 +9,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import HttpUrl
 
-from ai_daily.models import Event, RawItem
+from ai_daily.history import HistoricalIndex
+from ai_daily.models import Event, RawItem, SourceChannel
 
 TRACKING_PARAMS = {
     "fbclid",
@@ -18,7 +20,82 @@ TRACKING_PARAMS = {
     "ref",
     "source",
 }
-TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+-]{1,}|[\u4e00-\u9fff]{2,}", re.IGNORECASE)
+LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+-]{1,}", re.IGNORECASE)
+CHINESE_RE = re.compile(r"[\u4e00-\u9fff]{2,}")
+STRONG_IDENTIFIER_RE = re.compile(r"\b(?:CVE-\d{4}-\d+|GHSA-[a-z0-9-]+)\b", re.IGNORECASE)
+STOPWORDS = {
+    "about",
+    "after",
+    "announcing",
+    "introducing",
+    "launches",
+    "new",
+    "release",
+    "released",
+    "the",
+    "with",
+    "发布",
+    "推出",
+    "正式",
+}
+AI_TOKENS = {
+    "agent",
+    "agents",
+    "ai",
+    "anthropic",
+    "chatgpt",
+    "claude",
+    "copilot",
+    "cuda",
+    "deepseek",
+    "diffusion",
+    "gemini",
+    "gpt",
+    "grok",
+    "inference",
+    "jax",
+    "llama",
+    "llm",
+    "llms",
+    "manus",
+    "mcp",
+    "multimodal",
+    "nemotron",
+    "openai",
+    "pytorch",
+    "qwen",
+    "rag",
+    "robotics",
+    "tensorflow",
+    "transformer",
+    "vllm",
+    "worldclaw",
+}
+AI_PHRASES = (
+    "artificial intelligence",
+    "foundation model",
+    "large language model",
+    "machine learning",
+    "neural network",
+    "model context protocol",
+    "vibe coding",
+    "人工智能",
+    "大模型",
+    "多模态",
+    "具身智能",
+    "智能体",
+    "机器学习",
+    "模型推理",
+    "生成式",
+)
+CHANNEL_PRIORITY = {
+    SourceChannel.OFFICIAL: 0,
+    SourceChannel.NEWS: 1,
+    SourceChannel.COMMUNITY: 2,
+    SourceChannel.RELEASE: 3,
+    SourceChannel.RESEARCH: 4,
+}
+COMMUNITY_DISCOVERY_SCORE = 100
 
 
 def canonicalize_url(value: str) -> str:
@@ -40,7 +117,34 @@ def canonicalize_url(value: str) -> str:
 
 
 def title_tokens(title: str) -> set[str]:
-    return {token.lower() for token in TOKEN_RE.findall(title)}
+    latin = {token.lower() for token in LATIN_TOKEN_RE.findall(title)} - STOPWORDS
+    chinese: set[str] = set()
+    for sequence in CHINESE_RE.findall(title):
+        if sequence in STOPWORDS:
+            continue
+        chinese.update(sequence[index : index + 2] for index in range(len(sequence) - 1))
+    return (latin | chinese) - STOPWORDS
+
+
+def story_identifiers(item: RawItem) -> set[str]:
+    text = f"{item.title} {item.summary[:1200]}"
+    return {value.lower() for value in STRONG_IDENTIFIER_RE.findall(text)}
+
+
+def is_ai_related(item: RawItem) -> bool:
+    if item.source_ai_focused:
+        return True
+    text = f"{item.title} {item.summary[:1500]}".lower()
+    tokens = {token.lower() for token in LATIN_TOKEN_RE.findall(text)}
+    has_ai_signal = bool(tokens & AI_TOKENS) or any(phrase in text for phrase in AI_PHRASES)
+    return has_ai_signal or _is_high_signal_community_item(item)
+
+
+def _is_high_signal_community_item(item: RawItem) -> bool:
+    if item.source_channel != SourceChannel.COMMUNITY:
+        return False
+    score = item.metrics.get("score", 0)
+    return isinstance(score, (int, float)) and score >= COMMUNITY_DISCOVERY_SCORE
 
 
 def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
@@ -48,12 +152,19 @@ def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
     right_time = right.published_at or right.discovered_at
     if abs(left_time - right_time) > window:
         return False
-    left_tokens = title_tokens(left.title)
-    right_tokens = title_tokens(right.title)
+    identifiers = story_identifiers(left) & story_identifiers(right)
+    if identifiers:
+        return True
+    if left.source == right.source and left.source_channel == SourceChannel.RELEASE:
+        return False
+    left_tokens = title_tokens(f"{left.title} {left.summary[:300]}")
+    right_tokens = title_tokens(f"{right.title} {right.summary[:300]}")
     if not left_tokens or not right_tokens:
         return False
-    overlap = len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
-    return overlap >= 0.72
+    intersection = len(left_tokens & right_tokens)
+    jaccard = intersection / len(left_tokens | right_tokens)
+    containment = intersection / min(len(left_tokens), len(right_tokens))
+    return jaccard >= 0.38 and containment >= 0.55
 
 
 def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
@@ -61,20 +172,19 @@ def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
     for item in items:
         by_url[canonicalize_url(str(item.url))].append(item)
 
-    groups: list[list[RawItem]] = list(by_url.values())
-    merged: list[list[RawItem]] = []
-    window = timedelta(hours=window_hours)
-    for group in groups:
-        for existing in merged:
-            if _similar(group[0], existing[0], window):
-                existing.extend(group)
-                break
-        else:
-            merged.append(group)
+    groups = _connected_groups(list(by_url.values()), timedelta(hours=window_hours))
 
     events = []
-    for group in merged:
-        primary = min(group, key=lambda item: (item.source_tier.value, -len(item.summary)))
+    for group in groups:
+        primary = min(
+            group,
+            key=lambda item: (
+                item.source_tier.value,
+                CHANNEL_PRIORITY[item.source_channel],
+                -len(item.summary),
+            ),
+        )
+        ordered = [primary, *(item for item in group if item is not primary)]
         canonical = canonicalize_url(str(primary.url))
         event_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
         events.append(
@@ -83,36 +193,79 @@ def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
                 canonical_url=HttpUrl(canonical),
                 title=primary.title,
                 summary=primary.summary,
-                published_at=primary.published_at,
-                items=group,
+                published_at=max(
+                    (item.published_at for item in group if item.published_at), default=None
+                ),
+                items=ordered,
             )
         )
     return events
+
+
+def _connected_groups(groups: list[list[RawItem]], window: timedelta) -> list[list[RawItem]]:
+    parents = list(range(len(groups)))
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for right in range(len(groups)):
+        for left in range(right):
+            if any(_similar(a, b, window) for a in groups[left] for b in groups[right]):
+                parents[root(right)] = root(left)
+    components: dict[int, list[RawItem]] = defaultdict(list)
+    for index, group in enumerate(groups):
+        components[root(index)].extend(group)
+    return list(components.values())
 
 
 def score_events(events: list[Event], now: datetime) -> list[Event]:
     scored = []
     for event in events:
         tiers = {item.source_tier.value for item in event.items}
-        source_score = 30 if "A" in tiers else 20 if "B" in tiers else 10
-        age = now - (event.published_at or event.items[0].discovered_at)
-        recency = max(0, 25 - age.total_seconds() / 3600)
-        corroboration = min(20, (len({item.source for item in event.items}) - 1) * 10)
+        channels = {item.source_channel for item in event.items}
+        tier_score = 12 if "A" in tiers else 8 if "B" in tiers else 4
+        channel_score = max(_channel_score(channel) for channel in channels)
+        age = now - (event.published_at or event.primary_item.discovered_at)
+        recency = max(0, 20 - age.total_seconds() / 3600 / 2)
+        corroboration = min(18, (len({item.source for item in event.items}) - 1) * 7)
         text = f"{event.title} {event.summary}".lower()
-        action_terms = ("release", "launch", "api", "model", "open source", "发布", "开源", "模型")
-        actionability = 15 if any(term in text for term in action_terms) else 5
-        metrics = sum(
-            float(value)
-            for item in event.items
-            for value in item.metrics.values()
-            if isinstance(value, (int, float))
+        action_terms = (
+            "api",
+            "available",
+            "launch",
+            "model",
+            "open source",
+            "pricing",
+            "release",
+            "发布",
+            "上线",
+            "开源",
+            "模型",
+            "降价",
         )
-        popularity = min(10, metrics / 50)
+        actionability = 12 if any(term in text for term in action_terms) else 4
+        popularity = min(6, math.log1p(_numeric_metrics(event)) / 1.2)
+        research_penalty = 10 if channels == {SourceChannel.RESEARCH} else 0
+        release_penalty = 4 if channels == {SourceChannel.RELEASE} else 0
         scored.append(
             event.model_copy(
                 update={
                     "score": min(
-                        100, source_score + recency + corroboration + actionability + popularity
+                        100,
+                        max(
+                            0,
+                            tier_score
+                            + channel_score
+                            + recency
+                            + corroboration
+                            + actionability
+                            + popularity
+                            - research_penalty
+                            - release_penalty,
+                        ),
                     )
                 }
             )
@@ -120,10 +273,89 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
     return sorted(scored, key=lambda event: event.score, reverse=True)
 
 
-def remove_historical(events: list[Event], historical_urls: set[str]) -> list[Event]:
-    canonical_history = {canonicalize_url(url) for url in historical_urls}
+def select_candidate_pool(
+    events: list[Event],
+    limit: int,
+    research_limit: int,
+    release_limit: int,
+) -> list[Event]:
+    """Keep high-value general news visible during paper or release surges."""
+    channel_limits = {
+        SourceChannel.RESEARCH: research_limit,
+        SourceChannel.RELEASE: release_limit,
+    }
+    channel_counts: dict[SourceChannel, int] = defaultdict(int)
+    selected: list[Event] = []
+    deferred: list[Event] = []
+    for event in events:
+        channel = _event_channel(event)
+        channel_limit = channel_limits.get(channel)
+        if channel_limit is not None and channel_counts[channel] >= channel_limit:
+            deferred.append(event)
+            continue
+        selected.append(event)
+        channel_counts[channel] += 1
+        if len(selected) == limit:
+            return selected
+    selected.extend(deferred[: limit - len(selected)])
+    return sorted(selected, key=lambda event: event.score, reverse=True)
+
+
+def _event_channel(event: Event) -> SourceChannel:
+    return min(
+        (item.source_channel for item in event.items),
+        key=lambda channel: CHANNEL_PRIORITY[channel],
+    )
+
+
+def _channel_score(channel: SourceChannel) -> int:
+    return {
+        SourceChannel.OFFICIAL: 30,
+        SourceChannel.NEWS: 24,
+        SourceChannel.RELEASE: 18,
+        SourceChannel.COMMUNITY: 16,
+        SourceChannel.RESEARCH: 12,
+    }[channel]
+
+
+def _numeric_metrics(event: Event) -> float:
+    return sum(
+        float(value)
+        for item in event.items
+        for value in item.metrics.values()
+        if isinstance(value, (int, float))
+    )
+
+
+def remove_historical(events: list[Event], history: HistoricalIndex) -> list[Event]:
+    canonical_history = {canonicalize_url(url) for url in history.urls}
     return [
         event
         for event in events
         if canonicalize_url(str(event.canonical_url)) not in canonical_history
+        and not any(_title_match(event.title, title) for title in history.titles)
     ]
+
+
+def _title_match(left: str, right: str) -> bool:
+    left_product_ids = _product_identifiers(left)
+    right_product_ids = _product_identifiers(right)
+    if (left_product_ids or right_product_ids) and left_product_ids != right_product_ids:
+        return False
+    left_tokens = title_tokens(left)
+    right_tokens = title_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    intersection = len(left_tokens & right_tokens)
+    containment = intersection / min(len(left_tokens), len(right_tokens))
+    jaccard = intersection / len(left_tokens | right_tokens)
+    return containment >= 0.65 and jaccard >= 0.5
+
+
+def _product_identifiers(value: str) -> set[str]:
+    return {
+        token.lower()
+        for token in LATIN_TOKEN_RE.findall(value)
+        if any(character.isalpha() for character in token)
+        and any(character.isdigit() for character in token)
+    }

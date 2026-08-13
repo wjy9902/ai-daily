@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Literal, TypeVar
 
 import httpx
@@ -18,6 +19,16 @@ from ai_daily.config import Secrets
 from ai_daily.models import ModelEndpoint, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
+ModelRole = Literal["judge", "editor"]
+
+
+@dataclass(frozen=True)
+class Invocation:
+    role: ModelRole
+    requested: ModelEndpoint
+    endpoint: ModelEndpoint
+    attempt: int
+    fallback_reason: str | None
 
 
 class MissingProviderSecret(RuntimeError):
@@ -51,7 +62,7 @@ class ModelGateway:
 
     async def generate(
         self,
-        role: Literal["judge", "editor"],
+        role: ModelRole,
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
@@ -59,58 +70,64 @@ class ModelGateway:
         role_config = self.config.roles[role]
         fallback_reason: str | None = None
         for attempt, endpoint in enumerate((role_config.primary, role_config.fallback), start=1):
-            self.ledger.reserve_request()
-            started = self.clock()
+            invocation = Invocation(role, role_config.primary, endpoint, attempt, fallback_reason)
             try:
-                model = self._build_model(endpoint)
-                agent: Agent[None, OutputT] = Agent(
-                    model,
-                    output_type=output_type,
-                    instructions=instructions,
-                    retries=0,
-                )
-                result = await agent.run(
+                return await self._invoke_endpoint(
+                    invocation,
+                    output_type,
+                    instructions,
                     prompt,
-                    model_settings=self._model_settings(endpoint),
-                    usage_limits=UsageLimits(
-                        request_limit=1,
-                        input_tokens_limit=self.config.budget.input_token_limit,
-                        output_tokens_limit=self.config.budget.output_token_limit,
-                    ),
                 )
-                usage = result.usage
-                self.ledger.reconcile_requests(usage.requests)
-                run = self._success_run(
-                    role,
-                    role_config.primary,
-                    endpoint,
-                    attempt,
-                    fallback_reason,
-                    started,
-                    usage.input_tokens,
-                    usage.output_tokens,
-                )
-                self.runs.append(run)
-                self.ledger.record(run)
-                return result.output
             except (UsageLimitExceeded, MissingProviderSecret):
                 raise
             except Exception as error:
-                run = self._failed_run(
-                    role,
-                    role_config.primary,
-                    endpoint,
-                    attempt,
-                    fallback_reason,
-                    started,
-                    error,
-                )
-                self.runs.append(run)
                 if attempt == 1 and is_recoverable(error):
                     fallback_reason = self._safe_error(error)
                     continue
                 raise ModelInvocationFailed(self._safe_error(error)) from error
         raise AssertionError("unreachable")
+
+    async def _invoke_endpoint(
+        self,
+        invocation: Invocation,
+        output_type: type[OutputT],
+        instructions: str,
+        prompt: str,
+    ) -> OutputT:
+        self.ledger.reserve_request()
+        started = self.clock()
+        try:
+            agent: Agent[None, OutputT] = Agent(
+                self._build_model(invocation.endpoint),
+                output_type=output_type,
+                instructions=instructions,
+                retries=0,
+            )
+            result = await agent.run(
+                prompt,
+                model_settings=self._model_settings(invocation.endpoint),
+                usage_limits=UsageLimits(
+                    request_limit=1,
+                    input_tokens_limit=self.config.budget.input_token_limit,
+                    output_tokens_limit=self.config.budget.output_token_limit,
+                ),
+            )
+        except (UsageLimitExceeded, MissingProviderSecret):
+            raise
+        except Exception as error:
+            self.runs.append(self._failed_run(invocation, started, error))
+            raise
+        usage = result.usage
+        self.ledger.reconcile_requests(usage.requests)
+        run = self._success_run(
+            invocation,
+            started,
+            usage.input_tokens,
+            usage.output_tokens,
+        )
+        self.runs.append(run)
+        self.ledger.record(run)
+        return result.output
 
     @staticmethod
     def _model_settings(endpoint: ModelEndpoint) -> ModelSettings:
@@ -140,28 +157,25 @@ class ModelGateway:
 
     def _success_run(
         self,
-        role: Literal["judge", "editor"],
-        requested: ModelEndpoint,
-        endpoint: ModelEndpoint,
-        attempt: int,
-        fallback_reason: str | None,
+        invocation: Invocation,
         started: float,
         input_tokens: int,
         output_tokens: int,
     ) -> ModelRun:
+        endpoint = invocation.endpoint
         cost = (
             input_tokens * endpoint.input_cost_cny_per_million
             + output_tokens * endpoint.output_cost_cny_per_million
         ) / 1_000_000
         return ModelRun(
-            role=role,
-            requested_provider=requested.provider,
-            requested_model=requested.model,
+            role=invocation.role,
+            requested_provider=invocation.requested.provider,
+            requested_model=invocation.requested.model,
             actual_provider=endpoint.provider,
             actual_model=endpoint.model,
-            attempt=attempt,
+            attempt=invocation.attempt,
             status="ok",
-            fallback_reason=fallback_reason,
+            fallback_reason=invocation.fallback_reason,
             latency_ms=int((self.clock() - started) * 1000),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
@@ -170,23 +184,20 @@ class ModelGateway:
 
     def _failed_run(
         self,
-        role: Literal["judge", "editor"],
-        requested: ModelEndpoint,
-        endpoint: ModelEndpoint,
-        attempt: int,
-        fallback_reason: str | None,
+        invocation: Invocation,
         started: float,
         error: Exception,
     ) -> ModelRun:
+        endpoint = invocation.endpoint
         return ModelRun(
-            role=role,
-            requested_provider=requested.provider,
-            requested_model=requested.model,
+            role=invocation.role,
+            requested_provider=invocation.requested.provider,
+            requested_model=invocation.requested.model,
             actual_provider=endpoint.provider,
             actual_model=endpoint.model,
-            attempt=attempt,
+            attempt=invocation.attempt,
             status="failed",
-            fallback_reason=fallback_reason,
+            fallback_reason=invocation.fallback_reason,
             latency_ms=int((self.clock() - started) * 1000),
             input_tokens=0,
             output_tokens=0,

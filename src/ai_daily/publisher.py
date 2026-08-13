@@ -8,6 +8,7 @@ from pydantic import HttpUrl
 
 from ai_daily.assembler import marker
 from ai_daily.models import Publication
+from ai_daily.site_trust import DAILY_LABEL, TRUSTED_BOT, has_daily_marker
 
 
 class GitHubPublisher:
@@ -27,7 +28,7 @@ class GitHubPublisher:
         if expected_marker not in body:
             raise ValueError("publication body is missing its machine marker")
         await self._ensure_daily_label()
-        issue = await self._find(target_date, expected_marker)
+        issue = await self._find(target_date)
         payload = {"title": target_date.isoformat(), "body": body, "labels": ["Daily"]}
         if issue:
             response = await self.client.patch(
@@ -67,7 +68,7 @@ class GitHubPublisher:
 
     async def find_publication(self, target_date: date) -> Publication | None:
         expected_marker = marker(target_date)
-        issue = await self._find(target_date, expected_marker)
+        issue = await self._find(target_date)
         if not issue:
             return None
         return Publication(
@@ -78,22 +79,41 @@ class GitHubPublisher:
             marker=expected_marker,
         )
 
-    async def _find(self, target_date: date, expected_marker: str) -> dict[str, Any] | None:
-        response = await self.client.get(
-            f"https://api.github.com/repos/{self.repository}/issues",
-            headers=self.headers,
-            params={"state": "all", "per_page": 100},
-            timeout=20,
-        )
-        response.raise_for_status()
+    async def _find(self, target_date: date) -> dict[str, Any] | None:
         title_matches = [
             issue
-            for issue in response.json()
+            for issue in await self._issues()
             if "pull_request" not in issue and issue.get("title") == target_date.isoformat()
         ]
-        matches = [issue for issue in title_matches if expected_marker in (issue.get("body") or "")]
-        if title_matches and not matches:
-            raise RuntimeError("an unmarked issue already exists for the target date")
+        matches = [issue for issue in title_matches if self._is_trusted_daily(issue, target_date)]
         if len(matches) > 1:
             raise RuntimeError("multiple daily issues exist for the same date")
         return matches[0] if matches else None
+
+    def _is_trusted_daily(self, issue: dict[str, Any], target_date: date) -> bool:
+        author = (issue.get("user") or {}).get("login")
+        if author == self.repository.split("/", 1)[0]:
+            return True
+        labels = {label.get("name") for label in issue.get("labels") or []}
+        return (
+            author == TRUSTED_BOT
+            and DAILY_LABEL in labels
+            and has_daily_marker(issue.get("body"), target_date.isoformat())
+        )
+
+    async def _issues(self) -> list[dict[str, Any]]:
+        issues: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            response = await self.client.get(
+                f"https://api.github.com/repos/{self.repository}/issues",
+                headers=self.headers,
+                params={"state": "all", "per_page": 100, "page": page},
+                timeout=20,
+            )
+            response.raise_for_status()
+            values = response.json()
+            issues.extend(values)
+            if len(values) < 100:
+                return issues
+            page += 1

@@ -13,3 +13,4 @@ artifacts/
 *.tar.gz
 isite
 zola
+.gstack/

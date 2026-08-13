@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from math import ceil
 from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ai_daily.models import ModelsConfig, PipelineConfig, SourceConfig
+from ai_daily.models import JUDGE_BATCH_SIZE, ModelsConfig, PipelineConfig, SourceConfig
 
 
 class SourcesDocument(BaseModel):
@@ -31,6 +32,22 @@ class AppConfig(BaseModel):
     pipeline: PipelineConfig
     models: ModelsConfig
     sources: list[SourceConfig]
+
+    @model_validator(mode="after")
+    def validate_pipeline_budget(self) -> AppConfig:
+        pipeline = self.pipeline
+        minimum_items = pipeline.lead_min + pipeline.follow_min + pipeline.brief_min
+        if minimum_items > pipeline.candidate_limit:
+            raise ValueError("minimum editorial selections exceed candidate_limit")
+        normal_requests = (
+            ceil(pipeline.candidate_limit / JUDGE_BATCH_SIZE)
+            + 1
+            + pipeline.lead_max
+            + pipeline.follow_max
+        )
+        if normal_requests > self.models.budget.request_limit:
+            raise ValueError("normal editorial run exceeds model request budget")
+        return self
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
