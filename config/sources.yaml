@@ -29,11 +29,10 @@ sources:
     tier: A
     channel: official
     limit: 20
-  - name: microsoft-ai
-    display_name: Microsoft AI
-    kind: html_index
-    url: https://microsoft.ai/blog/
-    link_pattern: '^https://microsoft\.ai/news/[^/]+/?$'
+  - name: microsoft-research
+    display_name: Microsoft Research
+    kind: rss
+    url: https://www.microsoft.com/en-us/research/feed/
     tier: A
     channel: official
     limit: 20
@@ -114,12 +113,11 @@ sources:
     limit: 15
 
   # Broad discovery and independent reporting — used for recall and corroboration.
-  - name: qbitai
-    display_name: 量子位
-    kind: html_index
-    url: https://www.qbitai.com/
-    link_pattern: '^https://www\.qbitai\.com/[0-9]{4}/[0-9]{2}/[0-9]+\.html$'
-    tier: A
+  - name: leiphone
+    display_name: 雷峰网
+    kind: rss
+    url: https://www.leiphone.com/feed
+    tier: B
     channel: news
     region: china
     limit: 30
