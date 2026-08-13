@@ -217,10 +217,12 @@ main > .content > article.post .post__title {
   font-size: 0.8rem;
   left: calc(50% + 420px);
   line-height: 1.55;
+  margin: 0;
   max-height: calc(100vh - 8rem);
   overflow: auto;
   padding: 0.9rem 1rem;
   position: fixed;
+  right: auto;
   top: 6.25rem;
   width: 250px;
   z-index: 10;
