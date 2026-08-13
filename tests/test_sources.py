@@ -18,6 +18,7 @@ from ai_daily.sources import (
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BYTES,
     Collector,
+    _plain_text,
 )
 
 
@@ -59,6 +60,10 @@ async def test_default_collector_uses_browser_compatible_identified_user_agent()
     assert DEFAULT_USER_AGENT.startswith("Mozilla/5.0")
     assert "ai-daily/0.2" in DEFAULT_USER_AGENT
     await collector.client.aclose()
+
+
+def test_plain_text_accepts_whitespace_only_html() -> None:
+    assert _plain_text("   ") == ""
 
 
 async def test_collector_limits_concurrency_per_host() -> None:
@@ -801,6 +806,30 @@ async def test_html_index_extracts_visible_article_date_when_metadata_is_missing
 
     assert health[0].status == "ok"
     assert items[0].published_at.isoformat() == "2026-07-30T00:00:00+00:00"
+
+
+async def test_html_index_parses_china_numeric_article_time_as_beijing_time() -> None:
+    listing = b"<html><body><a href='/news/new-model'>New model</a></body></html>"
+    article = b"""<html><head><meta property='og:title' content='New model'></head>
+    <body><main><h1>New model</h1><p>2026-08-13 16:36:53</p></main></body></html>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=article if request.url.path != "/news" else listing)
+
+    source = SourceConfig(
+        name="china-news",
+        kind="html_index",
+        url="https://example.com/news",
+        link_pattern=r"^https://example\.com/news/[^/]+$",
+        tier=SourceTier.A,
+        region="china",
+    )
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ).collect([source])
+
+    assert health[0].status == "ok"
+    assert items[0].published_at.isoformat() == "2026-08-13T08:36:53+00:00"
 
 
 async def test_html_index_rejects_cross_origin_redirects() -> None:

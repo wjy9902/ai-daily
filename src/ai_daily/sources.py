@@ -8,14 +8,15 @@ import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from email.utils import parsedate_to_datetime
 from typing import Any, TypedDict, cast
 from urllib.parse import urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 import feedparser
 import httpx
-from lxml import html  # type: ignore[import-untyped]
+from lxml import etree, html  # type: ignore[import-untyped]
 from pydantic import HttpUrl
 
 from ai_daily.models import (
@@ -113,6 +114,9 @@ DATE_RE = re.compile(
     r"Dec(?:ember)?)\.?\s+\d{1,2},\s+\d{4})\b",
     re.IGNORECASE,
 )
+NUMERIC_DATE_RE = re.compile(
+    r"\b(20\d{2}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?\b"
+)
 PUBLISHED_META_KEYS = {
     "article:published_time",
     "citation_publication_date",
@@ -135,16 +139,26 @@ ARTICLE_JSONLD_TYPES = {
 }
 
 
-def _published_from_text(value: str) -> datetime | None:
+def _published_from_text(value: str, default_timezone: tzinfo = UTC) -> datetime | None:
     match = DATE_RE.search(value)
-    if not match:
-        return None
-    normalized = re.sub(r"(?i)^([a-z]+)\.", r"\1", match.group(1))
-    for date_format in ("%b %d, %Y", "%B %d, %Y"):
-        try:
-            return datetime.strptime(normalized, date_format).replace(tzinfo=UTC)
-        except ValueError:
-            continue
+    if match:
+        normalized = re.sub(r"(?i)^([a-z]+)\.", r"\1", match.group(1))
+        for date_format in ("%b %d, %Y", "%B %d, %Y"):
+            try:
+                return (
+                    datetime.strptime(normalized, date_format)
+                    .replace(tzinfo=default_timezone)
+                    .astimezone(UTC)
+                )
+            except ValueError:
+                continue
+    if numeric := NUMERIC_DATE_RE.search(value):
+        clock = numeric.group(2) or "00:00:00"
+        return (
+            datetime.fromisoformat(f"{numeric.group(1)}T{clock}")
+            .replace(tzinfo=default_timezone)
+            .astimezone(UTC)
+        )
     return None
 
 
@@ -153,7 +167,7 @@ def _plain_text(value: str) -> str:
         return ""
     try:
         text = html.fromstring(value).text_content()
-    except (ValueError, TypeError):
+    except (etree.ParserError, ValueError, TypeError):
         text = value
     return " ".join(text.split())
 
@@ -174,7 +188,9 @@ def _meta(document: html.HtmlElement, property_name: str) -> str:
     return str(values[0]).strip() if values else ""
 
 
-def _published_from_document(document: html.HtmlElement) -> datetime | None:
+def _published_from_document(
+    document: html.HtmlElement, default_timezone: tzinfo = UTC
+) -> datetime | None:
     for element in document.xpath("//meta[@content]"):
         key = str(
             element.get("property") or element.get("name") or element.get("itemprop") or ""
@@ -196,7 +212,7 @@ def _published_from_document(document: html.HtmlElement) -> datetime | None:
         if parsed := _published(value):
             return parsed
     text = " ".join(" ".join(containers[0].itertext()).split())[:2000]
-    return _published_from_text(text)
+    return _published_from_text(text, default_timezone)
 
 
 def _iter_jsonld_articles(value: Any) -> Iterator[dict[str, Any]]:
@@ -803,13 +819,17 @@ class Collector:
         document = html.fromstring(response.content, base_url=url)
         title = _meta(document, "og:title") or _plain_text(document.findtext(".//title") or "")
         summary = _meta(document, "og:description")
+        default_timezone = (
+            ZoneInfo("Asia/Shanghai") if source.region == SourceRegion.CHINA else UTC
+        )
         return RawItem(
             **_source_fields(source),
             source_item_id=url,
             url=HttpUrl(url),
             title=title,
             summary=_plain_text(summary or listing_text)[:ARTICLE_TEXT_LIMIT],
-            published_at=_published_from_document(document) or _published_from_text(listing_text),
+            published_at=_published_from_document(document, default_timezone)
+            or _published_from_text(listing_text, default_timezone),
             discovered_at=datetime.now(UTC),
         )
 

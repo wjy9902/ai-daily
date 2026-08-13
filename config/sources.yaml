@@ -31,8 +31,9 @@ sources:
     limit: 20
   - name: microsoft-ai
     display_name: Microsoft AI
-    kind: rss
-    url: https://news.microsoft.com/source/topics/ai/feed/
+    kind: html_index
+    url: https://microsoft.ai/blog/
+    link_pattern: '^https://microsoft\.ai/news/[^/]+/?$'
     tier: A
     channel: official
     limit: 20
@@ -115,8 +116,9 @@ sources:
   # Broad discovery and independent reporting — used for recall and corroboration.
   - name: qbitai
     display_name: 量子位
-    kind: rss
-    url: https://www.qbitai.com/feed
+    kind: html_index
+    url: https://www.qbitai.com/
+    link_pattern: '^https://www\.qbitai\.com/[0-9]{4}/[0-9]{2}/[0-9]+\.html$'
     tier: A
     channel: news
     region: china
