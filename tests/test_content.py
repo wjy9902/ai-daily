@@ -24,6 +24,7 @@ from ai_daily.content import (
     validate_evidence_quotes,
     validate_lead_corroboration,
 )
+from ai_daily.model_gateway import ModelInvocationFailed
 from ai_daily.models import (
     DraftItem,
     EditorialInsight,
@@ -133,7 +134,7 @@ class FakeGateway:
 
 async def test_judge_and_editor_preserve_evidence_ids() -> None:
     gateway = FakeGateway()
-    decisions = await judge_events(gateway, [event()])  # type: ignore[arg-type]
+    decisions, _ = await judge_events(gateway, [event()])  # type: ignore[arg-type]
     drafts = await draft_selected(gateway, [event()], plan())  # type: ignore[arg-type]
     assert decisions[0].evidence_ids == ["event-1-1"]
     assert drafts[0].evidence_ids == ["event-1-1"]
@@ -356,7 +357,10 @@ class InventedJudgeEvidenceGateway(FakeGateway):
 
 
 async def test_judge_cannot_invent_evidence() -> None:
-    with pytest.raises(ValueError, match="unknown evidence"):
+    # The only batch fails, so nothing was judged and the stage raises. The
+    # originating message must survive into the error or the operator is left
+    # with a bare exception name.
+    with pytest.raises(ModelInvocationFailed, match="unknown evidence"):
         await judge_events(InventedJudgeEvidenceGateway(), [event()])  # type: ignore[arg-type]
 
 
@@ -379,7 +383,7 @@ async def test_judge_must_return_each_event_exactly_once() -> None:
     gateway = DuplicateJudgeGateway()
     try:
         await judge_events(gateway, [event()])  # type: ignore[arg-type]
-    except ValueError as error:
+    except ModelInvocationFailed as error:
         assert "exactly once" in str(error)
     else:
         raise AssertionError("duplicate judge decision was accepted")
@@ -394,14 +398,23 @@ async def test_judge_splits_large_candidate_sets_into_small_batches() -> None:
     gateway = FakeGateway()
     events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(21)]
 
-    decisions = await judge_events(gateway, events)  # type: ignore[arg-type]
+    decisions, _ = await judge_events(gateway, events)  # type: ignore[arg-type]
 
     assert len(decisions) == 21
     assert gateway.calls == 3
 
 
-async def test_judge_stops_after_first_failed_batch() -> None:
-    class FailingGateway(FakeGateway):
+async def test_one_bad_batch_does_not_discard_the_others() -> None:
+    """A failed batch costs its own candidates, not the whole stage.
+
+    Stopping at the first failure threw away six good batches to punish one bad
+    one, which is how a single flaky response used to cost the day's editorial
+    input entirely.
+    """
+
+    class FlakyGateway(FakeGateway):
+        attempts = 0
+
         async def generate(
             self,
             role: str,
@@ -410,16 +423,45 @@ async def test_judge_stops_after_first_failed_batch() -> None:
             prompt: str,
             validator: Any = None,
         ) -> Any:
-            self.calls += 1
-            raise RuntimeError("provider failed")
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("provider failed")
+            return await super().generate(role, output_type, instructions, prompt)
 
-    gateway = FailingGateway()
+    gateway = FlakyGateway()
     events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(21)]
 
-    with pytest.raises(RuntimeError, match="provider failed"):
+    decisions, failures = await judge_events(gateway, events)  # type: ignore[arg-type]
+
+    assert gateway.attempts == 3, "every batch is attempted"
+    assert len(decisions) == 11, "the two surviving batches are kept"
+    assert failures == ["batch 1/3: RuntimeError: provider failed"]
+
+
+async def test_every_batch_failing_is_still_a_stage_failure() -> None:
+    """Partial tolerance must not silently turn a total outage into success."""
+
+    class DeadGateway(FakeGateway):
+        attempts = 0
+
+        async def generate(
+            self,
+            role: str,
+            output_type: type[BaseModel],
+            instructions: str,
+            prompt: str,
+            validator: Any = None,
+        ) -> Any:
+            self.attempts += 1
+            raise RuntimeError("provider failed")
+
+    gateway = DeadGateway()
+    events = [event().model_copy(update={"event_id": f"event-{index}"}) for index in range(21)]
+
+    with pytest.raises(ModelInvocationFailed, match="provider failed"):
         await judge_events(gateway, events)  # type: ignore[arg-type]
 
-    assert gateway.calls == 1
+    assert gateway.attempts == 3, "every batch is attempted before giving up"
 
 
 def numbered_event(index: int) -> Event:

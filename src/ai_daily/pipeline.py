@@ -97,7 +97,13 @@ DETAIL_EVIDENCE_MIN_CHARS = 800
 MINIMUM_PUBLISHABLE_CANDIDATES = 5
 
 
-def _classify_model_failure(error: Exception) -> FailureClass:
+def _classify_model_failure(error: Exception, stage: str) -> FailureClass:
+    """Name the failure after the stage that actually failed.
+
+    ``stage`` matters: reporting a judge outage as 编辑规划失败 sends the
+    operator to the wrong place, and it was doing exactly that.
+    """
+
     if isinstance(error, StageBudgetExceeded | BudgetExceeded | UsageLimitExceeded):
         # UsageLimitExceeded is pydantic-ai's own ceiling, raised inside a run
         # rather than by our ledger. It means the same thing: stop spending.
@@ -107,6 +113,10 @@ def _classify_model_failure(error: Exception) -> FailureClass:
         # model-driven can run, so the issue falls all the way back to ranking,
         # and status.json carries the reason.
         return FailureClass.JUDGE_FAILED
+    if stage == "judge":
+        return FailureClass.JUDGE_FAILED
+    if stage == "draft":
+        return FailureClass.DRAFT_FAILED
     return FailureClass.PLAN_FAILED
 
 
@@ -378,9 +388,16 @@ class DailyPipeline:
         self, candidates: list[Event], run_dir: Path, tracker: DegradationTracker
     ) -> tuple[list[JudgeDecision], EditorialPlan | None, list[DraftItem]]:
         decisions: list[JudgeDecision] = []
+        stage = "judge"
         try:
-            decisions = await judge_events(self.gateway, candidates)
+            decisions, judge_failures = await judge_events(self.gateway, candidates)
             write_artifact(run_dir / "decisions.json", decisions)
+            if judge_failures:
+                # Some candidates went unjudged. That costs coverage, not the
+                # issue, so it caps the level rather than ending the run.
+                tracker.record(
+                    FailureClass.JUDGE_PARTIAL, "; ".join(judge_failures)
+                )
             if not decisions:
                 raise ModelStageFailed(FailureClass.JUDGE_FAILED)
             enrichment_ids = {
@@ -393,6 +410,7 @@ class DailyPipeline:
                 self.config.sources,
                 enrichment_ids,
             )
+            stage = "plan"
             editorial_plan = await plan_digest(
                 self.gateway,
                 candidates,
@@ -434,6 +452,7 @@ class DailyPipeline:
                 tracker.record(FailureClass.DETAIL_EVIDENCE_THIN)
                 editorial_plan = _demote_selections(editorial_plan, failed)
                 write_artifact(run_dir / "editorial-plan-demoted.json", editorial_plan)
+            stage = "draft"
             drafts = await draft_selected(self.gateway, candidates, editorial_plan)
         except (
             BudgetExceeded,
@@ -443,9 +462,9 @@ class DailyPipeline:
             ValueError,
         ) as error:
             raise ModelStageFailed(
-                _classify_model_failure(error),
+                _classify_model_failure(error, stage),
                 decisions,
-                f"{type(error).__name__}: {error}",
+                f"{stage} stage: {type(error).__name__}: {error}",
             ) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)

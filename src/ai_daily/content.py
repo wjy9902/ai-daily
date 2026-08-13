@@ -6,8 +6,14 @@ from collections import Counter
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, create_model
+from pydantic_ai.exceptions import UsageLimitExceeded
 
-from ai_daily.model_gateway import ModelGateway
+from ai_daily.budget import BudgetExceeded
+from ai_daily.model_gateway import (
+    MissingProviderSecret,
+    ModelGateway,
+    ModelInvocationFailed,
+)
 from ai_daily.models import (
     JUDGE_BATCH_SIZE,
     DraftItem,
@@ -253,15 +259,37 @@ def evidence_bundle(
     return EvidenceBundle(event_id=event.event_id, evidence=evidence)
 
 
-async def judge_events(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
+async def judge_events(
+    gateway: ModelGateway, events: list[Event]
+) -> tuple[list[JudgeDecision], list[str]]:
+    """Judge every batch, keeping the batches that succeed.
+
+    One bad batch used to discard the other seven and cost the whole editorial
+    stage its input. A batch that fails is dropped and named instead: its
+    candidates simply go unjudged, which costs coverage rather than the issue.
+
+    Budget and credential errors still stop everything, because they will fail
+    identically on the next batch and there is no point paying to find out.
+
+    Returns the decisions plus a description of each failed batch.
+    """
+
     batches = [
         events[start : start + JUDGE_BATCH_SIZE]
         for start in range(0, len(events), JUDGE_BATCH_SIZE)
     ]
     decisions: list[JudgeDecision] = []
-    for batch in batches:
-        decisions.extend(await _judge_batch(gateway, batch))
-    return decisions
+    failures: list[str] = []
+    for index, batch in enumerate(batches, start=1):
+        try:
+            decisions.extend(await _judge_batch(gateway, batch))
+        except (BudgetExceeded, MissingProviderSecret, UsageLimitExceeded):
+            raise
+        except Exception as error:
+            failures.append(f"batch {index}/{len(batches)}: {type(error).__name__}: {error}")
+    if not decisions and failures:
+        raise ModelInvocationFailed("; ".join(failures))
+    return decisions, failures
 
 
 async def _judge_batch(gateway: ModelGateway, events: list[Event]) -> list[JudgeDecision]:
