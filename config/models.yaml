@@ -20,7 +20,10 @@ roles:
       provider: deepseek
       model: deepseek-v4-flash
       timeout_seconds: 60
-      max_output_tokens: 4096
+      # DeepSeek v4 emits reasoning tokens that count against this ceiling, so
+      # a limit sized for the JSON alone truncates the answer mid-structure and
+      # the schema check fails. Leave room for both.
+      max_output_tokens: 8192
       temperature: 0.1
       input_cost_cny_per_million: 1.01
       output_cost_cny_per_million: 2.02
@@ -43,8 +46,13 @@ roles:
     primary:
       provider: deepseek
       model: deepseek-v4-pro
-      timeout_seconds: 120
-      max_output_tokens: 8192
+      timeout_seconds: 180
+      # Planning emits the largest structure in the pipeline (up to 24 selections
+      # plus viewpoints) and this model spends roughly two thirds of its output
+      # on reasoning. Measured: an 8192 ceiling truncated the plan every time and
+      # burned 35k tokens on retries before giving up. Cost, not this number, is
+      # what stops a runaway run.
+      max_output_tokens: 24000
       temperature: 0.2
       input_cost_cny_per_million: 3.13
       output_cost_cny_per_million: 6.26
