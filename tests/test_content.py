@@ -293,6 +293,14 @@ def valid_global_plan() -> EditorialPlan:
     )
 
 
+def test_editorial_selection_schema_reserves_brief_for_tier() -> None:
+    value = plan().selections[0].model_dump()
+    value["category"] = "快讯"
+
+    with pytest.raises(ValueError):
+        EditorialSelection.model_validate(value)
+
+
 class PlanningGateway:
     def __init__(self, output: EditorialPlan) -> None:
         self.output = output
@@ -347,7 +355,6 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("lead-quota", "lead count"),
         ("research-quota", "too many detailed research"),
         ("category-breadth", "lacks category breadth"),
-        ("brief-category", "brief category"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -378,9 +385,6 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "category-breadth":
         for selection in plan_value.selections[:9]:
             selection.category = "模型与平台"
-    elif mutation == "brief-category":
-        plan_value.selections[0].category = "快讯"
-
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 
@@ -467,5 +471,6 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     assert "同一来源通常不超过 3 条" in captured["instructions"]
     assert "重大新闻，可以例外" in captured["instructions"]
     assert "不要为了来源均衡删除重大新闻" in captured["instructions"]
+    assert "快讯由 tier=brief 表示" in captured["instructions"]
     assert "每条只能引用已经进入 selections 的 evidence_ids" in captured["instructions"]
     assert "禁止引用未选候选" in captured["instructions"]

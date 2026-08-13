@@ -169,6 +169,7 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "不要为了来源均衡删除重大新闻；普通或低优先级消息优先让位。"
         "在证据充足时兼顾国际一线实验室、开发者工具、产业动态和中国 AI。"
         "headline 与 brief 使用简洁中文，brief 要同时说清发生了什么及为何值得关注。"
+        "category 只表示主题，快讯由 tier=brief 表示；任何 selection 的 category 都不能写快讯。"
         "selections 先按 lead、follow、brief 分组，每组内再按重要性从高到低排列。"
         "editor_viewpoint 给出 2-4 条跨新闻观察，每条只能引用已经进入 selections 的 "
         "evidence_ids，禁止引用未选候选。"
@@ -186,7 +187,7 @@ def validate_editorial_plan(
     if not set(ids) <= set(events_by_id):
         raise ValueError("editorial plan referenced an unknown event")
     _validate_plan_evidence(plan, events_by_id)
-    _validate_plan_quotas(plan.selections, events_by_id, config)
+    _validate_plan_quotas(plan.selections, config)
 
 
 def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
@@ -210,7 +211,6 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
 
 def _validate_plan_quotas(
     selections: list[EditorialSelection],
-    events_by_id: dict[str, Event],
     config: PipelineConfig,
 ) -> None:
     tier_rank = {
@@ -234,8 +234,6 @@ def _validate_plan_quotas(
         raise ValueError("editorial plan contains too many detailed research items")
     if len({selection.category for selection in details}) < min(3, len(details)):
         raise ValueError("editorial plan lacks category breadth")
-    if any(selection.category == "快讯" for selection in details):
-        raise ValueError("detailed items cannot use the brief category")
 
 
 def _require_range(name: str, value: int, minimum: int, maximum: int) -> None:

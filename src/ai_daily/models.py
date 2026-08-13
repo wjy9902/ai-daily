@@ -7,6 +7,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 type Category = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "快讯"]
+type EditorialCategory = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI"]
 JUDGE_BATCH_SIZE = 10
 
 
@@ -137,7 +138,7 @@ class JudgeDecision(StrictModel):
 class EditorialSelection(StrictModel):
     event_id: str
     tier: EditorialTier
-    category: Category
+    category: EditorialCategory
     headline: str = Field(min_length=1, max_length=100)
     brief: str = Field(min_length=1, max_length=240)
     importance: int = Field(ge=0, le=100)
