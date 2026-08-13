@@ -138,7 +138,7 @@ class PromptCaptureGateway(FakeGateway):
 
 
 async def test_judge_uses_compact_evidence_and_draft_uses_full_evidence() -> None:
-    long_summary = "x" * 5_000
+    long_summary = "x" * 7_000
     value = event()
     item = value.items[0].model_copy(update={"summary": long_summary})
     value = value.model_copy(update={"summary": long_summary, "items": [item]})
@@ -222,6 +222,26 @@ class SpeculativeDraftGateway(FakeGateway):
 async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> None:
     with pytest.raises(ValueError, match="speculation outside caveat"):
         await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
+
+
+class PipelineMetadataDraftGateway(FakeGateway):
+    async def generate(
+        self,
+        role: str,
+        output_type: type[BaseModel],
+        instructions: str,
+        prompt: str,
+        validator: Any = None,
+    ) -> Any:
+        value = await super().generate(role, output_type, instructions, prompt)
+        if isinstance(value, DraftItem):
+            return value.model_copy(update={"caveat": "证据摘要在句末被截断，数量不明确。"})
+        return value
+
+
+async def test_editor_cannot_expose_evidence_pipeline_metadata() -> None:
+    with pytest.raises(ValueError, match="pipeline metadata"):
+        await draft_selected(PipelineMetadataDraftGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
 class InventedJudgeEvidenceGateway(FakeGateway):
@@ -420,6 +440,9 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
 
     assert gateway.candidate_count == 17
     assert result.selections[0].event_id == "event-0"
+    assert result.today_highlight == "；".join(
+        selection.headline for selection in result.selections[:4]
+    )
     assert gateway.output_schema["properties"]["lead"]["minItems"] == 4
     assert gateway.output_schema["properties"]["follow"]["maxItems"] == 7
     assert gateway.output_schema["properties"]["brief"]["minItems"] == 8

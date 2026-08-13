@@ -130,7 +130,7 @@ class Evidence(StrictModel):
     evidence_id: str
     url: HttpUrl
     title: str
-    excerpt: str = Field(max_length=4000)
+    excerpt: str = Field(max_length=6000)
     source: str
     source_time_kind: SourceTimeKind = SourceTimeKind.PUBLISHED
 
