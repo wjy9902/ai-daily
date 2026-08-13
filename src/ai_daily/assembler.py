@@ -15,7 +15,7 @@ from ai_daily.models import (
     Event,
     Evidence,
 )
-from ai_daily.site_trust import daily_marker, story_title_marker
+from ai_daily.site_trust import signed_daily_body, story_title_marker
 
 WEEKDAYS = "一二三四五六日"
 MARKDOWN_ESCAPE_RE = re.compile(r"([\\`*_[\]<>])")
@@ -56,7 +56,7 @@ def assemble_markdown(
     lines.extend(
         ["---", "", "本期由自动化编辑流水线整理；事实与数据请以链接中的原始来源为准。", ""]
     )
-    body = "\n".join(lines)
+    body = signed_daily_body(target_date, "\n".join(lines))
     if len(body.encode("utf-8")) > 60_000:
         raise ValueError("digest exceeds the safe GitHub Issue body limit")
     return body
@@ -65,7 +65,6 @@ def assemble_markdown(
 def _header(target_date: date, plan: EditorialPlan) -> list[str]:
     weekday = WEEKDAYS[target_date.weekday()]
     return [
-        daily_marker(target_date),
         f'<p class="digest-kicker">AI 日报 · 周{weekday}</p>',
         "",
         (

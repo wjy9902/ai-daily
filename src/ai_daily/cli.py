@@ -48,6 +48,7 @@ async def _verify(args: argparse.Namespace) -> int:
             target,
             str(secrets.site_base_url or config.pipeline.site_base_url),
             publication.issue_number,
+            publication.marker,
             client,
         )
     print(verified.model_dump_json())

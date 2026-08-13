@@ -68,3 +68,19 @@ date = "2026-08-12T20:20:00Z"
 
     with pytest.raises(ValueError, match="extra section"):
         normalize_daily_dates(tmp_path)
+
+
+def test_site_date_rejects_fields_that_exist_only_in_body(tmp_path: Path) -> None:
+    post = tmp_path / "issue-7.md"
+    post.write_text(
+        """+++
+[extra]
++++
+title = "2026-08-13"
+date = "2026-08-12T20:20:00Z"
+<!-- ai-daily:2026-08-13:v2 -->
+"""
+    )
+
+    with pytest.raises(ValueError, match="invalid frontmatter"):
+        normalize_daily_dates(tmp_path)

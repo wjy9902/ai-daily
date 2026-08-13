@@ -7,7 +7,11 @@ import httpx
 from pydantic import HttpUrl
 
 from ai_daily.models import Publication
-from ai_daily.site_trust import daily_marker, has_daily_marker, is_trusted_issue_payload
+from ai_daily.site_trust import (
+    has_daily_marker,
+    is_trusted_issue_payload,
+    verified_daily_marker,
+)
 
 
 class GitHubPublisher:
@@ -23,9 +27,9 @@ class GitHubPublisher:
         }
 
     async def publish(self, target_date: date, body: str) -> Publication:
-        expected_marker = daily_marker(target_date)
-        if expected_marker not in body:
-            raise ValueError("publication body is missing its machine marker")
+        expected_marker = verified_daily_marker(body, target_date)
+        if expected_marker is None:
+            raise ValueError("publication body is missing a valid content marker")
         await self._ensure_daily_label()
         issue = await self._find(target_date, include_closed=True)
         payload = {"title": target_date.isoformat(), "body": body, "labels": ["Daily"]}
@@ -88,9 +92,14 @@ class GitHubPublisher:
         created.raise_for_status()
 
     async def find_publication(self, target_date: date) -> Publication | None:
-        expected_marker = daily_marker(target_date)
         issue = await self._find(target_date, include_closed=False)
         if not issue:
+            return None
+        body = issue.get("body")
+        expected_marker = verified_daily_marker(
+            body if isinstance(body, str) else None, target_date
+        )
+        if expected_marker is None:
             return None
         return Publication(
             target_date=target_date,

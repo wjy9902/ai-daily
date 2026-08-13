@@ -35,7 +35,7 @@ from ai_daily.normalize import (
     select_candidate_pool,
 )
 from ai_daily.publisher import GitHubPublisher
-from ai_daily.site_trust import daily_marker
+from ai_daily.site_trust import verified_daily_marker
 from ai_daily.sources import Collector
 
 
@@ -277,7 +277,7 @@ class DailyPipeline:
         publication = Publication(
             target_date=target_date,
             status="dry_run",
-            marker=daily_marker(target_date),
+            marker=verified_daily_marker(body, target_date) or "invalid",
         )
         if publish:
             if not self.secrets.github_token:

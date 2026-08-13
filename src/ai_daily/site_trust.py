@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from collections.abc import Iterable
 from datetime import date
 from typing import Protocol
 
 DAILY_LABEL = "Daily"
-DAILY_MARKER_RE = re.compile(r"<!-- ai-daily:\d{4}-\d{2}-\d{2}:v\d+ -->")
+DAILY_MARKER_RE = re.compile(
+    r"<!-- ai-daily:(\d{4}-\d{2}-\d{2}):v\d+(?::sha256=([a-f0-9]{64}))? -->"
+)
+SIGNED_MARKER_VERSION = "v3"
 TRUSTED_BOT = "github-actions[bot]"
 STORY_MARKER_RE = re.compile(r"<!-- ai-daily-story:([A-Za-z0-9_-]+) -->")
 MARKER_VERSION = "v2"
@@ -31,11 +35,33 @@ def has_daily_marker(body: str | None, target_date: str | None = None) -> bool:
     match = DAILY_MARKER_RE.search(body or "")
     if match is None or target_date is None:
         return match is not None
-    return match.group(0).startswith(f"<!-- ai-daily:{target_date}:")
+    return match.group(1) == target_date
 
 
 def daily_marker(target_date: date) -> str:
     return f"<!-- ai-daily:{target_date.isoformat()}:{MARKER_VERSION} -->"
+
+
+def signed_daily_body(target_date: date, content: str) -> str:
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    marker = (
+        f"<!-- ai-daily:{target_date.isoformat()}:{SIGNED_MARKER_VERSION}:"
+        f"sha256={digest} -->"
+    )
+    return f"{marker}\n{content}"
+
+
+def verified_daily_marker(body: str | None, target_date: date) -> str | None:
+    value = body or ""
+    match = DAILY_MARKER_RE.match(value)
+    if match is None or match.group(1) != target_date.isoformat() or match.group(2) is None:
+        return None
+    marker = match.group(0)
+    if not value.startswith(f"{marker}\n"):
+        return None
+    content = value[len(marker) + 1 :]
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return marker if digest == match.group(2) else None
 
 
 def story_title_marker(title: str) -> str:

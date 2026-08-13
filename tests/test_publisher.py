@@ -4,7 +4,11 @@ from datetime import date
 import httpx
 
 from ai_daily.publisher import GitHubPublisher
-from ai_daily.site_trust import daily_marker
+from ai_daily.site_trust import daily_marker, signed_daily_body, verified_daily_marker
+
+
+def signed_body(target: date, content: str = "content") -> str:
+    return signed_daily_body(target, content)
 
 
 async def test_publish_creates_then_updates_same_issue() -> None:
@@ -45,7 +49,7 @@ async def test_publish_creates_then_updates_same_issue() -> None:
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     publisher = GitHubPublisher("o/r", "token", client)
-    body = f"{daily_marker(date(2026, 8, 12))}\ncontent"
+    body = signed_body(date(2026, 8, 12))
     first = await publisher.publish(date(2026, 8, 12), body)
     second = await publisher.publish(date(2026, 8, 12), body)
     assert first.issue_number == second.issue_number == 12
@@ -57,7 +61,7 @@ async def test_publish_rejects_unmarked_body() -> None:
     try:
         await publisher.publish(date(2026, 8, 12), "content")
     except ValueError as error:
-        assert "machine marker" in str(error)
+        assert "valid content marker" in str(error)
     else:
         raise AssertionError("unmarked body was accepted")
 
@@ -98,7 +102,7 @@ async def test_publish_upgrades_an_existing_legacy_marker() -> None:
     publisher = GitHubPublisher(
         "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
-    body = f"{daily_marker(date(2026, 8, 12))}\nnew content"
+    body = signed_body(date(2026, 8, 12), "new content")
 
     publication = await publisher.publish(date(2026, 8, 12), body)
 
@@ -142,7 +146,7 @@ async def test_publish_ignores_existing_untrusted_issue() -> None:
     publisher = GitHubPublisher(
         "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
     )
-    body = f"{daily_marker(date(2026, 8, 12))}\ncontent"
+    body = signed_body(date(2026, 8, 12))
     publication = await publisher.publish(date(2026, 8, 12), body)
 
     assert publication.issue_number == 11
@@ -179,7 +183,7 @@ async def test_publish_fails_closed_on_unmarked_owner_issue() -> None:
     target = date(2026, 8, 12)
 
     try:
-        await publisher.publish(target, f"{daily_marker(target)}\ncontent")
+        await publisher.publish(target, signed_body(target))
     except RuntimeError as error:
         assert "owner issue conflicts" in str(error)
     else:
@@ -214,7 +218,7 @@ async def test_find_publication_paginates_for_old_daily_issues() -> None:
                 {
                     "number": 101,
                     "title": target.isoformat(),
-                    "body": "<!-- ai-daily:2026-01-01:v1 -->",
+                    "body": signed_body(target),
                     "user": {"login": "github-actions[bot]"},
                     "labels": [{"name": "Daily"}],
                     "url": "https://api.github.com/repos/o/r/issues/101",
@@ -274,13 +278,14 @@ async def test_closed_daily_is_not_verified_but_publish_reopens_it() -> None:
     target = date(2026, 8, 12)
 
     assert await publisher.find_publication(target) is None
-    publication = await publisher.publish(target, f"{daily_marker(target)}\ncontent")
+    body = signed_body(target)
+    publication = await publisher.publish(target, body)
 
     assert publication.issue_number == 12
     assert writes == [
         {
             "title": "2026-08-12",
-            "body": f"{daily_marker(target)}\ncontent",
+            "body": body,
             "labels": ["Daily"],
             "state": "open",
         }
@@ -289,7 +294,7 @@ async def test_closed_daily_is_not_verified_but_publish_reopens_it() -> None:
 
 async def test_publish_reconciles_ambiguous_patch_after_transport_error() -> None:
     target = date(2026, 8, 12)
-    body = f"{daily_marker(target)}\nnew content"
+    body = signed_body(target, "new content")
     patched = False
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -343,8 +348,74 @@ async def test_publish_rejects_success_response_with_stale_body() -> None:
     )
 
     try:
-        await publisher.publish(target, f"{daily_marker(target)}\nnew content")
+        await publisher.publish(target, signed_body(target, "new content"))
     except RuntimeError as error:
         assert "unconfirmed publication body" in str(error)
     else:
         raise AssertionError("stale publication response was accepted")
+
+
+async def test_publish_reconciles_ambiguous_post_without_creating_duplicate() -> None:
+    target = date(2026, 8, 12)
+    body = signed_body(target, "new content")
+    created = False
+    posts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal created, posts
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        issue = {
+            "number": 12,
+            "title": target.isoformat(),
+            "state": "open",
+            "body": body,
+            "user": {"login": "github-actions[bot]"},
+            "labels": [{"name": "Daily"}],
+            "url": "https://api.github.com/repos/o/r/issues/12",
+            "html_url": "https://github.com/o/r/issues/12",
+        }
+        if request.method == "GET":
+            return httpx.Response(200, json=[issue] if created else [])
+        posts += 1
+        created = True
+        raise httpx.ReadTimeout("response lost", request=request)
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    publication = await publisher.publish(target, body)
+
+    assert publication.issue_number == 12
+    assert posts == 1
+
+
+async def test_publish_fails_when_ambiguous_post_was_not_committed() -> None:
+    target = date(2026, 8, 12)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/labels/Daily"):
+            return httpx.Response(200, json={"name": "Daily"})
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        raise httpx.ReadTimeout("request lost", request=request)
+
+    publisher = GitHubPublisher(
+        "o/r", "token", httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    try:
+        await publisher.publish(target, signed_body(target))
+    except RuntimeError as error:
+        assert "could not be confirmed" in str(error)
+    else:
+        raise AssertionError("uncommitted publication was accepted")
+
+
+def test_signed_body_marker_detects_content_changes() -> None:
+    target = date(2026, 8, 12)
+    body = signed_body(target, "original")
+
+    assert verified_daily_marker(body, target) is not None
+    assert verified_daily_marker(body.replace("original", "changed"), target) is None

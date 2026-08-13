@@ -17,6 +17,7 @@ async def verify_publication(
     target_date: date,
     site_base_url: str,
     issue_number: int,
+    expected_marker: str,
     client: httpx.AsyncClient | None = None,
 ) -> Publication:
     http = client or httpx.AsyncClient(follow_redirects=True)
@@ -26,6 +27,10 @@ async def verify_publication(
     if page.status_code != 200:
         raise PublicationNotVisible(f"page returned {page.status_code}")
     rss.raise_for_status()
+    if expected_marker not in page.text:
+        raise PublicationNotVisible("page does not contain the expected content marker")
+    if expected_marker not in rss.text:
+        raise PublicationNotVisible("RSS does not contain the expected content marker")
     feed = feedparser.parse(rss.content)
     if not feed.entries:
         raise PublicationNotVisible("RSS has no entries")
@@ -40,5 +45,5 @@ async def verify_publication(
         page_url=HttpUrl(page_url),
         rss_url=HttpUrl(rss_url),
         status="verified",
-        marker=f"verified:{target_date.isoformat()}",
+        marker=expected_marker,
     )

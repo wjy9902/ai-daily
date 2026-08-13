@@ -18,8 +18,18 @@ from ai_daily.sources import (
     DEFAULT_USER_AGENT,
     MAX_RESPONSE_BYTES,
     Collector,
+    SourceCollectionError,
     _plain_text,
+    _validate_public_dns,
 )
+
+
+@pytest.fixture(autouse=True)
+def public_dns_for_mocked_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def resolve_public_dns(_value: str) -> None:
+        return None
+
+    monkeypatch.setattr("ai_daily.sources._validate_public_dns", resolve_public_dns)
 
 
 class TrackingTransport(httpx.AsyncBaseTransport):
@@ -64,6 +74,18 @@ async def test_default_collector_uses_browser_compatible_identified_user_agent()
 
 def test_plain_text_accepts_whitespace_only_html() -> None:
     assert _plain_text("   ") == ""
+
+
+async def test_dns_validation_rejects_hostname_resolving_to_private_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def private_result(*_args: object, **_kwargs: object) -> list[tuple[object, ...]]:
+        return [(2, 1, 6, "", ("127.0.0.1", 443))]
+
+    monkeypatch.setattr("socket.getaddrinfo", private_result)
+
+    with pytest.raises(SourceCollectionError, match="non-public address"):
+        await _validate_public_dns("https://source.example/news")
 
 
 async def test_collector_limits_concurrency_per_host() -> None:

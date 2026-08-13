@@ -5,6 +5,7 @@ import calendar
 import ipaddress
 import json
 import re
+import socket
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -518,6 +519,7 @@ class Collector:
         request_kwargs = kwargs
         for redirect_count in range(MAX_REDIRECTS + 1):
             _validate_request_url(current, allowed_origin)
+            await _validate_public_dns(current)
             request = self.client.build_request("GET", current, **request_kwargs)
             response = await self._send_limited(request, max_response_bytes)
             if response.status_code not in REDIRECT_STATUSES:
@@ -885,6 +887,29 @@ def _validate_request_url(value: str, allowed_origin: tuple[str, str, int]) -> N
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
+        return
+    if not address.is_global:
+        raise SourceCollectionError("source URL cannot target a non-public address")
+
+
+async def _validate_public_dns(value: str) -> None:
+    parts = urlsplit(value)
+    host = parts.hostname or ""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        port = parts.port or 443
+        records = await asyncio.to_thread(
+            socket.getaddrinfo,
+            host,
+            port,
+            type=socket.SOCK_STREAM,
+        )
+        addresses = {ipaddress.ip_address(record[4][0]) for record in records}
+        if not addresses or any(not value.is_global for value in addresses):
+            raise SourceCollectionError(
+                "source hostname resolved to a non-public address"
+            ) from None
         return
     if not address.is_global:
         raise SourceCollectionError("source URL cannot target a non-public address")
