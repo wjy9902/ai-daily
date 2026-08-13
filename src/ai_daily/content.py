@@ -161,7 +161,9 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "优先真实产品/模型发布、能力或价格变化、重要公司与政策事件、广泛采用的开源工具；"
         "孤立论文和常规版本发布不得主导版面。"
         f"详细区前沿研究最多 {config.max_research_details} 条，"
-        f"同一来源最多 {config.max_source_details} 条。"
+        f"同一来源通常不超过 {config.max_source_details} 条详细稿件；"
+        "如果是相互独立、当天不看会错过的重大新闻，可以例外。"
+        "不要为了来源均衡删除重大新闻；普通或低优先级消息优先让位。"
         "在证据充足时兼顾国际一线实验室、开发者工具、产业动态和中国 AI。"
         "headline 与 brief 使用简洁中文，brief 要同时说清发生了什么及为何值得关注。"
         "selections 先按 lead、follow、brief 分组，每组内再按重要性从高到低排列。"
@@ -223,18 +225,6 @@ def _validate_plan_quotas(
         raise ValueError("editorial plan contains too many detailed research items")
     if len({selection.category for selection in details}) < min(3, len(details)):
         raise ValueError("editorial plan lacks category breadth")
-    sources = Counter(
-        events_by_id[item.event_id].primary_item.source_label
-        or events_by_id[item.event_id].primary_item.source
-        for item in details
-    )
-    if sources:
-        source, count = sources.most_common(1)[0]
-        if count > config.max_source_details:
-            raise ValueError(
-                f"editorial plan overuses one source ({source!r}) in detailed items: "
-                f"{count} selected, maximum is {config.max_source_details}"
-            )
     if any(selection.category == "快讯" for selection in details):
         raise ValueError("detailed items cannot use the brief category")
 

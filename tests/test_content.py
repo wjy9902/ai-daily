@@ -284,7 +284,6 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("importance-order", "not ordered by importance"),
         ("lead-quota", "lead count"),
         ("research-quota", "too many detailed research"),
-        ("source-quota", "overuses one source"),
         ("category-breadth", "lacks category breadth"),
     ],
 )
@@ -313,16 +312,21 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "research-quota":
         for selection in plan_value.selections[:3]:
             selection.category = "前沿研究"
-    elif mutation == "source-quota":
-        for event_value in events[:3]:
-            event_value.items[0].source = "same-source"
-            event_value.items[0].source_label = "Same Source"
     elif mutation == "category-breadth":
         for selection in plan_value.selections[:9]:
             selection.category = "模型与平台"
 
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
+
+
+def test_editorial_plan_allows_distinct_major_news_from_one_source() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    for event_value in events[:4]:
+        event_value.items[0].source = "same-major-source"
+        event_value.items[0].source_label = "Same Major Source"
+
+    validate_editorial_plan(valid_global_plan(), events, load_config(Path("config")).pipeline)
 
 
 async def test_planning_prompt_uses_configured_detail_caps() -> None:
@@ -362,4 +366,6 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
         await plan_digest(gateway, events, decisions, config)  # type: ignore[arg-type]
 
     assert "前沿研究最多 1 条" in captured["instructions"]
-    assert "同一来源最多 3 条" in captured["instructions"]
+    assert "同一来源通常不超过 3 条" in captured["instructions"]
+    assert "重大新闻，可以例外" in captured["instructions"]
+    assert "不要为了来源均衡删除重大新闻" in captured["instructions"]
