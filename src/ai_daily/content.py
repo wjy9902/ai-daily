@@ -48,10 +48,7 @@ DRAFT_SPECULATION_RE = re.compile(
 EVIDENCE_PIPELINE_META_RE = re.compile(
     r"(?:证据|摘要|材料).{0,20}(?:截断|被截|未完整|不完整)"
 )
-REPOSITORY_RELEASE_RE = re.compile(
-    r"(?:同步|同时|双轨).{0,12}(?:发布|推出|上线|开放)|"
-    r"(?:发布|推出|上线|开放).{0,12}(?:同步|同时|双轨)"
-)
+REPOSITORY_RELEASE_RE = re.compile(r"发布|推出|上线|开放")
 SAMPLE_EXTRAPOLATION_RE = re.compile(
     r"(?:表明|意味着|说明).{0,40}(?:用户选择|整体市场|全行业|市场格局)"
 )
@@ -335,7 +332,7 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
         if set(insight.evidence_ids) & repository_evidence and REPOSITORY_RELEASE_RE.search(
             insight.text
         ):
-            raise ValueError("editor viewpoint rewrote repository update as coordinated release")
+            raise ValueError("editor viewpoint rewrote repository update as release")
 
 
 def _validate_plan_quotas(

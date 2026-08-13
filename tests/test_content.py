@@ -464,7 +464,7 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         ("speculative-headline", "unverified speculation"),
         ("speculative-brief", "unverified speculation"),
         ("sample-extrapolation", "beyond cited samples"),
-        ("repository-release-insight", "coordinated release"),
+        ("repository-release-insight", "update as release"),
     ],
 )
 def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
@@ -504,7 +504,7 @@ def test_editorial_plan_gates_fail_closed(mutation: str, message: str) -> None:
     elif mutation == "repository-release-insight":
         events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
         events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
-        plan_value.editor_viewpoint[0].text = "模型权重与API双轨发布。"
+        plan_value.editor_viewpoint[0].text = "Qwen模型发布推动开源生态。"
     with pytest.raises(ValueError, match=message):
         validate_editorial_plan(plan_value, events, pipeline)
 
