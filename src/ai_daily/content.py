@@ -144,10 +144,16 @@ async def plan_digest(
         instructions=_planning_instructions(config),
         prompt=json.dumps(payload, ensure_ascii=False),
         validator=lambda value: validate_editorial_plan(
-            _drop_unselected_viewpoints(_materialize_editorial_plan(value)), events, config
+            _drop_unselected_viewpoints(
+                _normalize_repository_plan(_materialize_editorial_plan(value), events)
+            ),
+            events,
+            config,
         ),
     )
-    plan = _drop_unselected_viewpoints(_materialize_editorial_plan(output))
+    plan = _drop_unselected_viewpoints(
+        _normalize_repository_plan(_materialize_editorial_plan(output), events)
+    )
     validate_editorial_plan(plan, events, config)
     return plan
 
@@ -218,6 +224,48 @@ def _drop_unselected_viewpoints(plan: EditorialPlan) -> EditorialPlan:
         if set(insight.evidence_ids) <= selected_evidence
     ]
     return plan.model_copy(update={"editor_viewpoint": insights})
+
+
+def _normalize_repository_plan(plan: EditorialPlan, events: list[Event]) -> EditorialPlan:
+    repository_events = {
+        event.event_id
+        for event in events
+        if event.source_time_kind.value == "repository_updated"
+    }
+    repository_evidence = {
+        evidence_id
+        for selection in plan.selections
+        if selection.event_id in repository_events
+        for evidence_id in selection.evidence_ids
+    }
+    selections = [
+        selection.model_copy(
+            update={
+                "headline": _repository_update_copy(selection.headline),
+                "brief": _repository_update_copy(selection.brief),
+            }
+        )
+        if selection.event_id in repository_events
+        else selection
+        for selection in plan.selections
+    ]
+    insights = [
+        insight.model_copy(update={"text": _repository_update_copy(insight.text)})
+        if set(insight.evidence_ids) & repository_evidence
+        else insight
+        for insight in plan.editor_viewpoint
+    ]
+    return plan.model_copy(
+        update={
+            "today_highlight": _deterministic_highlight(selections),
+            "selections": selections,
+            "editor_viewpoint": insights,
+        }
+    )
+
+
+def _repository_update_copy(value: str) -> str:
+    return REPOSITORY_RELEASE_RE.sub("更新", value)
 
 
 def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, object]:
@@ -414,7 +462,9 @@ async def _draft_and_validate(
     selection: EditorialSelection,
     bundle: EvidenceBundle,
 ) -> DraftItem:
-    draft = _drop_speculative_action(await _draft_one(gateway, selection, bundle))
+    draft = _normalize_repository_draft(
+        _drop_speculative_action(await _draft_one(gateway, selection, bundle)), bundle
+    )
     _validate_draft(draft, selection, bundle)
     return draft
 
@@ -455,6 +505,24 @@ def _drop_speculative_action(draft: DraftItem) -> DraftItem:
     if draft.action and DRAFT_SPECULATION_RE.search(draft.action):
         return draft.model_copy(update={"action": None})
     return draft
+
+
+def _normalize_repository_draft(
+    draft: DraftItem, bundle: EvidenceBundle
+) -> DraftItem:
+    if not any(
+        evidence.source_time_kind.value == "repository_updated"
+        for evidence in bundle.evidence
+    ):
+        return draft
+    update = {
+        "tldr": _repository_update_copy(draft.tldr),
+        "facts": [_repository_update_copy(fact) for fact in draft.facts],
+        "why_it_matters": _repository_update_copy(draft.why_it_matters),
+    }
+    if draft.action:
+        update["action"] = _repository_update_copy(draft.action)
+    return draft.model_copy(update=update)
 
 
 def _validate_draft(

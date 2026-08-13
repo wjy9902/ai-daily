@@ -225,7 +225,7 @@ async def test_editor_must_keep_speculation_out_of_factual_draft_fields() -> Non
         await draft_selected(SpeculativeDraftGateway(), [event()], plan())  # type: ignore[arg-type]
 
 
-async def test_editor_cannot_rewrite_repository_update_as_release() -> None:
+async def test_editor_normalizes_repository_update_copy_before_validation() -> None:
     repository_event = event().model_copy(
         update={
             "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
@@ -237,10 +237,12 @@ async def test_editor_cannot_rewrite_repository_update_as_release() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="repository update as release"):
-        await draft_selected(  # type: ignore[arg-type]
-            FakeGateway(), [repository_event], plan()
-        )
+    drafts = await draft_selected(  # type: ignore[arg-type]
+        FakeGateway(), [repository_event], plan()
+    )
+
+    assert drafts[0].tldr == "官方更新了新模型。"
+    assert drafts[0].facts == ["官方公告确认更新。"]
 
 
 class SpeculativeActionGateway(FakeGateway):
@@ -486,6 +488,37 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
     assert gateway.output_schema["properties"]["lead"]["minItems"] == 4
     assert gateway.output_schema["properties"]["follow"]["maxItems"] == 7
     assert gateway.output_schema["properties"]["brief"]["minItems"] == 8
+
+
+async def test_global_editor_normalizes_repository_update_copy() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    events[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+    events[0].items[0].source_time_kind = SourceTimeKind.REPOSITORY_UPDATED
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=True,
+            category="模型与平台",
+            relevance=80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for value in events
+    ]
+    plan_value = valid_global_plan()
+    plan_value.selections[0].headline = "Qwen开源权重发布"
+    plan_value.selections[0].brief = "官方发布Qwen开源权重。"
+    plan_value.editor_viewpoint[0].text = "Qwen发布推动开源生态。"
+
+    result = await plan_digest(  # type: ignore[arg-type]
+        PlanningGateway(plan_value), events, decisions, load_config(Path("config")).pipeline
+    )
+
+    assert result.selections[0].headline == "Qwen开源权重更新"
+    assert result.selections[0].brief == "官方更新Qwen开源权重。"
+    assert result.editor_viewpoint[0].text == "Qwen更新推动开源生态。"
+    assert result.today_highlight.startswith("Qwen开源权重更新；")
 
 
 async def test_global_editor_drops_viewpoint_that_cites_unselected_news() -> None:
