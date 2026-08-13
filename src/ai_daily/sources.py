@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import calendar
 import ipaddress
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -71,10 +72,15 @@ def _published(value: Any) -> datetime | None:
     if isinstance(value, str):
         try:
             parsed = parsedate_to_datetime(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
             return parsed.astimezone(UTC)
         except (TypeError, ValueError):
             try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=UTC)
+                return parsed.astimezone(UTC)
             except ValueError:
                 return None
     if hasattr(value, "tm_year"):
@@ -82,14 +88,45 @@ def _published(value: Any) -> datetime | None:
     return None
 
 
-DATE_RE = re.compile(r"\b([A-Z][a-z]{2} \d{1,2}, \d{4})\b")
+DATE_RE = re.compile(
+    r"\b((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\.?\s+\d{1,2},\s+\d{4})\b",
+    re.IGNORECASE,
+)
+PUBLISHED_META_KEYS = {
+    "article:published_time",
+    "citation_publication_date",
+    "date",
+    "datepublished",
+    "dc.date",
+    "dc.date.issued",
+    "og:published_time",
+    "parsely-pub-date",
+    "pubdate",
+    "publish-date",
+}
+ARTICLE_JSONLD_TYPES = {
+    "article",
+    "blogposting",
+    "newsarticle",
+    "report",
+    "scholarlyarticle",
+    "techarticle",
+}
 
 
 def _published_from_text(value: str) -> datetime | None:
     match = DATE_RE.search(value)
     if not match:
         return None
-    return datetime.strptime(match.group(1), "%b %d, %Y").replace(tzinfo=UTC)
+    normalized = re.sub(r"(?i)^([a-z]+)\.", r"\1", match.group(1))
+    for date_format in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(normalized, date_format).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return None
 
 
 def _plain_text(value: str) -> str:
@@ -105,6 +142,48 @@ def _plain_text(value: str) -> str:
 def _meta(document: html.HtmlElement, property_name: str) -> str:
     values = document.xpath(f'//meta[@property="{property_name}"]/@content')
     return str(values[0]).strip() if values else ""
+
+
+def _published_from_document(document: html.HtmlElement) -> datetime | None:
+    for element in document.xpath("//meta[@content]"):
+        key = str(
+            element.get("property") or element.get("name") or element.get("itemprop") or ""
+        ).lower()
+        if key in PUBLISHED_META_KEYS and (parsed := _published(element.get("content"))):
+            return parsed
+    for raw_value in document.xpath('//script[@type="application/ld+json"]/text()'):
+        try:
+            structured = json.loads(str(raw_value))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for value in _jsonld_published_values(structured):
+            if parsed := _published(value):
+                return parsed
+    containers = document.xpath("(//main | //article)[1]")
+    if not containers:
+        return None
+    for value in containers[0].xpath(".//time[@datetime]/@datetime"):
+        if parsed := _published(value):
+            return parsed
+    text = " ".join(" ".join(containers[0].itertext()).split())[:2000]
+    return _published_from_text(text)
+
+
+def _jsonld_published_values(value: Any) -> list[str]:
+    if isinstance(value, dict):
+        raw_types = value.get("@type", [])
+        types = raw_types if isinstance(raw_types, list) else [raw_types]
+        is_article = any(str(item).lower() in ARTICLE_JSONLD_TYPES for item in types)
+        found = [str(value["datePublished"])] if is_article and value.get("datePublished") else []
+        for child in value.values():
+            found.extend(_jsonld_published_values(child))
+        return found
+    if isinstance(value, list):
+        found = []
+        for child in value:
+            found.extend(_jsonld_published_values(child))
+        return found
+    return []
 
 
 class Collector:
@@ -246,7 +325,7 @@ class Collector:
         if validators:
             self._validators[name] = validators
 
-    async def _fetch_rss(self, source: SourceConfig) -> list[RawItem]:
+    async def _fetch_rss(self, source: SourceConfig) -> list[RawItem] | PartialSourceResult:
         response = await self._get(source)
         feed = feedparser.parse(response.content)
         if feed.bozo and not feed.entries:
@@ -269,16 +348,41 @@ class Collector:
                         str(entry.get("summary") or entry.get("description") or "")
                     )[:10000],
                     published_at=_published(
-                        entry.get("published_parsed")
-                        or entry.get("published")
-                        or entry.get("updated_parsed")
-                        or entry.get("updated")
+                        entry.get("published_parsed") or entry.get("published")
                     ),
                     discovered_at=now,
                     author=entry.get("author"),
                 )
             )
+        return await self._enrich_rss_dates(source, items)
+
+    async def _enrich_rss_dates(
+        self, source: SourceConfig, items: list[RawItem]
+    ) -> list[RawItem] | PartialSourceResult:
+        source_origin = _origin(str(source.url))
+        targets = [
+            item
+            for item in items
+            if item.published_at is None and _origin(str(item.url)) == source_origin
+        ]
+        results = await asyncio.gather(
+            *(self._fetch_article_date(source, str(item.url)) for item in targets),
+            return_exceptions=True,
+        )
+        failed_items = 0
+        for item, result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException) or result is None:
+                failed_items += 1
+            else:
+                item.published_at = result
+        if failed_items:
+            return PartialSourceResult(items=items, failed_items=failed_items)
         return items
+
+    async def _fetch_article_date(self, source: SourceConfig, url: str) -> datetime | None:
+        response = await self._same_origin_get(source, url)
+        document = html.fromstring(response.content, base_url=url)
+        return _published_from_document(document)
 
     async def _fetch_hackernews(self, source: SourceConfig) -> list[RawItem]:
         base = str(source.url).rstrip("/")
@@ -419,14 +523,13 @@ class Collector:
         document = html.fromstring(response.content, base_url=url)
         title = _meta(document, "og:title") or _plain_text(document.findtext(".//title") or "")
         summary = _meta(document, "og:description")
-        published = _published(_meta(document, "article:published_time"))
         return RawItem(
             **_source_fields(source),
             source_item_id=url,
             url=HttpUrl(url),
             title=title,
             summary=_plain_text(summary or listing_text)[:10000],
-            published_at=published or _published_from_text(listing_text),
+            published_at=_published_from_document(document) or _published_from_text(listing_text),
             discovered_at=datetime.now(UTC),
         )
 

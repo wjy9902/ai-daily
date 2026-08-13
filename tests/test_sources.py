@@ -85,10 +85,90 @@ async def test_rss_adapter_parses_valid_entries() -> None:
     assert health[0].status == "ok"
 
 
+async def test_rss_enriches_missing_feed_date_from_article_jsonld() -> None:
+    feed = b"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
+    <item><guid>1</guid><title>New model</title>
+    <link>https://example.com/news/new-model</link></item></channel></rss>"""
+    article = b"""<html><head><script type='application/ld+json'>
+    {"@type":"Article","datePublished":"2026-08-12"}
+    </script></head><body></body></html>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        content = feed if request.url.path == "/rss" else article
+        return httpx.Response(200, content=content)
+
+    source = SourceConfig(
+        name="feed",
+        kind="rss",
+        url="https://example.com/rss",
+        tier=SourceTier.A,
+    )
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ).collect([source])
+
+    assert health[0].status == "ok"
+    assert items[0].published_at.isoformat() == "2026-08-12T00:00:00+00:00"
+
+
+async def test_rss_does_not_treat_updated_time_as_publication_time() -> None:
+    feed = b"""<?xml version='1.0'?><feed xmlns='http://www.w3.org/2005/Atom'>
+    <title>T</title><id>https://example.com/</id><updated>2026-08-13T01:00:00Z</updated>
+    <entry><id>old</id><title>Edited old article</title>
+    <updated>2026-08-13T01:00:00Z</updated>
+    <link href='https://example.com/news/old'/></entry></feed>"""
+    article = b"""<html><head><script type='application/ld+json'>
+    {"@type":"Article","datePublished":"2024-10-15"}
+    </script></head><body></body></html>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=feed if request.url.path == "/feed" else article)
+
+    source = SourceConfig(
+        name="feed",
+        kind="rss",
+        url="https://example.com/feed",
+        tier=SourceTier.A,
+    )
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ).collect([source])
+
+    assert health[0].status == "ok"
+    assert items[0].published_at.isoformat() == "2024-10-15T00:00:00+00:00"
+
+
+async def test_rss_does_not_use_navigation_date_as_article_date() -> None:
+    feed = b"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
+    <item><guid>1</guid><title>Undated article</title>
+    <link>https://example.com/news/undated</link></item></channel></rss>"""
+    article = b"""<html><head><script type='application/ld+json'>
+    {"@type":"WebSite","datePublished":"2026-08-13"}
+    </script></head><body><nav>Today: <time datetime='2026-08-13'>Aug 13, 2026</time></nav>
+    <main><h1>Undated article</h1><p>No publication date.</p></main></body></html>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=feed if request.url.path == "/feed" else article)
+
+    source = SourceConfig(
+        name="feed",
+        kind="rss",
+        url="https://example.com/feed",
+        tier=SourceTier.A,
+    )
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ).collect([source])
+
+    assert health[0].status == "partial"
+    assert items[0].published_at is None
+
+
 async def test_rss_adapter_does_not_decode_gzip_twice() -> None:
     body = b"""<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>
     <item><guid>1</guid><title>Compressed model news</title>
-    <link>https://example.com/a</link></item></channel></rss>"""
+    <link>https://example.com/a</link><pubDate>Wed, 12 Aug 2026 12:00:00 GMT</pubDate>
+    </item></channel></rss>"""
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda request: httpx.Response(
@@ -240,6 +320,31 @@ async def test_html_index_fetches_first_party_article_metadata() -> None:
     assert items[0].title == "Introducing Model Five"
     assert items[0].summary == "A major model update for coding agents."
     assert items[0].published_at is not None
+
+
+async def test_html_index_extracts_visible_article_date_when_metadata_is_missing() -> None:
+    listing = b"<html><body><a href='/news/new-model'>Introducing Model Five</a></body></html>"
+    article = b"""<html><head>
+    <meta property='og:title' content='Introducing Model Five'>
+    <meta property='og:description' content='A major model update.'>
+    </head><body><main><h1>Introducing Model Five</h1><p>Jul 30, 2026</p></main></body></html>"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=article if request.url.path != "/news" else listing)
+
+    source = SourceConfig(
+        name="lab-news",
+        kind="html_index",
+        url="https://example.com/news",
+        link_pattern=r"^https://example\.com/news/[^/]+$",
+        tier=SourceTier.A,
+    )
+    items, health = await Collector(
+        httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ).collect([source])
+
+    assert health[0].status == "ok"
+    assert items[0].published_at.isoformat() == "2026-07-30T00:00:00+00:00"
 
 
 async def test_html_index_rejects_cross_origin_redirects() -> None:

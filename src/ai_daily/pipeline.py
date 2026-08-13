@@ -40,6 +40,41 @@ class QualityGateFailed(RuntimeError):
     pass
 
 
+def filter_fresh_items(
+    items: list[RawItem], cutoff: datetime, run_time: datetime, timezone: ZoneInfo
+) -> tuple[list[RawItem], dict[str, object]]:
+    accepted: list[RawItem] = []
+    rejected_undated: list[dict[str, str]] = []
+    rejected_outside_window: list[dict[str, str]] = []
+    latest_allowed = run_time + timedelta(minutes=5)
+    for item in items:
+        if not is_ai_related(item):
+            continue
+        item_summary = {
+            "source": item.source,
+            "title": item.title,
+            "url": str(item.url),
+        }
+        if item.published_at is None:
+            rejected_undated.append(item_summary)
+            continue
+        published_at = item.published_at.astimezone(timezone)
+        if not cutoff <= published_at <= latest_allowed:
+            rejected_outside_window.append(
+                {**item_summary, "published_at": item.published_at.isoformat()}
+            )
+            continue
+        accepted.append(item)
+    return accepted, {
+        "policy": "verified-publication-time-only",
+        "cutoff": cutoff.isoformat(),
+        "run_time": run_time.isoformat(),
+        "accepted_count": len(accepted),
+        "rejected_undated": rejected_undated,
+        "rejected_outside_window": rejected_outside_window,
+    }
+
+
 def collection_window(
     target_date: date,
     timezone_name: str,
@@ -128,14 +163,8 @@ class DailyPipeline:
             self.config.pipeline.timezone,
             self.config.pipeline.collection_window_hours,
         )
-        filtered = [
-            item
-            for item in items
-            if is_ai_related(item)
-            and cutoff
-            <= (item.published_at or item.discovered_at).astimezone(timezone)
-            <= run_time + timedelta(minutes=5)
-        ]
+        filtered, freshness_audit = filter_fresh_items(items, cutoff, run_time, timezone)
+        write_artifact(run_dir / "freshness.json", freshness_audit)
         events = score_events(
             cluster_items(filtered, self.config.pipeline.cluster_window_hours),
             run_time.astimezone(UTC),

@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -22,7 +22,12 @@ from ai_daily.models import (
     SourceHealth,
     SourceTier,
 )
-from ai_daily.pipeline import DailyPipeline, QualityGateFailed, collection_window
+from ai_daily.pipeline import (
+    DailyPipeline,
+    QualityGateFailed,
+    collection_window,
+    filter_fresh_items,
+)
 
 
 class FakeCollector:
@@ -156,6 +161,68 @@ def test_collection_window_uses_beijing_run_time() -> None:
     assert run_time == now
 
 
+@pytest.mark.parametrize(
+    ("offset", "expected_accepted"),
+    [
+        (timedelta(hours=-36, seconds=-1), False),
+        (timedelta(hours=-36), True),
+        (timedelta(minutes=5), True),
+        (timedelta(minutes=5, seconds=1), False),
+    ],
+)
+def test_freshness_filter_enforces_window_boundaries(
+    offset: timedelta, expected_accepted: bool
+) -> None:
+    timezone = ZoneInfo("Asia/Shanghai")
+    run_time = datetime(2026, 8, 13, 4, 20, tzinfo=timezone)
+    item = RawItem(
+        source="source",
+        source_tier=SourceTier.A,
+        source_item_id="1",
+        url="https://example.com/ai-model",
+        title="AI model launch",
+        published_at=run_time + offset,
+        discovered_at=run_time,
+    )
+
+    accepted, audit = filter_fresh_items([item], run_time - timedelta(hours=36), run_time, timezone)
+
+    assert bool(accepted) is expected_accepted
+    assert len(audit["rejected_outside_window"]) == (0 if expected_accepted else 1)  # type: ignore[arg-type]
+
+
+async def test_candidate_filter_rejects_unverified_publication_dates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    timezone = ZoneInfo("Asia/Shanghai")
+    run_time = datetime(2026, 8, 13, 4, 20, tzinfo=timezone)
+    cutoff = run_time - timedelta(hours=36)
+    monkeypatch.setattr(
+        "ai_daily.pipeline.collection_window",
+        lambda target_date, timezone_name, window_hours: (cutoff, run_time),
+    )
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    items, _ = await FakeCollector().collect(None)
+    undated = [
+        item.model_copy(update={"published_at": None, "discovered_at": run_time}) for item in items
+    ]
+    pipeline = DailyPipeline(config, Secrets(), client=_client())
+
+    with pytest.raises(QualityGateFailed, match="only 0 candidates"):
+        await pipeline._candidates(
+            run_time.date(),
+            undated,
+            tmp_path,
+            config.pipeline.repository,
+        )
+
+    audit = json.loads((tmp_path / "freshness.json").read_text())
+    assert audit["policy"] == "verified-publication-time-only"
+    assert audit["accepted_count"] == 0
+    assert len(audit["rejected_undated"]) == len(undated)
+
+
 async def test_backfill_scores_against_target_date_not_wall_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -273,7 +340,7 @@ async def test_publish_mode_requires_github_token(tmp_path: Path) -> None:
     config.pipeline.artifacts_dir = str(tmp_path)
     pipeline = DailyPipeline(
         config,
-        Secrets(),
+        Secrets(github_token=None),
         client=_client(),
         collector=FakeCollector(),  # type: ignore[arg-type]
         gateway=FakeGateway(config),  # type: ignore[arg-type]
