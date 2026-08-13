@@ -1,6 +1,8 @@
 import httpx
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ai_daily.config import Secrets, load_config
 from ai_daily.model_gateway import (
@@ -120,3 +122,46 @@ async def test_generate_does_not_fallback_after_unrecoverable_error(
         await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
 
     assert len(calls) == 1
+
+
+async def test_generate_repairs_invalid_structured_output_with_same_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    calls = 0
+
+    def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        category = "安全事件" if calls == 1 else "行业动态"
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": "event-1",
+                        "selected": True,
+                        "category": category,
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "安全事件值得关注",
+                        "evidence_ids": ["event-1-1"],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+
+    result = await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+    assert result.category == "行业动态"
+    assert calls == 2
+    assert gateway.ledger.requests == 2
+
+
+def test_structured_output_retry_cannot_exceed_daily_request_budget() -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    gateway.ledger.requests = gateway.config.budget.request_limit
+
+    assert gateway._invocation_request_limit() == 1

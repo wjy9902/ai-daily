@@ -20,6 +20,7 @@ from ai_daily.models import ModelEndpoint, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 ModelRole = Literal["judge", "editor"]
+OUTPUT_RETRIES = 1
 
 
 @dataclass(frozen=True)
@@ -101,13 +102,13 @@ class ModelGateway:
                 self._build_model(invocation.endpoint),
                 output_type=output_type,
                 instructions=instructions,
-                retries=0,
+                retries=OUTPUT_RETRIES,
             )
             result = await agent.run(
                 prompt,
                 model_settings=self._model_settings(invocation.endpoint),
                 usage_limits=UsageLimits(
-                    request_limit=1,
+                    request_limit=self._invocation_request_limit(),
                     input_tokens_limit=self.config.budget.input_token_limit,
                     output_tokens_limit=self.config.budget.output_token_limit,
                 ),
@@ -128,6 +129,10 @@ class ModelGateway:
         self.runs.append(run)
         self.ledger.record(run)
         return result.output
+
+    def _invocation_request_limit(self) -> int:
+        remaining = self.config.budget.request_limit - self.ledger.requests
+        return 1 + min(OUTPUT_RETRIES, max(0, remaining))
 
     @staticmethod
     def _model_settings(endpoint: ModelEndpoint) -> ModelSettings:
