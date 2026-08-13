@@ -331,8 +331,19 @@ class ModelGateway:
 
     @staticmethod
     def _safe_error(error: Exception) -> str:
+        """A log-safe description that is still enough to debug from.
+
+        Provider errors can echo the prompt back, so ModelHTTPError and
+        ModelAPIError stay reduced to their type and status. Everything else is
+        raised by pydantic-ai itself and describes structure rather than
+        content ("Exceeded maximum retries (1) for output validation"), which
+        is the one thing that makes a repeated failure diagnosable. Truncated,
+        because a validator message can quote the offending output.
+        """
+
         if isinstance(error, ModelHTTPError):
             return f"ModelHTTPError:{error.status_code}"
         if isinstance(error, ModelAPIError):
             return type(error).__name__
-        return type(error).__name__
+        message = str(error).replace("\n", " ").strip()
+        return f"{type(error).__name__}: {message[:300]}" if message else type(error).__name__

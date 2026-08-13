@@ -172,7 +172,7 @@ async def test_generate_falls_back_only_after_a_recoverable_failure(
         gateway.config.roles["judge"].primary,
         gateway.config.roles["judge"].fallback,
     ]
-    assert calls[1].fallback_reason == "ReadTimeout"
+    assert calls[1].fallback_reason.startswith("ReadTimeout")
 
 
 async def test_generate_does_not_fallback_after_unrecoverable_error(
