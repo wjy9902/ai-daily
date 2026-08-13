@@ -15,14 +15,15 @@ from ai_daily.content import (
     QUOTE_MIN_CHARS,
     JudgeBatch,
     draft_selected,
+    enforce_lead_corroboration,
     judge_events,
+    lead_is_corroborated,
     normalize_quote_text,
     plan_digest,
     quote_supports,
     registrable_domain,
     validate_editorial_plan,
     validate_evidence_quotes,
-    validate_lead_corroboration,
 )
 from ai_daily.model_gateway import ModelInvocationFailed
 from ai_daily.models import (
@@ -1090,53 +1091,102 @@ def _lead_plan() -> EditorialPlan:
     return plan()
 
 
-def test_lead_corroboration_accepts_a_first_party_source() -> None:
-    validate_lead_corroboration(
-        _lead_plan(),
-        [_lead_event(["https://example.com/release"], SourceChannel.OFFICIAL)],
+def test_a_first_party_source_may_lead() -> None:
+    assert lead_is_corroborated(
+        _lead_event(["https://example.com/release"], SourceChannel.OFFICIAL)
+    )
+    assert lead_is_corroborated(
+        _lead_event(["https://example.com/release"], SourceChannel.RELEASE)
     )
 
 
-def test_lead_corroboration_accepts_a_release_channel_source() -> None:
-    validate_lead_corroboration(
-        _lead_plan(),
-        [_lead_event(["https://example.com/release"], SourceChannel.RELEASE)],
+def test_two_distinct_registrable_domains_may_lead() -> None:
+    assert lead_is_corroborated(
+        _lead_event(["https://example.com/story", "https://other.org/story"])
     )
 
 
-def test_lead_corroboration_accepts_two_distinct_registrable_domains() -> None:
-    validate_lead_corroboration(
-        _lead_plan(),
-        [_lead_event(["https://example.com/story", "https://other.org/story"])],
+def test_syndicated_copies_of_one_publisher_may_not_lead() -> None:
+    """Two URLs from the same publisher are one source, not corroboration."""
+
+    assert not lead_is_corroborated(
+        _lead_event(["https://www.example.com/story", "https://news.example.com/story"])
     )
 
 
-def test_lead_corroboration_rejects_syndicated_copies_of_one_publisher() -> None:
-    with pytest.raises(ValueError, match="independently corroborated") as error:
-        validate_lead_corroboration(
-            _lead_plan(),
-            [_lead_event(["https://www.example.com/story", "https://news.example.com/story"])],
-        )
-
-    assert "event-1" in str(error.value)
-    assert "example.com" in str(error.value)
+def test_a_single_non_official_source_may_not_lead() -> None:
+    assert not lead_is_corroborated(_lead_event(["https://example.com/story"]))
 
 
-def test_lead_corroboration_rejects_a_single_non_official_source() -> None:
-    with pytest.raises(ValueError, match="independently corroborated"):
-        validate_lead_corroboration(
-            _lead_plan(), [_lead_event(["https://example.com/story"])]
-        )
+def test_an_uncorroborated_lead_is_demoted_not_rejected() -> None:
+    """The story loses its slot; the issue does not lose its plan.
+
+    As a validator this rejected the whole plan and the model could not
+    recover: on a normal day every candidate arrives from a single outlet, so
+    only official blog posts qualify and an editor asked to lead with real news
+    can never satisfy it.
+    """
+
+    adjusted, demoted = enforce_lead_corroboration(
+        _lead_plan(), [_lead_event(["https://example.com/story"])]
+    )
+
+    assert demoted and "event-1" in demoted[0]
+    assert all(
+        selection.tier is not EditorialTier.LEAD for selection in adjusted.selections
+    )
 
 
-def test_lead_corroboration_ignores_follow_and_brief_tiers() -> None:
+def test_a_qualified_follow_is_promoted_into_the_vacated_lead_slot() -> None:
+    base = _lead_plan()
+    lead_id = base.selections[0].event_id
+    follow_id = "event-2"
+    base = base.model_copy(
+        update={
+            "selections": [
+                base.selections[0],
+                base.selections[0].model_copy(
+                    update={"event_id": follow_id, "tier": EditorialTier.FOLLOW}
+                ),
+            ]
+        }
+    )
+    events = [
+        _lead_event(["https://example.com/story"]).model_copy(
+            update={"event_id": lead_id}
+        ),
+        _lead_event(
+            ["https://official.example/post"], SourceChannel.OFFICIAL
+        ).model_copy(update={"event_id": follow_id}),
+    ]
+
+    adjusted, demoted = enforce_lead_corroboration(base, events)
+
+    tiers = {item.event_id: item.tier for item in adjusted.selections}
+    assert tiers[lead_id] is EditorialTier.FOLLOW
+    assert tiers[follow_id] is EditorialTier.LEAD
+    assert demoted
+
+
+def test_follow_and_brief_tiers_are_left_alone() -> None:
     for tier in (EditorialTier.FOLLOW, EditorialTier.BRIEF):
-        demoted = _lead_plan()
-        demoted.selections[0].tier = tier
-        validate_lead_corroboration(demoted, [_lead_event(["https://example.com/story"])])
+        untouched = _lead_plan()
+        untouched.selections[0].tier = tier
+        adjusted, demoted = enforce_lead_corroboration(
+            untouched, [_lead_event(["https://example.com/story"])]
+        )
+        assert demoted == []
+        assert adjusted.selections[0].tier is tier
 
 
-def test_editorial_plan_rejects_an_uncorroborated_lead() -> None:
+def test_plan_validation_leaves_corroboration_to_the_enforcer() -> None:
+    """Corroboration is a code-enforced invariant, not a model-facing gate.
+
+    Rejecting the plan here made the constraint unsatisfiable in practice and
+    cost whole issues. validate_editorial_plan keeps the rules the model can
+    actually act on; enforce_lead_corroboration handles this one by demotion.
+    """
+
     events = [numbered_event(index) for index in range(17)]
     events[0] = events[0].model_copy(
         update={
@@ -1147,8 +1197,9 @@ def test_editorial_plan_rejects_an_uncorroborated_lead() -> None:
             ]
         }
     )
+    plan = valid_global_plan()
 
-    with pytest.raises(ValueError, match="independently corroborated"):
-        validate_editorial_plan(
-            valid_global_plan(), events, load_config(Path("config")).pipeline
-        )
+    validate_editorial_plan(plan, events, load_config(Path("config")).pipeline)
+
+    _, demoted = enforce_lead_corroboration(plan, events)
+    assert demoted, "the enforcer must still catch what the validator no longer does"

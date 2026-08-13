@@ -44,6 +44,9 @@ class FailureClass(StrEnum):
     DETAIL_EVIDENCE_THIN = "detail_evidence_thin"
     """A detailed story never reached the evidence floor, even after repair."""
 
+    LEAD_UNCORROBORATED = "lead_uncorroborated"
+    """A lead story was demoted for lacking first-party or independent support."""
+
     BUDGET_EXHAUSTED = "budget_exhausted"
     """The day's model budget ran out mid-run."""
 
@@ -63,6 +66,7 @@ FAILURE_CEILING: dict[FailureClass, PublicationLevel] = {
     FailureClass.DRAFT_PARTIAL: PublicationLevel.L1,
     FailureClass.DRAFT_FAILED: PublicationLevel.L2A,
     FailureClass.DETAIL_EVIDENCE_THIN: PublicationLevel.L1,
+    FailureClass.LEAD_UNCORROBORATED: PublicationLevel.L1,
     FailureClass.BUDGET_EXHAUSTED: PublicationLevel.L2A,
     FailureClass.RENDER_FAILED: PublicationLevel.L3,
 }
@@ -77,6 +81,7 @@ FAILURE_REASON: dict[FailureClass, str] = {
     FailureClass.DRAFT_PARTIAL: "部分详报起草失败",
     FailureClass.DRAFT_FAILED: "详报起草失败",
     FailureClass.DETAIL_EVIDENCE_THIN: "详报证据不足",
+    FailureClass.LEAD_UNCORROBORATED: "重点缺少第一方或独立佐证，已降级",
     FailureClass.BUDGET_EXHAUSTED: "当日模型预算用尽",
     FailureClass.RENDER_FAILED: "渲染失败",
 }

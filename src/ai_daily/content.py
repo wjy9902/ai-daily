@@ -211,15 +211,76 @@ def registrable_domain(url: str) -> str:
     return ".".join(labels[-2:])
 
 
-def validate_lead_corroboration(plan: EditorialPlan, events: list[Event]) -> None:
-    """A LEAD story must be first-party or independently corroborated.
+def lead_is_corroborated(event: Event) -> bool:
+    """True when ``event`` is fit to lead the issue.
 
-    First-party means the event carries an ``official`` or ``release`` item —
-    the party that made the news said so itself. Otherwise the event must be
-    reported by at least two distinct registrable domains, so that a syndicated
-    copy or an aggregator repost of a single story cannot pose as
-    corroboration.
+    Either first-party — it carries an ``official`` or ``release`` item, so the
+    party that made the news said so itself — or reported by at least two
+    distinct registrable domains, so a syndicated copy or an aggregator repost
+    of one story cannot pose as its own corroboration.
     """
+
+    if any(item.source_channel in FIRST_PARTY_CHANNELS for item in event.items):
+        return True
+    return len({registrable_domain(str(item.url)) for item in event.items}) >= 2
+
+
+def enforce_lead_corroboration(
+    plan: EditorialPlan, events: list[Event]
+) -> tuple[EditorialPlan, list[str]]:
+    """Demote leads that are not corroborated, promoting qualified ones instead.
+
+    This is deliberately not a validator. As a semantic gate it rejected the
+    whole plan over one story and the model could not recover: on a normal day
+    every candidate arrives from a single outlet, so the only events that
+    qualify are official blog posts, and an editor asked to lead with real news
+    can never satisfy it. Two attempts, two rejections, no issue.
+
+    Enforcing it here instead keeps the invariant exactly as strict — an
+    uncorroborated story still cannot lead — while costing a demotion rather
+    than the day. Returns the adjusted plan and a description of each demotion.
+    """
+
+    events_by_id = {event.event_id: event for event in events}
+    demoted: list[str] = []
+    selections = list(plan.selections)
+
+    def qualified(selection: EditorialSelection) -> bool:
+        event = events_by_id.get(selection.event_id)
+        return event is not None and lead_is_corroborated(event)
+
+    bad_leads = [
+        index
+        for index, selection in enumerate(selections)
+        if selection.tier is EditorialTier.LEAD and not qualified(selection)
+    ]
+    promotable = [
+        index
+        for index, selection in enumerate(selections)
+        if selection.tier is EditorialTier.FOLLOW and qualified(selection)
+    ]
+    for lead_index in bad_leads:
+        selection = selections[lead_index]
+        demoted.append(f"{selection.event_id} ({selection.headline[:30]})")
+        if promotable:
+            swap = promotable.pop(0)
+            selections[lead_index] = selections[lead_index].model_copy(
+                update={"tier": EditorialTier.FOLLOW}
+            )
+            selections[swap] = selections[swap].model_copy(
+                update={"tier": EditorialTier.LEAD}
+            )
+        else:
+            # Nothing qualified is left to take its place, so the issue simply
+            # runs with fewer leads. A shorter front page beats an unsupported
+            # one.
+            selections[lead_index] = selections[lead_index].model_copy(
+                update={"tier": EditorialTier.FOLLOW}
+            )
+
+    tier_rank = {EditorialTier.LEAD: 0, EditorialTier.FOLLOW: 1, EditorialTier.BRIEF: 2}
+    selections.sort(key=lambda item: (tier_rank[item.tier], -item.importance))
+    return plan.model_copy(update={"selections": selections}), demoted
 
     events_by_id = {event.event_id: event for event in events}
     for selection in plan.selections:
@@ -594,7 +655,6 @@ def validate_editorial_plan(
         raise ValueError("editorial plan referenced an unknown event")
     _validate_factual_copy(plan, events_by_id)
     _validate_plan_evidence(plan, events_by_id)
-    validate_lead_corroboration(plan, events)
     _validate_plan_quotas(plan.selections, config)
 
 

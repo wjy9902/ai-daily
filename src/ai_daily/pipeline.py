@@ -20,7 +20,13 @@ from ai_daily.composer import (
     build_ranked_publication,
 )
 from ai_daily.config import AppConfig, Secrets
-from ai_daily.content import draft_selected, judge_events, plan_digest, validate_editorial_plan
+from ai_daily.content import (
+    draft_selected,
+    enforce_lead_corroboration,
+    judge_events,
+    plan_digest,
+    validate_editorial_plan,
+)
 from ai_daily.degradation import DegradationTracker, FailureClass
 from ai_daily.history import local_historical_index
 from ai_daily.model_gateway import (
@@ -418,6 +424,17 @@ class DailyPipeline:
                 self.config.pipeline,
             )
             write_artifact(run_dir / "editorial-plan.json", editorial_plan)
+            editorial_plan, uncorroborated = enforce_lead_corroboration(
+                editorial_plan, candidates
+            )
+            if uncorroborated:
+                # An uncorroborated story still cannot lead, but it costs that
+                # story its slot rather than costing the issue its plan.
+                tracker.record(
+                    FailureClass.LEAD_UNCORROBORATED,
+                    "; ".join(uncorroborated),
+                )
+                write_artifact(run_dir / "editorial-plan-corroborated.json", editorial_plan)
             detail_ids = {
                 selection.event_id
                 for selection in editorial_plan.selections
