@@ -329,6 +329,19 @@ def test_editorial_plan_allows_distinct_major_news_from_one_source() -> None:
     validate_editorial_plan(valid_global_plan(), events, load_config(Path("config")).pipeline)
 
 
+def test_unselected_viewpoint_evidence_error_lists_allowed_ids() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = valid_global_plan()
+    plan_value.editor_viewpoint[0].evidence_ids = ["event-99-1"]
+
+    with pytest.raises(ValueError) as error:
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+    assert "unselected evidence" in str(error.value)
+    assert "event-99-1" in str(error.value)
+    assert "event-0-1" in str(error.value)
+
+
 async def test_planning_prompt_uses_configured_detail_caps() -> None:
     config = load_config(Path("config")).pipeline.model_copy(
         update={"max_research_details": 1, "max_source_details": 3}
@@ -369,3 +382,5 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
     assert "同一来源通常不超过 3 条" in captured["instructions"]
     assert "重大新闻，可以例外" in captured["instructions"]
     assert "不要为了来源均衡删除重大新闻" in captured["instructions"]
+    assert "每条只能引用已经进入 selections 的 evidence_ids" in captured["instructions"]
+    assert "禁止引用未选候选" in captured["instructions"]

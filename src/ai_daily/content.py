@@ -167,7 +167,8 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "在证据充足时兼顾国际一线实验室、开发者工具、产业动态和中国 AI。"
         "headline 与 brief 使用简洁中文，brief 要同时说清发生了什么及为何值得关注。"
         "selections 先按 lead、follow、brief 分组，每组内再按重要性从高到低排列。"
-        "editor_viewpoint 给出 2-4 条跨新闻观察，每条都要引用支持它的 evidence_ids。"
+        "editor_viewpoint 给出 2-4 条跨新闻观察，每条只能引用已经进入 selections 的 "
+        "evidence_ids，禁止引用未选候选。"
         "event_id 不得重复，evidence_ids 只能使用对应候选中的值。"
     )
 
@@ -195,8 +196,13 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
             raise ValueError("editorial plan referenced unknown evidence")
         selected_evidence.update(allowed)
     for insight in plan.editor_viewpoint:
-        if not set(insight.evidence_ids) <= selected_evidence:
-            raise ValueError("editor viewpoint referenced unselected evidence")
+        unknown = sorted(set(insight.evidence_ids) - selected_evidence)
+        if unknown:
+            allowed_ids = sorted(selected_evidence)
+            raise ValueError(
+                "editor viewpoint referenced unselected evidence "
+                f"ids={unknown}; use only selected evidence ids={allowed_ids}"
+            )
 
 
 def _validate_plan_quotas(
