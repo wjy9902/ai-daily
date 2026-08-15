@@ -98,6 +98,7 @@ class FakeGateway:
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         if output_type is JudgeBatch:
             self.calls += 1
@@ -153,6 +154,7 @@ class PromptCaptureGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         self.prompts.append((output_type, json.loads(prompt)))
         return await super().generate(role, output_type, instructions, prompt, validator)
@@ -182,6 +184,7 @@ class BadGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -206,6 +209,7 @@ class WrongDraftEventGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -227,6 +231,7 @@ class SpeculativeDraftGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -255,6 +260,7 @@ class FirstAvailabilityDraftGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -311,6 +317,7 @@ class SpeculativeActionGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -332,6 +339,7 @@ class PipelineMetadataDraftGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -353,6 +361,7 @@ class InventedJudgeEvidenceGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, JudgeBatch):
@@ -376,6 +385,7 @@ class DuplicateJudgeGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, JudgeBatch):
@@ -426,6 +436,7 @@ async def test_one_bad_batch_does_not_discard_the_others() -> None:
             instructions: str,
             prompt: str,
             validator: Any = None,
+        stage: Any = None,
         ) -> Any:
             self.attempts += 1
             if self.attempts == 1:
@@ -455,6 +466,7 @@ async def test_every_batch_failing_is_still_a_stage_failure() -> None:
             instructions: str,
             prompt: str,
             validator: Any = None,
+        stage: Any = None,
         ) -> Any:
             self.attempts += 1
             raise RuntimeError("provider failed")
@@ -538,6 +550,7 @@ class PlanningGateway:
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         self.candidate_count = len(json.loads(prompt))
         self.output_schema = output_type.model_json_schema()
@@ -825,6 +838,7 @@ async def test_planning_prompt_uses_configured_detail_caps() -> None:
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> EditorialPlan:
         captured["instructions"] = instructions
         return output_type.model_validate(_grouped_plan(gateway.output))
@@ -1003,6 +1017,7 @@ class QuoteMismatchGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
@@ -1035,6 +1050,7 @@ async def test_draft_instructions_require_verbatim_quotes() -> None:
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         captured["instructions"] = instructions
         return await inner(role, output_type, instructions, prompt, validator)

@@ -115,7 +115,9 @@ def test_stage_exhaustion_by_cost_also_spares_the_other_stages(tmp_path: Path) -
     with pytest.raises(StageBudgetExceeded, match="plan"):
         ledger.check_stage(BudgetStage.PLAN)
     ledger.check_stage(BudgetStage.DRAFT)
-    assert ledger.stage_remaining_cost(BudgetStage.DRAFT) == pytest.approx(5 * 0.45)
+    assert ledger.stage_remaining_cost(BudgetStage.DRAFT) == pytest.approx(
+        5 * STAGE_SHARE[BudgetStage.DRAFT]
+    )
 
 
 def test_the_day_limit_stops_every_stage(tmp_path: Path) -> None:

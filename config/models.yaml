@@ -1,8 +1,16 @@
 budget:
-  # Shared by every timer window of the same day, not per process. A full
-  # issue costs about 21 requests, so this leaves room for one upgrade attempt
-  # after a degraded morning. Money, not request count, is the real ceiling.
-  request_limit: 45
+  # Shared by every timer window of the same day, not per process.
+  #
+  # Sized from the pipeline's actual shape rather than a round number: one
+  # judge call per batch of ten candidates (8), one planning call, one draft
+  # per detailed story (12), and any of them able to spend a second request on
+  # its retry — 42 for a single issue at worst. This leaves room for a full
+  # second attempt from a later window. tests/test_budget_staging.py asserts
+  # the arithmetic so a config change cannot quietly starve a stage.
+  #
+  # Money, not request count, is still the real ceiling: a full issue costs
+  # about ¥0.75, so ¥5 stops a runaway long before this does.
+  request_limit: 90
   # Token ceilings are a backstop against a runaway loop, not the spending
   # control. Cost is. The old 30k output ceiling was the binding constraint and
   # aborted a real run at nine requests, which is the budget stopping work that

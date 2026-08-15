@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, create_model
 from pydantic_ai.exceptions import UsageLimitExceeded
 
-from ai_daily.budget import BudgetExceeded
+from ai_daily.budget import BudgetExceeded, BudgetStage
 from ai_daily.model_gateway import (
     MissingProviderSecret,
     ModelGateway,
@@ -389,6 +389,7 @@ async def _judge_batch(gateway: ModelGateway, events: list[Event]) -> list[Judge
             [bundle.model_dump(mode="json") for bundle in bundles], ensure_ascii=False
         ),
         validator=lambda output: _validate_judge_output(events, bundles, output.decisions),
+        stage=BudgetStage.JUDGE,
     )
     _validate_judge_output(events, bundles, result.decisions)
     return result.decisions
@@ -441,6 +442,7 @@ async def plan_digest(
             events,
             config,
         ),
+        stage=BudgetStage.PLAN,
     )
     plan = _drop_unselected_viewpoints(
         _normalize_plan_copy(
@@ -855,6 +857,7 @@ async def _draft_one(
             {"selection": selection.model_dump(), "bundle": bundle.model_dump(mode="json")},
             ensure_ascii=False,
         ),
+        stage=BudgetStage.DRAFT,
         validator=lambda output: _validate_draft(
             _drop_speculative_action(output), selection, bundle
         ),

@@ -33,12 +33,14 @@ class BudgetStage(StrEnum):
     DRAFT = "draft"
 
 
-#: How the day's budget is divided. Drafting is the most expensive stage and
-#: the most degradable, so it gets the largest slice and is cut first.
+#: How the day's budget is divided, in proportion to how many calls each stage
+#: actually makes: roughly eight judge calls, one plan call and twelve drafts.
+#: Planning held 15% while needing a single call, which is budget sitting idle
+#: in the one stage that cannot use it.
 STAGE_SHARE: dict[BudgetStage, float] = {
     BudgetStage.JUDGE: 0.40,
-    BudgetStage.PLAN: 0.15,
-    BudgetStage.DRAFT: 0.45,
+    BudgetStage.PLAN: 0.10,
+    BudgetStage.DRAFT: 0.50,
 }
 
 

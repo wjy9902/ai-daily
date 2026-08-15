@@ -140,6 +140,7 @@ class FakeGateway:
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         values = json.loads(prompt)
         if output_type is JudgeBatch:
@@ -163,6 +164,7 @@ class FalseNegativeGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt, validator)
         if isinstance(value, JudgeBatch) and self.rejected_id is None:
@@ -263,6 +265,7 @@ class UnavailableEditorGateway(FakeGateway):
         instructions: str,
         prompt: str,
         validator: Any = None,
+        stage: Any = None,
     ) -> Any:
         if output_type.__name__.startswith("EditorialPlanOutput_"):
             raise ModelInvocationFailed("editor endpoint is unreachable")
