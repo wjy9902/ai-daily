@@ -53,6 +53,7 @@ from ai_daily.persona_pipeline import (
     _memory_context_sha256,
     _normalize_finalizer_changed_fields,
     _normalize_plan,
+    _repair_confirmed_change_punctuation,
     _safe_confirmed_change,
     _validate_critique,
     _validate_finalizer_changes,
@@ -449,6 +450,43 @@ def test_confirmed_change_repairs_known_claude_source_punctuation() -> None:
         "Claude in Chrome is generally available. Give Claude a task in your browser."
     )
     assert result.quote == quote
+
+
+def test_resumed_draft_repairs_confirmed_change_claim_and_block() -> None:
+    draft = _standard_draft("a" * 64)
+    item = draft.items[0]
+    claim_id = item.confirmed_change_block.claim_ids[0]
+    old = "Claude in Chrome is generally available Give Claude a task."
+    changed_item_claims = [
+        claim.model_copy(update={"text": old}) if claim.claim_id == claim_id else claim
+        for claim in item.claims
+    ]
+    changed_root_claims = [
+        claim.model_copy(update={"text": old}) if claim.claim_id == claim_id else claim
+        for claim in draft.claims
+    ]
+    changed_item = item.model_copy(
+        update={
+            "confirmed_change_block": item.confirmed_change_block.model_copy(
+                update={"text": old}
+            ),
+            "claims": changed_item_claims,
+        }
+    )
+    malformed = draft.model_copy(
+        update={"items": [changed_item, *draft.items[1:]], "claims": changed_root_claims}
+    )
+
+    repaired = _repair_confirmed_change_punctuation(malformed)
+
+    expected = "Claude in Chrome is generally available. Give Claude a task."
+    assert repaired.items[0].confirmed_change_block.text == expected
+    item_claim = next(
+        claim for claim in repaired.items[0].claims if claim.claim_id == claim_id
+    )
+    root_claim = next(claim for claim in repaired.claims if claim.claim_id == claim_id)
+    assert item_claim.text == expected
+    assert root_claim.text == expected
 
 
 def _standard_draft(marker: str) -> EditionDraft:
