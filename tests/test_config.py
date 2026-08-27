@@ -68,7 +68,7 @@ def test_persona_recovery_request_budget_stays_within_schema_ceiling() -> None:
     config = load_config(Path("config"))
 
     assert config.persona is not None
-    assert config.persona.budget.request_limit == 180
+    assert config.persona.budget.request_limit == 190
     assert config.persona.budget.input_token_limit == 2_700_000
     assert config.persona.budget.cost_cny_limit == 24.0
 

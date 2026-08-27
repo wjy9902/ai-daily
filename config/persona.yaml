@@ -24,7 +24,7 @@ budget:
   # binding before current DeepSeek pricing can consume these token allowances.
   # Same-day recovery may accumulate schema retries that cost little or nothing;
   # money remains the binding safety control.
-  request_limit: 180
+  request_limit: 190
   input_token_limit: 2700000
   # The persona gateway reserves the worst case before a call. Two concurrent
   # Recovery calls can accumulate large reported reasoning usage. Keep tokens
