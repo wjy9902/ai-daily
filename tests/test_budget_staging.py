@@ -25,6 +25,7 @@ from test_content import FakeGateway, event, plan
 from ai_daily.budget import BudgetLedger, BudgetStage, StageBudgetExceeded
 from ai_daily.config import load_config
 from ai_daily.content import draft_selected, judge_events, plan_digest
+from ai_daily.models import ModelRun
 
 
 class StageRecordingGateway(FakeGateway):  # type: ignore[misc]
@@ -122,6 +123,40 @@ def test_a_full_issue_fits_inside_each_stage_allowance() -> None:
             f"{stage.value} allows {available} requests but a single issue can "
             f"need {needed}; a normal day would degrade on budget alone"
         )
+
+
+def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -> None:
+    config = load_config(Path("config"))
+    assert config.persona is not None
+    ledger = BudgetLedger(config.persona.budget)
+    planner = ModelRun(
+        role="persona_planner",
+        requested_provider="deepseek",
+        requested_model="deepseek-v4-pro",
+        actual_provider="deepseek",
+        actual_model="deepseek-v4-pro",
+        attempt=1,
+        status="ok",
+        latency_ms=1,
+        input_tokens=12_305,
+        output_tokens=23_663,
+        cost_cny=0.19,
+    )
+    ledger.record_requests(1, BudgetStage.PERSONA)
+    ledger.record(planner, BudgetStage.PERSONA)
+
+    for _ in range(config.persona.analyst_concurrency):
+        ledger.reserve(
+            BudgetStage.PERSONA,
+            2,
+            config.persona.max_call_cost_cny,
+            input_tokens=20_000,
+            output_tokens=96_000,
+        )
+
+    assert ledger.reserved_requests == 6
+    assert ledger.reserved_output_tokens == 288_000
+    assert ledger.remaining_cost() == pytest.approx(0.31)
 
 
 def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:
