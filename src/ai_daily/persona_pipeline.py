@@ -407,8 +407,14 @@ class PersonaPipeline:
         )
 
         def prepare(value: EditionAssembly) -> EditionDraft:
+            maximum = (
+                self.persona.standard_max_chars
+                if plan.edition_type == "standard"
+                else self.persona.no_major_max_chars
+            )
+            compact = _compact_edition_assembly(value, analyses, maximum)
             draft = _expand_edition_assembly(
-                value,
+                compact,
                 snapshot,
                 plan,
                 analyses,
@@ -815,6 +821,92 @@ def _expand_edition_item(
         analysis_confidence=source.analysis_confidence,
     )
     return result, item_claims
+
+
+def _compact_edition_assembly(
+    assembly: EditionAssembly,
+    analyses: list[AnalysisItem],
+    maximum: int,
+) -> EditionAssembly:
+    sources = {item.event_id: item for item in analyses}
+    items = [
+        item.model_copy(
+            update={
+                "confirmed_change": _safe_confirmed_change(
+                    item.confirmed_change, sources[item.event_id]
+                )
+            }
+        )
+        for item in assembly.items
+    ]
+    body_values = [
+        assembly.thesis,
+        *(value for item in items for value in _assembly_item_body_values(item)),
+        *assembly.watchlist,
+    ]
+    if sum(len(value.text) for value in body_values) <= maximum:
+        return assembly.model_copy(update={"items": items})
+    fixed = sum(len(item.confirmed_change.text) for item in items)
+    editable = [
+        assembly.thesis,
+        *(
+            value
+            for item in items
+            for value in _assembly_item_body_values(item)
+            if value is not item.confirmed_change
+        ),
+        *assembly.watchlist,
+    ]
+    cap = max(20, (maximum - fixed - 6 * len(editable)) // max(1, len(editable)))
+
+    def compact(value: AssemblyText | None) -> AssemblyText | None:
+        if value is None:
+            return None
+        return value.model_copy(update={"text": _compact_text(value.text, cap)})
+
+    compact_items = [
+        item.model_copy(
+            update={
+                "headline": compact(item.headline),
+                "importance": compact(item.importance),
+                "product_implication": compact(item.product_implication),
+                "recommended_action": compact(item.recommended_action),
+                "counter_case": compact(item.counter_case),
+                "watch_signal": compact(item.watch_signal),
+            }
+        )
+        for item in items
+    ]
+    return assembly.model_copy(
+        update={
+            "thesis": compact(assembly.thesis),
+            "items": compact_items,
+            "watchlist": [compact(value) for value in assembly.watchlist],
+        }
+    )
+
+
+def _assembly_item_body_values(item: EditionAssemblyItem) -> list[AssemblyText]:
+    return [
+        item.headline,
+        item.confirmed_change,
+        item.importance,
+        item.product_implication,
+        *(value for value in [item.recommended_action] if value is not None),
+        item.counter_case,
+        item.watch_signal,
+    ]
+
+
+def _compact_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    prefix = text[:limit]
+    boundaries = [prefix.rfind(mark) for mark in ("。", "；", "，", ".", ";", ",", " ")]
+    boundary = max(boundaries)
+    if boundary >= limit // 2:
+        return prefix[: boundary + 1].rstrip()
+    return prefix.rstrip()
 
 
 def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
