@@ -85,9 +85,9 @@ roles:
       provider: deepseek
       model: deepseek-v4-flash
       timeout_seconds: 120
-      # This role needs reliable schema emission more than deep reasoning. The
-      # same model already produces stable structured judge output in production.
-      max_output_tokens: 24000
+      # The final JSON is compact, but the provider can consume more than 24k
+      # reasoning tokens before emitting it. Match the proven long-form ceiling.
+      max_output_tokens: 48000
       temperature: 0.1
       input_cost_cny_per_million: 1.01
       output_cost_cny_per_million: 2.02
