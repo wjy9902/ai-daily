@@ -64,6 +64,13 @@ def test_normal_editorial_run_must_fit_model_request_budget() -> None:
         AppConfig.model_validate(value)
 
 
+def test_persona_recovery_request_budget_stays_within_schema_ceiling() -> None:
+    config = load_config(Path("config"))
+
+    assert config.persona is not None
+    assert config.persona.budget.request_limit == 120
+
+
 def test_huggingface_model_source_requires_namespace() -> None:
     with pytest.raises(ValidationError, match="require namespace"):
         SourceConfig(
