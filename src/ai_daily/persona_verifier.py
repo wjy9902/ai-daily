@@ -17,6 +17,7 @@ from ai_daily.persona_models import (
     PersonaRuntimeConfig,
     PublicTextBlock,
     UpstreamSnapshot,
+    sha256_payload,
 )
 
 FIRST_PERSON_RE = re.compile(r"(?:^|[^你他她它])(?:我|我的|我们|咱们|本人)")
@@ -144,12 +145,37 @@ def normalize_analysis_item(
     scope: VerificationScope,
 ) -> AnalysisItem:
     """Canonicalize evidence-bound structure without rewriting model judgments."""
-    path_by_claim: dict[str, str] = {}
-    for path, block in _analysis_blocks(item):
-        for claim_id in block.claim_ids:
-            previous = path_by_claim.setdefault(claim_id, path)
-            if previous != path:
-                raise ValueError(f"claim {claim_id} is reused across public blocks")
+    claim_templates = _claim_map(item.claims)
+    claims_to_normalize: list[AnalysisClaim] = []
+    block_updates: dict[str, PublicTextBlock] = {}
+    for name in ANALYSIS_BLOCK_NAMES:
+        block = getattr(item, name)
+        if block is None:
+            continue
+        path = f"items[0].{name}"
+        canonical_ids: list[str] = []
+        for position, claim_id in enumerate(block.claim_ids):
+            try:
+                template = claim_templates[claim_id]
+            except KeyError as error:
+                raise ValueError(f"unknown claim id at {path}: {claim_id}") from error
+            canonical_id = "claim-" + sha256_payload(
+                {
+                    "event_id": item.event_id,
+                    "field_path": path,
+                    "position": position,
+                    "source_claim_id": claim_id,
+                }
+            )[:20]
+            canonical_ids.append(canonical_id)
+            claims_to_normalize.append(
+                template.model_copy(
+                    update={"claim_id": canonical_id, "field_path": path}
+                )
+            )
+        block_updates[name] = block.model_copy(update={"claim_ids": canonical_ids})
+    if len(claims_to_normalize) > 12:
+        raise ValueError(f"item {item.event_id} contains more than 12 public claims")
 
     claims: list[AnalysisClaim] = []
     current = {
@@ -172,10 +198,8 @@ def normalize_analysis_item(
             {key: value.source_excerpt for key, value in scope.memories.items()},
         ),
     }
-    for claim in item.claims:
+    for claim in claims_to_normalize:
         claim_updates: dict[str, str] = {}
-        if claim.claim_id in path_by_claim:
-            claim_updates["field_path"] = path_by_claim[claim.claim_id]
         quote_updates: dict[str, object] = {}
         if claim.claim_type in sources:
             source_kind, excerpts = sources[claim.claim_type]
@@ -207,9 +231,9 @@ def normalize_analysis_item(
         claims.append(claim.model_copy(update={**claim_updates, **quote_updates}))
 
     claims_by_id = {claim.claim_id: claim for claim in claims}
-    item_updates: dict[str, object] = {"claims": claims}
+    item_updates: dict[str, object] = {"claims": claims, **block_updates}
     for name in ANALYSIS_BLOCK_NAMES:
-        block = getattr(item, name)
+        block = block_updates.get(name)
         if block is None:
             continue
         text = "".join(claims_by_id[claim_id].text for claim_id in block.claim_ids)
