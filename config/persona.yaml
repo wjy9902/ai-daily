@@ -9,7 +9,7 @@ memory_limit: 16
 # retry while preserving every selected analysis.
 analyst_concurrency: 2
 # Minimum per-call reservation. The gateway raises this to the prompt/token
-# price ceiling (about ¥0.6-1.0 for current calls), while the ¥8 cap is absolute.
+# price ceiling (about ¥0.6-1.0 for current calls), while the ¥10 cap is absolute.
 max_call_cost_cny: 0.25
 baseline_window_days: 90
 evidence_retention_days: 120
@@ -20,14 +20,14 @@ no_major_max_chars: 600
 publish_mode: draft_only
 ai_disclosure: 本文由 AI 参与资料整理和初稿生成，并经过证据约束与自动审稿。
 budget:
-  # These are runaway backstops, not normal-run quotas. The ¥8 ceiling remains
+  # These are runaway backstops, not normal-run quotas. The ¥10 ceiling remains
   # binding before current DeepSeek pricing can consume these token allowances.
   request_limit: 100
   input_token_limit: 1500000
   # The persona gateway reserves the worst case before a call. Three concurrent
   # 48k-output calls with one schema retry can reserve 288k even though actual
-  # usage is much lower. Keep tokens non-binding and let the ¥8 ceiling stop spend.
+  # usage is much lower. Keep tokens non-binding and let the ¥10 ceiling stop spend.
   output_token_limit: 1200000
   # Fresh successful editions are expected to stay around ¥1-2. The higher hard
   # stop preserves same-day recovery after charged provider or validation failures.
-  cost_cny_limit: 8.0
+  cost_cny_limit: 10.0

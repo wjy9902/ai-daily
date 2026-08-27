@@ -690,6 +690,13 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
         update={
             "field_path": "items[1].headline_block",
             "text": "判断：GPT-6 将成本降低 90%。",
+            "quotes": [
+                ClaimQuote(
+                    source_kind="current_evidence",
+                    source_id="event-0-1",
+                    quote="This unsupported quote should be discarded.",
+                )
+            ],
         }
     )
     bad_path = item.model_copy(update={"claims": [wrong_path, *item.claims[1:]]})
@@ -713,6 +720,7 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     assert normalized.claims[0].field_path == "items[0].headline_block"
     assert "GPT-6" not in normalized.claims[0].text
     assert "90%" not in normalized.claims[0].text
+    assert normalized.claims[0].quotes == []
 
 
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:
