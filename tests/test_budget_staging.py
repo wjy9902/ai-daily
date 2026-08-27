@@ -129,6 +129,22 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
     config = load_config(Path("config"))
     assert config.persona is not None
     ledger = BudgetLedger(config.persona.budget)
+    failed_attempt = ModelRun(
+        role="persona_planner",
+        requested_provider="deepseek",
+        requested_model="deepseek-v4-pro",
+        actual_provider="deepseek",
+        actual_model="deepseek-v4-pro",
+        attempt=1,
+        status="failed",
+        latency_ms=1,
+        input_tokens=64_326,
+        output_tokens=61_410,
+        cost_cny=0.585767,
+        error_type="SchemaError",
+    )
+    ledger.record_requests(7, BudgetStage.PERSONA)
+    ledger.record(failed_attempt, BudgetStage.PERSONA)
     planner = ModelRun(
         role="persona_planner",
         requested_provider="deepseek",
@@ -140,7 +156,7 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
         latency_ms=1,
         input_tokens=12_305,
         output_tokens=23_663,
-        cost_cny=0.19,
+        cost_cny=0.25,
     )
     ledger.record_requests(1, BudgetStage.PERSONA)
     ledger.record(planner, BudgetStage.PERSONA)
@@ -156,7 +172,7 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
 
     assert ledger.reserved_requests == 6
     assert ledger.reserved_output_tokens == 288_000
-    assert ledger.remaining_cost() == pytest.approx(0.31)
+    assert ledger.remaining_cost() == pytest.approx(1.164233)
 
 
 def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:
