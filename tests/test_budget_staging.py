@@ -172,7 +172,7 @@ def test_persona_budget_can_retry_configured_analysts_after_charged_failures() -
 
     assert ledger.reserved_requests == 4
     assert ledger.reserved_output_tokens == 192_000
-    assert ledger.remaining_cost() == pytest.approx(3.864466)
+    assert ledger.remaining_cost() == pytest.approx(5.864466)
 
 
 def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:

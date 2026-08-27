@@ -221,13 +221,13 @@ def normalize_analysis_item(
             claim_updates["text"] = "；".join(quote.quote for quote in quotes)
         elif (prefix := INTERPRETIVE_PREFIX.get(claim.claim_type)) is not None:
             quote_updates = {"quotes": []}
-            text = claim.text
-            for token in sorted(
-                set(ANCHOR_RE.findall(text.removeprefix(prefix))), key=len, reverse=True
-            ):
-                replacement = "相关指标" if token[0].isdigit() else "相关版本"
-                text = text.replace(token, replacement)
-            claim_updates["text"] = text
+            body = ANCHOR_RE.sub(
+                lambda match: "相关指标"
+                if match.group(0)[0].isdigit()
+                else "相关版本",
+                claim.text.removeprefix(prefix),
+            )
+            claim_updates["text"] = prefix + body
         claims.append(claim.model_copy(update={**claim_updates, **quote_updates}))
 
     claims_by_id = {claim.claim_id: claim for claim in claims}
