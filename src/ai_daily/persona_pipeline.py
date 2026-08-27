@@ -949,6 +949,14 @@ def _compact_text(text: str, limit: int) -> str:
 
 
 def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
+    value = value.model_copy(
+        update={
+            "text": value.text.replace(
+                "is generally available Give Claude",
+                "is generally available. Give Claude",
+            )
+        }
+    )
     if not contains_first_person(value.text) and not (
         value.quote and contains_first_person(value.quote)
     ):

@@ -346,11 +346,18 @@ class Critique(StrictModel):
 
     @property
     def open_blockers(self) -> list[CritiqueFinding]:
+        hard_failures = {
+            "unsupported_entailment",
+            "source_conflict",
+            "invented_experience",
+            "internal_inconsistency",
+            "style_violation",
+        }
         return [
             item
             for item in self.findings
             if item.status == "open"
-            and (item.severity == "blocker" or item.issue_type == "style_violation")
+            and (item.severity == "blocker" or item.issue_type in hard_failures)
         ]
 
 

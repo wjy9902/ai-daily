@@ -433,6 +433,24 @@ def test_confirmed_change_uses_verified_non_first_person_fact() -> None:
     assert result.source_id == "event-0-1"
 
 
+def test_confirmed_change_repairs_known_claude_source_punctuation() -> None:
+    source = _standard_item("event-0", 0)
+    quote = "Claude in Chrome is generally available Give Claude a task in your browser."
+    value = AssemblyText(
+        text=quote,
+        source_kind="current_evidence",
+        source_id="event-0-1",
+        quote=quote,
+    )
+
+    result = _safe_confirmed_change(value, source)
+
+    assert result.text == (
+        "Claude in Chrome is generally available. Give Claude a task in your browser."
+    )
+    assert result.quote == quote
+
+
 def _standard_draft(marker: str) -> EditionDraft:
     top_rows = [
         ("claim-standard-title", "title_block", "判断：两项变化值得 AI 产品团队今天处理"),
@@ -2710,14 +2728,26 @@ def test_critic_cannot_self_resolve_a_finding() -> None:
         _validate_critique(critique, "a" * 64, 1)
 
 
-def test_style_violation_warning_is_a_release_blocker() -> None:
-    finding = CritiqueFinding(
-        blocker_id="blocker-broken-sentence",
-        severity="warning",
-        field_path="items[0].confirmed_change_block",
-        issue_type="style_violation",
-        explanation="句子缺少必要标点。",
-        status="open",
+@pytest.mark.parametrize(
+    "issue_type",
+    [
+        "unsupported_entailment",
+        "source_conflict",
+        "invented_experience",
+        "internal_inconsistency",
+        "style_violation",
+    ],
+)
+def test_hard_failure_warning_is_a_release_blocker(issue_type: str) -> None:
+    finding = CritiqueFinding.model_validate(
+        {
+            "blocker_id": "blocker-hard-failure",
+            "severity": "warning",
+            "field_path": "items[0].confirmed_change_block",
+            "issue_type": issue_type,
+            "explanation": "这类问题不能进入发布稿。",
+            "status": "open",
+        }
     )
     critique = Critique(
         draft_sha256="a" * 64,
