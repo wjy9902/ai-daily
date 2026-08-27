@@ -723,6 +723,31 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     assert normalized.claims[0].quotes == []
 
 
+def test_analysis_normalization_gives_reused_claims_stable_unique_ids(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    item = _standard_item("event-0", 0)
+    reused_id = item.headline_block.claim_ids[0]
+    reused = item.model_copy(
+        update={
+            "importance_block": item.importance_block.model_copy(
+                update={"text": item.headline_block.text, "claim_ids": [reused_id]}
+            )
+        }
+    )
+
+    normalized = normalize_analysis_item(reused, snapshot, _scope())
+    repeated = normalize_analysis_item(reused, snapshot, _scope())
+
+    verify_analysis_item(normalized, snapshot, _scope())
+    assert normalized.headline_block.claim_ids != normalized.importance_block.claim_ids
+    assert normalized == repeated
+    assert len(normalized.claims) == len(
+        {claim.claim_id for claim in normalized.claims}
+    )
+
+
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:
     config = load_config(Path("config")).persona
     assert config is not None
