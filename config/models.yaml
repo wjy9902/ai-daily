@@ -83,14 +83,14 @@ roles:
     <<: *persona_editor
     primary:
       provider: deepseek
-      model: deepseek-v4-flash
-      timeout_seconds: 120
+      model: deepseek-v4-pro
+      timeout_seconds: 180
       # Thinking is disabled only for final assembly, so reserve for the compact
       # edition JSON rather than hidden reasoning tokens.
       max_output_tokens: 20000
       temperature: 0.1
-      input_cost_cny_per_million: 1.01
-      output_cost_cny_per_million: 2.02
+      input_cost_cny_per_million: 3.13
+      output_cost_cny_per_million: 6.26
     fallback:
       provider: openai
       model: gpt-5.6-terra
