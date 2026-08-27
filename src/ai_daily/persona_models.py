@@ -264,7 +264,6 @@ class AssemblyText(StrictModel):
 
 class AssemblyInterpretiveText(AssemblyText):
     text: str = Field(min_length=1, max_length=30)
-    quote: None = None
 
 
 class EditionAssemblyItem(StrictModel):
