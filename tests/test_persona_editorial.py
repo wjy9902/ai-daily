@@ -22,6 +22,7 @@ from ai_daily.persona_models import (
     AnalysisClaim,
     AnalysisItem,
     AnalystOutput,
+    AssemblyText,
     ClaimQuote,
     Critique,
     CritiqueFinding,
@@ -2072,26 +2073,45 @@ def test_finalizer_must_declare_real_public_field_changes() -> None:
 
 
 def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
+    claims = {claim.claim_id: claim for claim in draft.claims}
+
+    def compact(block: PublicTextBlock | None) -> AssemblyText | None:
+        if block is None:
+            return None
+        assert len(block.claim_ids) == 1
+        claim = claims[block.claim_ids[0]]
+        sources = (
+            ("current_evidence", claim.current_evidence_ids),
+            ("baseline_evidence", claim.baseline_evidence_ids),
+            ("experience_memory", claim.experience_memory_ids),
+        )
+        source_kind, source_ids = next((kind, ids) for kind, ids in sources if ids)
+        return AssemblyText(
+            text=claim.text,
+            claim_type=claim.claim_type,
+            source_kind=cast(Any, source_kind),
+            source_id=source_ids[0],
+            quote=claim.quotes[0].quote if claim.quotes else None,
+        )
+
     return EditionAssembly(
-        title_block=draft.title_block,
-        digest_block=draft.digest_block,
-        thesis_block=draft.thesis_block,
+        title=compact(draft.title_block),
+        digest=compact(draft.digest_block),
+        thesis=compact(draft.thesis_block),
         items=[
             EditionAssemblyItem(
                 event_id=item.event_id,
-                headline_block=item.headline_block,
-                confirmed_change_block=item.confirmed_change_block,
-                delta_from_before_block=item.delta_from_before_block,
-                importance_block=item.importance_block,
-                product_implication_block=item.product_implication_block,
-                recommended_action_block=item.recommended_action_block,
-                counter_case_block=item.counter_case_block,
-                watch_signal_block=item.watch_signal_block,
+                headline=compact(item.headline_block),
+                confirmed_change=compact(item.confirmed_change_block),
+                importance=compact(item.importance_block),
+                product_implication=compact(item.product_implication_block),
+                recommended_action=compact(item.recommended_action_block),
+                counter_case=compact(item.counter_case_block),
+                watch_signal=compact(item.watch_signal_block),
             )
             for item in draft.items
         ],
-        watchlist_blocks=draft.watchlist_blocks,
-        claims=draft.claims,
+        watchlist=[compact(block) for block in draft.watchlist_blocks],
     )
 
 
