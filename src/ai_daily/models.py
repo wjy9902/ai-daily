@@ -239,7 +239,7 @@ class ModelEndpoint(StrictModel):
     provider: Literal["alibaba", "deepseek", "openai", "ollama"]
     model: str
     timeout_seconds: float = Field(gt=0, le=180)
-    max_output_tokens: int = Field(gt=0, le=30000)
+    max_output_tokens: int = Field(gt=0, le=65536)
     temperature: float = Field(ge=0, lt=2)
     input_cost_cny_per_million: float = Field(ge=0)
     output_cost_cny_per_million: float = Field(ge=0)
