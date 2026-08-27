@@ -4,11 +4,13 @@ import re
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Literal
 
-from ai_daily.content import quote_supports
+from ai_daily.content import QUOTE_MIN_CHARS, normalize_quote_text, quote_supports
 from ai_daily.persona_models import (
     AnalysisClaim,
     AnalysisItem,
+    ClaimQuote,
     EditionDraft,
     EditorialMemory,
     PersonaEdition,
@@ -136,7 +138,11 @@ def verify_analysis_item(
             raise ValueError(f"item {item.event_id} delta lacks current or baseline evidence")
 
 
-def normalize_analysis_item(item: AnalysisItem) -> AnalysisItem:
+def normalize_analysis_item(
+    item: AnalysisItem,
+    snapshot: UpstreamSnapshot,
+    scope: VerificationScope,
+) -> AnalysisItem:
     """Canonicalize evidence-bound structure without rewriting model judgments."""
     path_by_claim: dict[str, str] = {}
     for path, block in _analysis_blocks(item):
@@ -146,13 +152,50 @@ def normalize_analysis_item(item: AnalysisItem) -> AnalysisItem:
                 raise ValueError(f"claim {claim_id} is reused across public blocks")
 
     claims: list[AnalysisClaim] = []
+    current = {
+        evidence.evidence_id: evidence.excerpt
+        for bundle in snapshot.evidence_bundles
+        if bundle.event_id == item.event_id
+        for evidence in bundle.evidence
+    }
+    sources: dict[
+        str,
+        tuple[
+            Literal["current_evidence", "baseline_evidence", "experience_memory"],
+            dict[str, str],
+        ],
+    ] = {
+        "current_fact": ("current_evidence", current),
+        "baseline_fact": ("baseline_evidence", scope.baseline_evidence),
+        "experience_fact": (
+            "experience_memory",
+            {key: value.source_excerpt for key, value in scope.memories.items()},
+        ),
+    }
     for claim in item.claims:
         claim_updates: dict[str, str] = {}
         if claim.claim_id in path_by_claim:
             claim_updates["field_path"] = path_by_claim[claim.claim_id]
-        if claim.claim_type in {"current_fact", "baseline_fact", "experience_fact"}:
-            claim_updates["text"] = "；".join(quote.quote for quote in claim.quotes)
-        claims.append(claim.model_copy(update=claim_updates))
+        quote_updates: dict[str, object] = {}
+        if claim.claim_type in sources:
+            source_kind, excerpts = sources[claim.claim_type]
+            source_ids = {
+                "current_fact": claim.current_evidence_ids,
+                "baseline_fact": claim.baseline_evidence_ids,
+                "experience_fact": claim.experience_memory_ids,
+            }[claim.claim_type]
+            quotes = [
+                ClaimQuote(
+                    source_kind=source_kind,
+                    source_id=source_id,
+                    quote=_verbatim_excerpt(excerpts[source_id]),
+                )
+                for source_id in source_ids
+                if source_id in excerpts
+            ]
+            quote_updates = {"quotes": quotes}
+            claim_updates["text"] = "；".join(quote.quote for quote in quotes)
+        claims.append(claim.model_copy(update={**claim_updates, **quote_updates}))
 
     claims_by_id = {claim.claim_id: claim for claim in claims}
     item_updates: dict[str, object] = {"claims": claims}
@@ -163,6 +206,17 @@ def normalize_analysis_item(item: AnalysisItem) -> AnalysisItem:
         text = "".join(claims_by_id[claim_id].text for claim_id in block.claim_ids)
         item_updates[name] = block.model_copy(update={"text": text})
     return item.model_copy(update=item_updates)
+
+
+def _verbatim_excerpt(excerpt: str, limit: int = 300) -> str:
+    compact = " ".join(excerpt.split()).strip()
+    if len(normalize_quote_text(compact)) < QUOTE_MIN_CHARS:
+        raise ValueError("evidence excerpt is too short for a factual quote")
+    if len(compact) <= limit:
+        return compact
+    prefix = compact[:limit]
+    boundary = max(prefix.rfind(mark) for mark in ("。", ".", "\uff01", "!", "\uff1f", "?"))
+    return prefix[: boundary + 1] if boundary >= QUOTE_MIN_CHARS else prefix
 
 
 def _analysis_blocks(item: AnalysisItem) -> Iterable[tuple[str, PublicTextBlock]]:

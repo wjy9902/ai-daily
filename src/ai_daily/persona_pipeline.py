@@ -608,7 +608,7 @@ def _validate_analysis(
     snapshot: Any,
     scope: VerificationScope,
 ) -> AnalystOutput:
-    item = normalize_analysis_item(output.item)
+    item = normalize_analysis_item(output.item, snapshot, scope)
     if item.event_id != selection.event_id or item.grade != selection.grade:
         raise ValueError("analyst output does not match selection")
     if not set(item.evidence_ids) <= set(selection.evidence_ids):

@@ -691,11 +691,20 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="field_path mismatch"):
         verify_analysis_item(bad_path, snapshot, _scope())
 
+    unsupported_quote = ClaimQuote(
+        source_kind="current_evidence",
+        source_id="event-0-1",
+        quote="This sentence is not present in the cited evidence.",
+    )
+    unsupported_fact = bad.claims[1].model_copy(update={"quotes": [unsupported_quote]})
     normalized = normalize_analysis_item(
-        bad_path.model_copy(update={"claims": [wrong_path, *bad.claims[1:]]})
+        bad_path.model_copy(update={"claims": [wrong_path, unsupported_fact, *bad.claims[2:]]}),
+        snapshot,
+        _scope(),
     )
     verify_analysis_item(normalized, snapshot, _scope())
     assert normalized.claims[1].text == normalized.claims[1].quotes[0].quote
+    assert normalized.claims[1].quotes[0].quote == QUOTE
     assert normalized.claims[0].field_path == "items[0].headline_block"
 
 
