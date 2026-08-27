@@ -51,7 +51,7 @@ roles:
       # statement once the fallback has actually been exercised.
       input_cost_cny_per_million: 12.0
       output_cost_cny_per_million: 96.0
-  editor:
+  editor: &persona_editor
     primary:
       provider: deepseek
       model: deepseek-v4-pro
@@ -75,3 +75,15 @@ roles:
       # Same estimate caveat as above.
       input_cost_cny_per_million: 12.0
       output_cost_cny_per_million: 96.0
+  persona_planner:
+    <<: *persona_editor
+  persona_analyst:
+    <<: *persona_editor
+  persona_edition_editor:
+    <<: *persona_editor
+  persona_critic:
+    <<: *persona_editor
+  persona_finalizer:
+    <<: *persona_editor
+  persona_baseline:
+    <<: *persona_editor

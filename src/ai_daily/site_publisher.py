@@ -29,6 +29,12 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from .persona_models import PersonaEdition
+from .persona_render import (
+    render_persona,
+    render_persona_index,
+    render_persona_placeholder,
+)
 from .publication import (
     DailyPublication,
     PublicationLevel,
@@ -76,6 +82,10 @@ class SiteLayout:
         return self.status_dir / "status.json"
 
     @property
+    def persona_status_file(self) -> Path:
+        return self.status_dir / "persona.json"
+
+    @property
     def fallback(self) -> Path:
         return self.root / "fallback"
 
@@ -84,8 +94,40 @@ class SiteLayout:
         return self.root / "budget"
 
     @property
+    def persona_budget(self) -> Path:
+        return self.root / "persona-budget"
+
+    @property
+    def upstream(self) -> Path:
+        return self.root / "upstream"
+
+    @property
+    def upstream_objects(self) -> Path:
+        return self.upstream / "objects"
+
+    @property
+    def upstream_by_date(self) -> Path:
+        return self.upstream / "by-date"
+
+    @property
+    def persona_editions(self) -> Path:
+        return self.root / "persona-editions"
+
+    @property
+    def persona_runs(self) -> Path:
+        return self.root / "persona-runs"
+
+    @property
+    def wechat_targets(self) -> Path:
+        return self.root / "wechat-targets"
+
+    @property
     def lock_file(self) -> Path:
         return self.root / ".publish.lock"
+
+    @property
+    def persona_lock_file(self) -> Path:
+        return self.root / ".persona-run.lock"
 
     def ensure(self) -> None:
         for path in (
@@ -94,6 +136,12 @@ class SiteLayout:
             self.status_dir,
             self.fallback,
             self.budget,
+            self.persona_budget,
+            self.upstream_objects,
+            self.upstream_by_date,
+            self.persona_editions,
+            self.persona_runs,
+            self.wechat_targets,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -102,6 +150,27 @@ class SiteLayout:
 
     def budget_path(self, target_date: date) -> Path:
         return self.budget / f"{target_date.isoformat()}.json"
+
+    def persona_budget_path(self, target_date: date) -> Path:
+        return self.persona_budget / f"{target_date.isoformat()}.json"
+
+    def upstream_object_path(self, marker: str) -> Path:
+        return self.upstream_objects / f"{marker}.json"
+
+    def upstream_pointer_path(self, target_date: date) -> Path:
+        return self.upstream_by_date / f"{target_date.isoformat()}.json"
+
+    def persona_edition_path(self, target_date: date) -> Path:
+        return self.persona_editions / f"{target_date.isoformat()}.json"
+
+    def wechat_target_path(self, target_date: date) -> Path:
+        return self.wechat_targets / f"{target_date.isoformat()}.json"
+
+    def persona_manifest_path(self, target_date: date) -> Path:
+        return self.persona_runs / target_date.isoformat() / "daily-auto-manifest.json"
+
+    def persona_render_receipt_path(self, target_date: date) -> Path:
+        return self.persona_runs / target_date.isoformat() / "render-receipt.json"
 
 
 @contextmanager
@@ -115,6 +184,23 @@ def publication_lock(layout: SiteLayout) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise PublicationRefused("another publication run holds the lock") from error
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+@contextmanager
+def persona_run_lock(layout: SiteLayout) -> Iterator[None]:
+    """Allow only one persona/model run against a site's daily ledger."""
+
+    layout.root.mkdir(parents=True, exist_ok=True)
+    handle = layout.persona_lock_file.open("w")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise PublicationRefused("another persona run holds the lock") from error
         yield
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
@@ -161,6 +247,37 @@ def recent_publications(layout: SiteLayout, limit: int) -> list[DailyPublication
         if publication is not None:
             publications.append(publication)
     return publications
+
+
+def recent_persona_editions(
+    layout: SiteLayout,
+    limit: int | None = None,
+    pending_publication: DailyPublication | None = None,
+) -> list[PersonaEdition]:
+    editions: list[PersonaEdition] = []
+    for path in sorted(layout.persona_editions.glob("*.json"), reverse=True):
+        try:
+            edition = PersonaEdition.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        try:
+            publication = (
+                pending_publication
+                if pending_publication is not None
+                and pending_publication.target_date == edition.target_date
+                else read_publication(layout, edition.target_date)
+            )
+        except (OSError, ValueError):
+            publication = None
+        if (
+            edition.hash_is_valid()
+            and publication is not None
+            and publication.marker == edition.input_marker
+        ):
+            editions.append(edition)
+        if limit is not None and len(editions) >= limit:
+            break
+    return editions
 
 
 def build_archive(layout: SiteLayout, publications: list[DailyPublication]) -> list[ArchiveEntry]:
@@ -223,11 +340,29 @@ def guard_same_day_overwrite(
     if existing is None:
         return None
     if is_upgrade(existing.level, publication.level):
+        if _persona_date_is_frozen(layout, existing):
+            raise PublicationRefused(
+                f"{publication.target_date} persona edition is already frozen; "
+                "the upstream marker cannot change"
+            )
         return None
     raise PublicationRefused(
         f"{publication.target_date} is already published at {existing.level.value}; "
         f"{publication.level.value} would not improve it"
     )
+
+
+def _persona_date_is_frozen(layout: SiteLayout, existing: DailyPublication) -> bool:
+    if layout.wechat_target_path(existing.target_date).exists():
+        return True
+    path = layout.persona_edition_path(existing.target_date)
+    if not path.exists():
+        return False
+    try:
+        edition = PersonaEdition.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return edition.hash_is_valid() and edition.input_marker == existing.marker
 
 
 def _write_atomic(path: Path, payload: str) -> None:
@@ -280,12 +415,52 @@ def render_release(
     for item in history[:RSS_LIMIT]:
         issue_dir = daily_dir / item.target_date.isoformat()
         issue_dir.mkdir(parents=True, exist_ok=True)
-        (issue_dir / "index.html").write_text(
-            render_daily(item, site_base_url), encoding="utf-8"
-        )
+        (issue_dir / "index.html").write_text(render_daily(item, site_base_url), encoding="utf-8")
+    _render_persona_section(layout, release, site_base_url, publication)
     _copy_assets(release)
     _assert_marker_rendered(release, publication)
     return release
+
+
+def _render_persona_section(
+    layout: SiteLayout,
+    release: Path,
+    site_base_url: str,
+    pending_publication: DailyPublication,
+) -> None:
+    editions = recent_persona_editions(layout, pending_publication=pending_publication)
+    target = release / "jiayu"
+    target.mkdir()
+    newest_path = next(iter(sorted(layout.persona_editions.glob("*.json"), reverse=True)), None)
+    newest_is_renderable = bool(
+        newest_path and editions and newest_path.stem == editions[0].target_date.isoformat()
+    )
+    for edition in editions:
+        rendered = render_persona(edition, site_base_url)
+        page = target / f"{edition.target_date.isoformat()}.html"
+        page.write_text(rendered.web_html, encoding="utf-8")
+    if newest_is_renderable:
+        (target / "index.html").write_text(
+            render_persona_index(editions[0], editions, site_base_url),
+            encoding="utf-8",
+        )
+    else:
+        (target / "index.html").write_text(
+            render_persona_placeholder(site_base_url, newest_path is not None),
+            encoding="utf-8",
+        )
+        if newest_path is not None:
+            write_persona_status(
+                layout,
+                {
+                    "editorial_state": "held",
+                    "site_state": "failed",
+                    "wechat_state": "not_attempted",
+                    "aggregate_state": "held",
+                    "action": "stale_or_invalid_edition_held",
+                    "edition_path": str(newest_path),
+                },
+            )
 
 
 def _copy_assets(release: Path) -> None:
@@ -352,6 +527,20 @@ def write_status(layout: SiteLayout, status: dict[str, Any]) -> None:
 
     layout.status_dir.mkdir(parents=True, exist_ok=True)
     _write_atomic(layout.status_file, json.dumps(status, ensure_ascii=False, indent=2))
+
+
+def write_persona_status(layout: SiteLayout, status: dict[str, Any]) -> None:
+    """Persist the independent persona/WeChat state without clobbering daily status."""
+
+    layout.status_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        **status,
+    }
+    _write_atomic(
+        layout.persona_status_file,
+        json.dumps(payload, ensure_ascii=False, indent=2),
+    )
 
 
 def publish_site(

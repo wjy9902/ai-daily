@@ -107,9 +107,7 @@ def test_a_failed_stage_carries_its_judge_decisions_out(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("requests", [1, 20, 40])
-def test_the_stored_ledger_is_the_only_source_of_truth(
-    tmp_path: Path, requests: int
-) -> None:
+def test_the_stored_ledger_is_the_only_source_of_truth(tmp_path: Path, requests: int) -> None:
     pipeline = _pipeline(tmp_path)
     pipeline.layout.ensure()
     pipeline._bind_daily_budget(TARGET)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,14 @@ def write_artifact(path: Path, value: BaseModel | Sequence[BaseModel] | dict[str
         payload = [item.model_dump(mode="json") for item in value]
     else:
         payload = value
-    temporary = path.with_suffix(f"{path.suffix}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)

@@ -176,6 +176,7 @@ def _header(prefix: str) -> list[str]:
         '<nav class="site-nav">',
         f'<a href="{_t(prefix)}index.html">今日</a>',
         f'<a href="{_t(prefix)}archive.html">归档</a>',
+        f'<a href="{_t(prefix)}jiayu/index.html">甲鱼主编版</a>',
         f'<a href="{_t(prefix)}rss.xml">RSS</a>',
         "</nav>",
         "</header>",
@@ -277,13 +278,9 @@ def _story_card(card: StoryCard) -> list[str]:
         f'<p class="story-importance"><strong>为什么重要：</strong>{_t(card.why_it_matters)}</p>',
     ]
     if card.action:
-        lines.append(
-            f'<p class="story-action"><strong>可以怎么用：</strong>{_t(card.action)}</p>'
-        )
+        lines.append(f'<p class="story-action"><strong>可以怎么用：</strong>{_t(card.action)}</p>')
     if card.caveat:
-        lines.append(
-            f'<p class="story-caveat"><strong>局限/争议：</strong>{_t(card.caveat)}</p>'
-        )
+        lines.append(f'<p class="story-caveat"><strong>局限/争议：</strong>{_t(card.caveat)}</p>')
     lines.extend(
         [
             f'<p class="story-sources"><strong>来源：</strong>{_source_links(card.sources)}</p>',
@@ -359,8 +356,7 @@ def _issue(publication: DailyPublication, *, prefix: str, permalink: bool) -> li
     lines.extend(_issue_notice(publication))
     if publication.highlight:
         lines.append(
-            f'<p class="issue-highlight"><strong>今日亮点：</strong>'
-            f"{_t(publication.highlight)}</p>"
+            f'<p class="issue-highlight"><strong>今日亮点：</strong>{_t(publication.highlight)}</p>'
         )
     if level in BRIEF_ONLY_LEVELS:
         lines.extend(_brief_section(publication.briefs))
@@ -611,8 +607,7 @@ def render_rss(publications: Sequence[DailyPublication], site_base_url: str) -> 
         f"<link>{_x(base)}/</link>",
         f"<description>{_x(SITE_DESCRIPTION)}</description>",
         "<language>zh-cn</language>",
-        f'<atom:link href="{_x(base)}/rss.xml" rel="self" '
-        'type="application/rss+xml"></atom:link>',
+        f'<atom:link href="{_x(base)}/rss.xml" rel="self" type="application/rss+xml"></atom:link>',
     ]
     if ordered:
         lines.append(f"<lastBuildDate>{_x(_rfc822(ordered[0].generated_at))}</lastBuildDate>")

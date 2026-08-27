@@ -137,10 +137,13 @@ time {
 }
 
 .site-title {
+  align-items: center;
   color: var(--ink);
+  display: inline-flex;
   font-size: 1.05rem;
   font-weight: 750;
   letter-spacing: 0.01em;
+  min-height: 44px;
 }
 
 .site-title:hover {
@@ -153,8 +156,11 @@ time {
 }
 
 .site-nav a {
+  align-items: center;
   color: var(--muted);
+  display: inline-flex;
   font-size: 0.86rem;
+  min-height: 44px;
 }
 
 .site-main {
@@ -184,6 +190,107 @@ time {
   font-weight: 760;
   letter-spacing: -0.01em;
   margin-bottom: 1.1rem;
+}
+
+/* ---------- 甲鱼主编版 ---------- */
+
+.persona-edition h1 {
+  font-size: clamp(1.7rem, 7vw, 2.35rem);
+  line-height: 1.24;
+  margin: 0.35rem 0 0.9rem;
+}
+
+.persona-kicker,
+.persona-date,
+.persona-disclosure {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.persona-date {
+  margin-top: 0.3rem;
+}
+
+.persona-digest {
+  border-left: 3px solid var(--accent);
+  color: var(--ink-soft);
+  font-size: 1.05rem;
+  padding-left: 0.9rem;
+}
+
+.persona-thesis {
+  font-weight: 650;
+  margin-top: 1.1rem;
+}
+
+.persona-item,
+.persona-watch,
+.persona-sources {
+  border-top: 1px solid var(--rule);
+  margin-top: 1.8rem;
+  padding-top: 1.2rem;
+}
+
+.persona-item h2,
+.persona-watch h2,
+.persona-sources h2 {
+  font-size: 1.2rem;
+  line-height: 1.4;
+  margin-bottom: 0.8rem;
+}
+
+.persona-item p + p {
+  margin-top: 0.72rem;
+}
+
+.persona-watch ul,
+.persona-sources ul {
+  list-style: disc;
+  padding-left: 1.2rem;
+}
+
+.persona-sources {
+  overflow-wrap: anywhere;
+}
+
+.persona-disclosure {
+  margin-top: 1.5rem;
+}
+
+.persona-back {
+  border-top: 1px solid var(--rule);
+  margin-top: 1.8rem;
+  padding-top: 1.2rem;
+}
+
+.persona-archive {
+  border-top: 2px solid var(--ink);
+  margin-top: 2.4rem;
+  padding-top: 1.2rem;
+}
+
+.persona-archive h2 {
+  font-size: 1.2rem;
+  margin-bottom: 0.7rem;
+}
+
+.persona-archive ol {
+  list-style: none;
+}
+
+.persona-archive li + li {
+  border-top: 1px solid var(--rule-soft);
+}
+
+.persona-archive a {
+  display: block;
+  min-height: 44px;
+  padding: 0.55rem 0;
+}
+
+.persona-empty > p:last-child {
+  color: var(--ink-soft);
+  margin-top: 0.8rem;
 }
 
 /* ---------- issue head ---------- */

@@ -68,9 +68,7 @@ async def test_verify_reports_the_level_the_live_site_serves() -> None:
     assert result.rss_url == f"{SITE}/rss.xml"
 
 
-@pytest.mark.parametrize(
-    "level", [PublicationLevel.L1, PublicationLevel.L2A, PublicationLevel.L2B]
-)
+@pytest.mark.parametrize("level", [PublicationLevel.L1, PublicationLevel.L2A, PublicationLevel.L2B])
 async def test_a_degraded_issue_verifies_at_its_own_level(level: PublicationLevel) -> None:
     publication = factories.publication(level=level)
 

@@ -158,9 +158,7 @@ def test_request_allowance_shrinks_as_the_day_is_spent(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("payload", ["", "{", '{"requests": 3', "not json at all"])
-def test_a_corrupt_ledger_raises_instead_of_resetting_the_day(
-    tmp_path: Path, payload: str
-) -> None:
+def test_a_corrupt_ledger_raises_instead_of_resetting_the_day(tmp_path: Path, payload: str) -> None:
     store = _store(tmp_path)
     store.parent.mkdir(parents=True, exist_ok=True)
     store.write_text(payload, encoding="utf-8")
@@ -182,3 +180,52 @@ def test_a_persisted_ledger_round_trips_its_stage_totals(tmp_path: Path) -> None
     assert second.input_tokens == 100
     assert second.output_tokens == 40
     assert second.snapshot()["cost_cny"] == pytest.approx(0.25)
+
+
+def test_stale_ledger_instances_cannot_overwrite_each_others_reservations(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    config = factories.budget_config(request_limit=10, cost_cny_limit=2)
+    first = _ledger(store, config)
+    stale = _ledger(store, config)
+
+    first.reserve(BudgetStage.PERSONA, 2, 1.5, input_tokens=100, output_tokens=50)
+
+    with pytest.raises(StageBudgetExceeded, match="cost reservation"):
+        stale.reserve(
+            BudgetStage.PERSONA,
+            2,
+            1.5,
+            input_tokens=100,
+            output_tokens=50,
+        )
+    persisted = _ledger(store, config)
+    assert persisted.reserved_cost_cny == pytest.approx(1.5)
+    assert persisted.reserved_input_tokens == 100
+    assert persisted.reserved_output_tokens == 50
+
+
+def test_next_run_conservatively_charges_orphaned_reservations(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    ledger = _ledger(store)
+    ledger.reserve(
+        BudgetStage.PERSONA,
+        2,
+        0.5,
+        input_tokens=120,
+        output_tokens=60,
+    )
+
+    recovered = _ledger(store)
+    recovered.start_run(recover_stale_reservations=True)
+
+    assert recovered.reserved_requests == 0
+    assert recovered.reserved_input_tokens == 0
+    assert recovered.reserved_output_tokens == 0
+    assert recovered.requests == 2
+    assert recovered.input_tokens == 120
+    assert recovered.output_tokens == 60
+    assert recovered.cost_cny == pytest.approx(0.5)

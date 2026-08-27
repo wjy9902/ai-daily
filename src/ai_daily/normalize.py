@@ -271,9 +271,7 @@ def _same_story_by_product(left_title: str, right_title: str) -> bool:
     if min(len(left_tokens), len(right_tokens)) <= 2:
         return True
     digit_free_overlap = {
-        token
-        for token in left_tokens & right_tokens
-        if not any(ch.isdigit() for ch in token)
+        token for token in left_tokens & right_tokens if not any(ch.isdigit() for ch in token)
     }
     return bool(digit_free_overlap)
 

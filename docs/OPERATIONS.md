@@ -77,6 +77,54 @@ uv run python scripts/render_fixture.py \
 - 07:00：只验证；失败时重建站点，不调用模型。
 - 三段任务共享 `ai-daily-publication-lock`，禁止并发写入。
 
+### 甲鱼主编版
+
+基础日报成功提交并激活 marker-keyed 上游快照后，`ai-daily-persona.timer` 在
+07:10 / 07:40 / 08:10（北京时间）运行。默认 unit 使用 `--mode site`，只更新统一站点的
+`/jiayu/`，不会调用公众号写接口。三次窗口先等待 marker 稳定 30 秒；相同 marker 的成稿可复用，
+旧日期补跑只增加主编版归档，不会把首页回滚到旧日报。
+
+运行状态独立写入 `/www/wwwroot/ai-daily/status/persona.json`。关键状态包括：
+
+- `ready`：稿件通过确定性证据、风格和长度门禁。
+- `held`：上游级别、记忆冲突、证据或模型结构校验不合格，没有发布。
+- `draft_verified`：微信草稿创建后又通过 `draft/get` 元数据与规范化 HTML 回读。
+- `unknown`：发送后响应不确定，禁止重试，只能对账。
+
+人工启用草稿前，先在 `/etc/ai-daily/env` 配置 `WECHAT_*` 与两把不同的 HMAC key，然后：
+
+```bash
+# 分别运行两次；每次输出作为一把 key，禁止复用
+openssl rand -hex 32
+```
+
+```bash
+uv run ai-daily authorize-wechat \
+  --issuer jesse --column-id jiayu-editorial --valid-days 90 \
+  --output /etc/ai-daily/jiayu-draft-authorization.json
+
+# 只准备不可变目标与签名，不请求微信
+uv run ai-daily persona-run --mode draft \
+  --authorization /etc/ai-daily/jiayu-draft-authorization.json
+
+# 明确执行草稿创建；每个账号/栏目/日期只允许一个 slot
+uv run ai-daily persona-run --mode draft --execute \
+  --authorization /etc/ai-daily/jiayu-draft-authorization.json
+```
+
+如果返回 `draft_unknown_reconcile_required`：
+
+```bash
+uv run ai-daily wechat-reconcile \
+  --authorization /etc/ai-daily/jiayu-draft-authorization.json
+```
+
+对账使用 `wechat-targets/<date>.json` 中的原始 HTML、元数据和请求哈希，不会用后来重生成的稿件。
+`wechat-slots.sqlite3` 为 WAL 模式幂等台账。不要删除 unknown slot 或 target 来“重试”。
+
+2026-08-27 对真实账号的只读探测结果：access token 正常、草稿箱可用（`errcode=0`）、
+`freepublish` 不可用（`errcode=48001`）；群发按设计禁用。因此当前自动化终点只能是草稿箱。
+
 ## 失败处理
 
 | 现象 | 自动行为 | 人工检查 |
@@ -86,6 +134,8 @@ uv run python scripts/render_fixture.py \
 | 429、连接失败、可恢复 5xx | 按显式跨 Provider 链切换 | 配额和供应商状态页 |
 | 401/403、schema、参数错误 | 立即失败，不切模型 | Secret、模型名、配置版本 |
 | 记录已提交、站点未更新 | `ai-daily rebuild-site`（不花钱，从 `published/` 重渲染） | `journalctl -u ai-daily` |
+| 微信创建后读/写超时 | 标记 `unknown`，保留不可变请求目标 | 只运行 `wechat-reconcile`，禁止再次 create |
+| 主编版 held | 不更新 `/jiayu/`，基础日报不受影响 | `status/persona.json` 与 `journalctl -u ai-daily-persona` |
 | 06:00 后仍不可见 | Actions 标红 | 若 30 天出现两次 runner 排队，迁移 runner |
 
 ## 回滚

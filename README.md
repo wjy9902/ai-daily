@@ -15,6 +15,8 @@
 - **值得关注（5–7 条）** — 影响明确、值得继续跟踪的进展
 - **快讯（8–12 条）** — 用紧凑格式补齐工具、融资、研究和社区动态
 - **编辑观点** — 只基于本期证据提炼跨新闻趋势，不做无来源推断
+- **甲鱼主编版** — `/jiayu/`：结合已批准的公开经历与写作原则，挑选真正影响
+  AI 使用者和 AI 产品团队的变化，并给出产品判断、反面条件与观察信号
 
 采集覆盖 36 个公开来源：AI 实验室与平台官方站点、中英文科技媒体、研究源和少量高信号项目发布。
 研究论文与版本更新设有篇幅上限，避免挤占重大产品和行业新闻。
@@ -51,7 +53,7 @@ L3 不算产出，是被最小化的失败态。降级刊期在页面上有明�
 ```bash
 uv sync --frozen --all-groups
 uv run pytest
-uv run ai-daily run --date 2026-08-13 --mode dry-run --site-root /tmp/ai-daily-site
+uv run ai-daily --site-root /tmp/ai-daily-site run --date 2026-08-13 --mode dry-run
 ```
 
 ```bash
@@ -63,6 +65,21 @@ uv run python scripts/render_fixture.py --fixture tests/fixtures/editorial-previ
 # 诊断每个源：抓到多少、多少条通过新鲜度、被拒的主因是什么
 uv run ai-daily probe-sources
 ```
+
+甲鱼主编版在基础日报的不可变快照激活后运行：
+
+```bash
+# 生成并合入统一网站；不触碰微信公众号
+uv run ai-daily --site-root /tmp/ai-daily-site \
+  persona-run --date 2026-08-27 --mode site
+
+# 微信只读能力探测，不创建草稿
+uv run ai-daily wechat-probe
+```
+
+公众号路径严格限制为“创建草稿”：自动群发、自动公开发布和评论管理都没有实现。
+真实执行还要求独立的授权/发布 HMAC 密钥、签名授权文件和永久封面素材；网络超时进入
+`unknown`，必须先执行 `wechat-reconcile`，系统不会盲目重试。
 
 ## 运维
 

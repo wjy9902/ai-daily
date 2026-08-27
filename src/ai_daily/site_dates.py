@@ -6,9 +6,7 @@ from pathlib import Path
 
 TITLE_RE = re.compile(r'^title = "(\d{4}-\d{2}-\d{2})"$', re.MULTILINE)
 DATE_RE = re.compile(r'^date = "([^"]+)"$', re.MULTILINE)
-MARKER_RE = re.compile(
-    r"<!-- ai-daily:(\d{4}-\d{2}-\d{2}):v\d+(?::sha256=[a-f0-9]{64})? -->"
-)
+MARKER_RE = re.compile(r"<!-- ai-daily:(\d{4}-\d{2}-\d{2}):v\d+(?::sha256=[a-f0-9]{64})? -->")
 EXTRA_RE = re.compile(r"^\[extra\]$", re.MULTILINE)
 
 
@@ -39,9 +37,7 @@ def _normalize_document(document: str) -> str:
     if title.group(1) != marker.group(1):
         raise ValueError("marked daily issue title does not match its marker")
     target_date = title.group(1)
-    frontmatter = DATE_RE.sub(
-        f'date = "{target_date}T00:00:00+08:00"', frontmatter, count=1
-    )
+    frontmatter = DATE_RE.sub(f'date = "{target_date}T00:00:00+08:00"', frontmatter, count=1)
     if "created_at =" not in frontmatter:
         if EXTRA_RE.search(frontmatter) is None:
             raise ValueError("marked daily issue is missing its extra section")

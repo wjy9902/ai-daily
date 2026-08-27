@@ -1,0 +1,14 @@
+[Unit]
+Description=甲鱼主编版 publication windows
+
+[Timer]
+OnCalendar=*-*-* 07:10:00
+OnCalendar=*-*-* 07:40:00
+OnCalendar=*-*-* 08:10:00
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+Unit=ai-daily-persona.service
+
+[Install]
+WantedBy=timers.target

@@ -172,10 +172,7 @@ def build_full_publication(
             now=now,
         )
 
-    viewpoints = [
-        Viewpoint(text=insight.text, sources=[])
-        for insight in plan.editor_viewpoint
-    ]
+    viewpoints = [Viewpoint(text=insight.text, sources=[]) for insight in plan.editor_viewpoint]
     return _finalise(
         DailyPublication(
             target_date=target_date,

@@ -70,9 +70,7 @@ class GitHubPublisher:
         return issue
 
     @staticmethod
-    def _validate_published_issue(
-        value: dict[str, Any], target_date: date, body: str
-    ) -> None:
+    def _validate_published_issue(value: dict[str, Any], target_date: date, body: str) -> None:
         if value.get("title") != target_date.isoformat() or value.get("body") != body:
             raise RuntimeError("GitHub returned an unconfirmed publication body")
 

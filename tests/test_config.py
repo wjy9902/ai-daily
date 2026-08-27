@@ -26,9 +26,7 @@ def test_project_config_loads_without_secrets() -> None:
 
 def test_model_fallback_must_cross_provider() -> None:
     value = yaml.safe_load(Path("config/models.yaml").read_text())
-    value["roles"]["judge"]["fallback"]["provider"] = value["roles"]["judge"]["primary"][
-        "provider"
-    ]
+    value["roles"]["judge"]["fallback"]["provider"] = value["roles"]["judge"]["primary"]["provider"]
     with pytest.raises(ValidationError, match="different provider"):
         ModelsConfig.model_validate(value)
 

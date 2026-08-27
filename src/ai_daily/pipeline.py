@@ -57,6 +57,7 @@ from ai_daily.normalize import (
     score_events,
     select_candidate_pool,
 )
+from ai_daily.persona_snapshot import persist_upstream_snapshot
 from ai_daily.publication import DailyPublication, PublicationLevel
 from ai_daily.site_publisher import SiteLayout
 from ai_daily.sources import Collector
@@ -223,10 +224,18 @@ class DailyPipeline:
         self.client = client or httpx.AsyncClient(follow_redirects=True)
         self.collector = collector or Collector()
         self.layout = layout or SiteLayout(Path(self.config.pipeline.artifacts_dir).parent)
+        configured_artifacts = Path(self.config.pipeline.artifacts_dir)
+        self.artifacts_dir = (
+            configured_artifacts
+            if configured_artifacts.is_absolute()
+            else self.layout.root / configured_artifacts
+        )
         self.gateway = gateway or ModelGateway(config.models, self.secrets)
         # An injected gateway keeps its own ledger; tests want that. Only a
         # gateway we own gets rebound to the day's on-disk budget in run().
         self._owns_gateway = gateway is None
+        self._last_decisions: list[JudgeDecision] = []
+        self._last_plan: EditorialPlan | None = None
 
     def _bind_daily_budget(self, target_date: date) -> None:
         """Point the ledger at this date's on-disk budget.
@@ -254,7 +263,7 @@ class DailyPipeline:
         """
 
         run_id = f"{target_date.isoformat()}-{uuid.uuid4().hex[:8]}"
-        run_dir = Path(self.config.pipeline.artifacts_dir) / target_date.isoformat() / run_id
+        run_dir = self.artifacts_dir / target_date.isoformat() / run_id
         tracker = DegradationTracker()
         self.layout.ensure()
         self._bind_daily_budget(target_date)
@@ -296,6 +305,14 @@ class DailyPipeline:
         )
         write_artifact(run_dir / "run.json", artifact)
         write_artifact(run_dir / "publication.json", publication)
+        if publish:
+            persist_upstream_snapshot(
+                self.layout,
+                publication,
+                candidates,
+                self._last_decisions,
+                self._last_plan,
+            )
         return RunOutcome(
             artifact=artifact,
             publication=publication,
@@ -325,12 +342,19 @@ class DailyPipeline:
 
         if plan is not None:
             try:
-                return build_full_publication(target_date, plan, drafts, candidates, tracker)
+                publication = build_full_publication(target_date, plan, drafts, candidates, tracker)
+                self._last_decisions = decisions
+                self._last_plan = plan
+                return publication
             except ComposeError:
                 tracker.record(FailureClass.PLAN_FAILED)
 
         if decisions:
+            self._last_decisions = decisions
+            self._last_plan = None
             return build_judged_publication(target_date, decisions, candidates, tracker)
+        self._last_decisions = []
+        self._last_plan = None
         return build_ranked_publication(target_date, candidates, tracker)
 
     async def _collect(
@@ -401,9 +425,7 @@ class DailyPipeline:
             if judge_failures:
                 # Some candidates went unjudged. That costs coverage, not the
                 # issue, so it caps the level rather than ending the run.
-                tracker.record(
-                    FailureClass.JUDGE_PARTIAL, "; ".join(judge_failures)
-                )
+                tracker.record(FailureClass.JUDGE_PARTIAL, "; ".join(judge_failures))
             if not decisions:
                 raise ModelStageFailed(FailureClass.JUDGE_FAILED)
             enrichment_ids = {
@@ -424,9 +446,7 @@ class DailyPipeline:
                 self.config.pipeline,
             )
             write_artifact(run_dir / "editorial-plan.json", editorial_plan)
-            editorial_plan, uncorroborated = enforce_lead_corroboration(
-                editorial_plan, candidates
-            )
+            editorial_plan, uncorroborated = enforce_lead_corroboration(editorial_plan, candidates)
             if uncorroborated:
                 # An uncorroborated story still cannot lead, but it costs that
                 # story its slot rather than costing the issue its plan.
@@ -470,24 +490,18 @@ class DailyPipeline:
                 editorial_plan = _demote_selections(editorial_plan, failed)
                 write_artifact(run_dir / "editorial-plan-demoted.json", editorial_plan)
             stage = "draft"
-            drafts, draft_failures = await draft_selected(
-                self.gateway, candidates, editorial_plan
-            )
+            drafts, draft_failures = await draft_selected(self.gateway, candidates, editorial_plan)
             if draft_failures:
                 # Those stories lose their long form and run as briefs. The
                 # composer demotes them; this only records why.
-                tracker.record(
-                    FailureClass.DRAFT_PARTIAL, "; ".join(draft_failures)
-                )
+                tracker.record(FailureClass.DRAFT_PARTIAL, "; ".join(draft_failures))
             if not drafts and draft_failures:
                 # Deliberately not raised. Raising here would abandon the
                 # editorial plan along with the drafts and drop the issue to
                 # judge output, when what actually survived is a full set of
                 # chosen, ranked, headlined stories. The composer turns
                 # undrafted selections into briefs.
-                tracker.record(
-                    FailureClass.DRAFT_FAILED, "; ".join(draft_failures)
-                )
+                tracker.record(FailureClass.DRAFT_FAILED, "; ".join(draft_failures))
         except (
             BudgetExceeded,
             ModelInvocationFailed,

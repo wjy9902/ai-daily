@@ -98,9 +98,7 @@ async def test_pipeline_collector_requests_use_browser_user_agent_and_pinned_dns
     def unexpected_request(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"source request bypassed the pinned transport: {request.url}")
 
-    monkeypatch.setattr(
-        PublicAsyncHTTPTransport, "handle_async_request", pinned_transport_response
-    )
+    monkeypatch.setattr(PublicAsyncHTTPTransport, "handle_async_request", pinned_transport_response)
     source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
     pipeline = DailyPipeline(
         load_config(Path("config")),

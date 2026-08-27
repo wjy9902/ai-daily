@@ -4,7 +4,8 @@
 所以不假设你手上有任何服务器上的东西。
 
 前置：一台能上网的 Linux 机器（2C/2G 起）、域名 DNS 的控制权、两个仓库的读取权限、
-以及两个模型 API key。
+以及两个模型 API key。甲鱼主编版若要恢复公众号草稿，还需要公众号凭证、永久封面和重新签发的
+两把独立 HMAC key。
 
 ## 需要的东西
 
@@ -25,17 +26,23 @@
 ```bash
 useradd --system --create-home --home-dir /home/ai-daily --shell /usr/sbin/nologin ai-daily
 mkdir -p /www/wwwroot/ai-daily/{app,releases,published,artifacts,status,budget,fallback,logs}
+mkdir -p /www/wwwroot/ai-daily/{upstream,persona-editions,persona-runs,persona-budget,wechat-targets}
 chown -R ai-daily:ai-daily /www/wwwroot/ai-daily
+timedatectl set-timezone Asia/Shanghai
+timedatectl show --property=Timezone --value
 ```
 
 ### 2. 运行时
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh -o /tmp/uv-install.sh
-env HOME=/home/ai-daily UV_INSTALL_DIR=/home/ai-daily/.local/bin sh /tmp/uv-install.sh
-chown -R ai-daily:ai-daily /home/ai-daily
+mkdir -p /www/wwwroot/ai-daily/toolchain/bin
+env HOME=/www/wwwroot/ai-daily/toolchain \
+  UV_INSTALL_DIR=/www/wwwroot/ai-daily/toolchain/bin sh /tmp/uv-install.sh
+chown -R ai-daily:ai-daily /www/wwwroot/ai-daily/toolchain
 cd /www/wwwroot/ai-daily   # uv 需要一个可写的 cwd
-sudo -u ai-daily env HOME=/home/ai-daily /home/ai-daily/.local/bin/uv python install 3.13
+sudo -u ai-daily env HOME=/www/wwwroot/ai-daily/toolchain \
+  /www/wwwroot/ai-daily/toolchain/bin/uv python install 3.13
 ```
 
 ### 3. 代码与历史
@@ -43,7 +50,8 @@ sudo -u ai-daily env HOME=/home/ai-daily /home/ai-daily/.local/bin/uv python ins
 ```bash
 sudo -u ai-daily git clone git@github.com:wjy9902/ai-daily.git /www/wwwroot/ai-daily/app
 cd /www/wwwroot/ai-daily/app && sudo -u ai-daily git checkout <发布 tag>
-sudo -u ai-daily env HOME=/home/ai-daily /home/ai-daily/.local/bin/uv sync --frozen --no-dev
+sudo -u ai-daily env HOME=/www/wwwroot/ai-daily/toolchain \
+  /www/wwwroot/ai-daily/toolchain/bin/uv sync --frozen --no-dev
 
 # 历史刊期：备份仓库的 published/ 直接放回去
 sudo -u ai-daily git clone git@github.com:wjy9902/ai-daily-site-backup.git /tmp/ai-daily-backup
@@ -59,6 +67,7 @@ DASHSCOPE_API_KEY=...
 DASHSCOPE_BASE_URL=...
 DEEPSEEK_API_KEY=...
 AI_DAILY_SITE_BASE_URL=https://daily.jiayutool.cn
+# 主编版网站模式不需要 WECHAT_*。恢复草稿能力时再填写，并重新生成签名授权。
 EOF
 chown ai-daily:ai-daily /etc/ai-daily/env
 chmod 600 /etc/ai-daily/env
@@ -70,16 +79,16 @@ chmod 600 /etc/ai-daily/env
 
 ```bash
 cd /www/wwwroot/ai-daily/app
-sudo -u ai-daily env HOME=/home/ai-daily AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily \
-  /home/ai-daily/.local/bin/uv run --frozen ai-daily rebuild-site
+sudo -u ai-daily env HOME=/www/wwwroot/ai-daily/toolchain AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily \
+  /www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily rebuild-site
 ls -l /www/wwwroot/ai-daily/current
 ```
 
 同时生成兜底页，保证任何后续失败都不会 404：
 
 ```bash
-sudo -u ai-daily env HOME=/home/ai-daily AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily \
-  /home/ai-daily/.local/bin/uv run --frozen ai-daily write-fallback
+sudo -u ai-daily env HOME=/www/wwwroot/ai-daily/toolchain AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily \
+  /www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily write-fallback
 ```
 
 ### 6. Caddy
@@ -107,12 +116,16 @@ systemctl enable --now ai-daily.timer
 systemctl list-timers ai-daily.timer
 ```
 
+甲鱼主编版数据恢复完成后，再安装 `ai-daily-persona.{service,timer}`。默认保持 `--mode site`；
+先验证 `/jiayu/` 和 `status/persona.json`，再单独决定是否恢复微信草稿权限。
+
 ### 9. 验收
 
 ```bash
 curl -fsS https://daily.jiayutool.cn/ >/dev/null && echo page ok
 curl -fsS https://daily.jiayutool.cn/rss.xml >/dev/null && echo rss ok
 curl -fsS https://daily.jiayutool.cn/status.json | head -30
+curl -fsS https://daily.jiayutool.cn/status/persona.json | head -30
 ```
 
 `status.json` 里的 `level` 和 `generated_at` 是判断"真的在出刊"的依据，
@@ -128,4 +141,7 @@ curl -fsS https://daily.jiayutool.cn/status.json | head -30
 - `published/*.json` 每日备份，最多丢一天。
 - `artifacts/` 不备份，只用于事后复盘，丢失可接受。
 - `budget/*.json` 不备份，恢复后当天预算从零计，最坏多花一天的额度。
+- 当前备份策略**不包含** `upstream/`、`persona-editions/`、`persona-runs/`、
+  `wechat-targets/` 与 `wechat-slots.sqlite3`。灾难后主编版历史、来源审计链和微信 unknown 对账能力
+  可能丢失；这是已接受的恢复风险，不能通过盲目重建微信草稿来弥补。
 - 密钥不备份，必须重新签发。

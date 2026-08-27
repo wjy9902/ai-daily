@@ -1,0 +1,22 @@
+enabled: true
+column_id: jiayu-editorial
+column_name: 甲鱼主编版
+memories_path: config/persona/memories.yaml
+constitution_path: config/persona/source-artifacts/editorial-constitution-v1.md
+candidate_limit: 30
+memory_limit: 16
+analyst_concurrency: 3
+max_call_cost_cny: 1.5
+baseline_window_days: 90
+evidence_retention_days: 120
+standard_min_chars: 700
+standard_max_chars: 1600
+no_major_min_chars: 300
+no_major_max_chars: 600
+publish_mode: draft_only
+ai_disclosure: 本文由 AI 参与资料整理和初稿生成，并经过证据约束与自动审稿。
+budget:
+  request_limit: 40
+  input_token_limit: 500000
+  output_token_limit: 100000
+  cost_cny_limit: 5.0

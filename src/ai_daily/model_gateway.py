@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel
@@ -18,14 +18,13 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
 from ai_daily.config import Secrets
-from ai_daily.models import ModelEndpoint, ModelRun, ModelsConfig
+from ai_daily.models import ModelEndpoint, ModelRole, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
-ModelRole = Literal["judge", "editor"]
 OUTPUT_RETRIES = 1
-# One provider call at a time keeps daily token and cost accounting globally ordered.
-# It also means calls never contend for budget, so no reservation bookkeeping is
-# needed: each call simply asks the ledger what it may spend before it starts.
+# The daily pipeline defaults to one provider call at a time. The persona pipeline
+# explicitly opts into at most three concurrent analysts and reserves request/cost
+# allowance before each call so their combined in-flight spend cannot exceed budget.
 MAX_MODEL_CONCURRENCY = 1
 
 
@@ -64,13 +63,18 @@ class ModelGateway:
         secrets: Secrets | None = None,
         clock: Callable[[], float] = time.monotonic,
         ledger: BudgetLedger | None = None,
+        max_concurrency: int = MAX_MODEL_CONCURRENCY,
+        reservation_cost_cny: float | None = None,
     ) -> None:
         self.config = config
         self.secrets = secrets or Secrets()
         self.ledger = ledger or BudgetLedger(config.budget)
         self.runs: list[ModelRun] = []
         self.clock = clock
-        self._concurrency = asyncio.Semaphore(MAX_MODEL_CONCURRENCY)
+        if max_concurrency < 1 or max_concurrency > 3:
+            raise ValueError("max_concurrency must be between 1 and 3")
+        self._concurrency = asyncio.Semaphore(max_concurrency)
+        self._reservation_cost_cny = reservation_cost_cny
 
     async def generate(
         self,
@@ -132,19 +136,46 @@ class ModelGateway:
         stage: BudgetStage,
     ) -> OutputT:
         started = self.clock()
+        input_token_limit, output_token_limit = self._remaining_token_budget()
         # Decided up front: pydantic-ai fixes its request limit when the run starts.
         request_limit = self.ledger.request_allowance(stage, 1 + OUTPUT_RETRIES)
-        input_token_limit, output_token_limit = self._remaining_token_budget()
-        agent: Agent[None, OutputT] = Agent(
-            self._build_model(invocation.endpoint),
-            output_type=output_type,
-            instructions=instructions,
-            retries=OUTPUT_RETRIES,
-        )
-        if validator is not None:
-            agent.output_validator(self._semantic_validator(validator))
+        reservation_cost = self._reservation_cost_cny
+        reservation: tuple[int, float, int, int] | None = None
+        if reservation_cost is not None:
+            reserved_input, reserved_output = self._call_token_ceiling(
+                invocation.endpoint,
+                instructions,
+                prompt,
+                request_limit,
+                output_token_limit,
+            )
+            reservation_cost = max(
+                reservation_cost,
+                self._token_cost_ceiling(invocation.endpoint, reserved_input, reserved_output),
+            )
+            reservation = (
+                request_limit,
+                reservation_cost,
+                reserved_input,
+                reserved_output,
+            )
+            self.ledger.reserve(
+                stage,
+                request_limit,
+                reservation_cost,
+                input_tokens=reserved_input,
+                output_tokens=reserved_output,
+            )
         usage = RunUsage()
         try:
+            agent: Agent[None, OutputT] = Agent(
+                self._build_model(invocation.endpoint),
+                output_type=output_type,
+                instructions=instructions,
+                retries=OUTPUT_RETRIES,
+            )
+            if validator is not None:
+                agent.output_validator(self._semantic_validator(validator))
             async with agent:
                 result = await agent.run(
                     prompt,
@@ -157,12 +188,11 @@ class ModelGateway:
                     usage=usage,
                 )
         except asyncio.CancelledError as error:
-            self._record_failed_run(invocation, started, error, usage, stage)
+            self._record_failed_run(invocation, started, error, usage, stage, reservation)
             raise
         except Exception as error:
-            self._record_failed_run(invocation, started, error, usage, stage)
+            self._record_failed_run(invocation, started, error, usage, stage, reservation)
             raise
-        self.ledger.record_requests(max(1, usage.requests), stage)
         run = self._success_run(
             invocation,
             started,
@@ -171,12 +201,42 @@ class ModelGateway:
             usage.requests,
         )
         self.runs.append(run)
-        self.ledger.record(run, stage)
+        if reservation is None:
+            self.ledger.record_requests(max(1, usage.requests), stage)
+            self.ledger.record(run, stage)
+        else:
+            self.ledger.settle_reservation(stage, *reservation, run)
         return result.output
 
+    @staticmethod
+    def _call_token_ceiling(
+        endpoint: ModelEndpoint,
+        instructions: str,
+        prompt: str,
+        request_limit: int,
+        output_token_limit: int,
+    ) -> tuple[int, int]:
+        # One UTF-8 byte per token is deliberately pessimistic for both Chinese
+        # and Latin text. Retries can resend the full prompt.
+        input_tokens = len((instructions + prompt).encode("utf-8")) * request_limit
+        output_tokens = min(
+            output_token_limit,
+            endpoint.max_output_tokens * request_limit,
+        )
+        return input_tokens, output_tokens
+
+    @staticmethod
+    def _token_cost_ceiling(
+        endpoint: ModelEndpoint, input_tokens: int, output_tokens: int
+    ) -> float:
+        return (
+            input_tokens * endpoint.input_cost_cny_per_million
+            + output_tokens * endpoint.output_cost_cny_per_million
+        ) / 1_000_000
+
     def _remaining_token_budget(self) -> tuple[int, int]:
-        input_tokens = self.config.budget.input_token_limit - self.ledger.input_tokens
-        output_tokens = self.config.budget.output_token_limit - self.ledger.output_tokens
+        input_tokens = self.ledger.remaining_input_tokens()
+        output_tokens = self.ledger.remaining_output_tokens()
         remaining_cost = self.config.budget.cost_cny_limit - self.ledger.cost_cny
         if input_tokens <= 0:
             raise BudgetExceeded("input token limit exceeded")
@@ -193,6 +253,7 @@ class ModelGateway:
         error: BaseException,
         usage: RunUsage,
         stage: BudgetStage,
+        reservation: tuple[int, float, int, int] | None,
     ) -> None:
         request_count = max(1, usage.requests)
         run = self._failed_run(
@@ -209,11 +270,11 @@ class ModelGateway:
         # is already raising the real error; the next call's check_stage() is
         # what turns an exhausted budget into a clean degradation.
         try:
-            self.ledger.record_requests(request_count, stage)
-        except BudgetExceeded:
-            pass
-        try:
-            self.ledger.record(run, stage)
+            if reservation is None:
+                self.ledger.record_requests(request_count, stage)
+                self.ledger.record(run, stage)
+            else:
+                self.ledger.settle_reservation(stage, *reservation, run)
         except BudgetExceeded:
             pass
 
