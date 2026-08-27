@@ -26,8 +26,10 @@ from ai_daily.persona_models import (
     Critique,
     CritiqueFinding,
     EditionDraft,
+    EditorialMemory,
     FinalizerOutput,
     FinalizerResolution,
+    MemoryKind,
     OperationReceipt,
     PersonaContext,
     PersonaEdition,
@@ -43,6 +45,7 @@ from ai_daily.persona_pipeline import (
     PersonaPipeline,
     _analyst_event_row,
     _json_prompt,
+    _memory_context_sha256,
     _normalize_plan,
     _validate_critique,
     _validate_finalizer_changes,
@@ -57,6 +60,7 @@ from ai_daily.persona_snapshot import (
 from ai_daily.persona_verifier import (
     VerificationScope,
     normalize_analysis_item,
+    normalize_edition_draft,
     verify_analysis_item,
     verify_edition,
 )
@@ -644,6 +648,228 @@ def test_verifier_accepts_exact_claim_assembly_and_rejects_first_person(
         verify_edition(bad, snapshot, _scope(), config)
 
 
+def test_editor_normalization_removes_unapproved_first_person_and_rebuilds_blocks(
+    tmp_path: Path,
+) -> None:
+    config = load_config(Path("config")).persona
+    assert config is not None
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    draft = _edition_draft(snapshot.publication_marker)
+    old_claim = draft.claims[2]
+    first_person_text = "判断：" + "我们需要把自我感觉换成可验证的产品证据。" * 12
+    first_person = old_claim.model_copy(update={"text": first_person_text})
+    candidate = draft.model_copy(
+        update={
+            "claims": [draft.claims[0], draft.claims[1], first_person, draft.claims[3]],
+            "thesis_block": draft.thesis_block.model_copy(update={"text": first_person.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    expected = "判断：" + "产品团队需要把自我感觉换成可验证的产品证据。" * 12
+    assert normalized.claims[2].text == expected
+    assert normalized.thesis_block.text == normalized.claims[2].text
+    assert verify_edition(normalized, snapshot, _scope(), config).hash_is_valid()
+
+    unknown = draft.model_copy(
+        update={
+            "title_block": draft.title_block.model_copy(update={"claim_ids": ["claim-missing"]})
+        }
+    )
+    with pytest.raises(ValueError, match="unknown claim id"):
+        normalize_edition_draft(unknown, _scope())
+
+    extra_claim = draft.claims[0].model_copy(update={"claim_id": "claim-unreferenced"})
+    extra = draft.model_copy(update={"claims": [*draft.claims, extra_claim]})
+    with pytest.raises(ValueError, match="unreferenced edition claim"):
+        normalize_edition_draft(extra, _scope())
+
+
+def test_persona_cli_accepts_a_resume_run_path() -> None:
+    args = cli.build_parser().parse_args(
+        [
+            "persona-run",
+            "--date",
+            TARGET.isoformat(),
+            "--mode",
+            "site",
+            "--resume-run",
+            "/tmp/persona-run",
+        ]
+    )
+
+    assert args.resume_run == Path("/tmp/persona-run")
+
+
+@pytest.mark.parametrize(
+    ("voice", "neutral"),
+    [
+        ("我们应该", "产品团队应该"),
+        ("咱们应该", "产品团队应该"),
+    ],
+)
+def test_editor_normalization_covers_every_unapproved_voice_token(
+    voice: str,
+    neutral: str,
+) -> None:
+    draft = _edition_draft("a" * 64)
+    claim = draft.claims[0].model_copy(update={"text": f"判断：{voice}继续验证。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    assert normalized.title_block.text == f"判断：{neutral}继续验证。"
+
+
+@pytest.mark.parametrize("voice", ["我的判断", "本人建议", "我亲自测试过"])
+def test_editor_does_not_rewrite_unsupported_personal_experience(
+    voice: str,
+    tmp_path: Path,
+) -> None:
+    config = load_config(Path("config")).persona
+    assert config is not None
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    draft = _edition_draft(snapshot.publication_marker)
+    claim = draft.claims[0].model_copy(update={"text": f"判断：{voice}。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    assert normalized.title_block.text == claim.text
+    with pytest.raises(ValueError, match="first-person"):
+        verify_edition(normalized, snapshot, _scope(), config)
+
+
+@pytest.mark.parametrize("voice", ["帮助我更快完成工作", "有利于我判断", "助我验证"])
+def test_verifier_rejects_first_person_after_common_prefixes(
+    voice: str,
+    tmp_path: Path,
+) -> None:
+    config = load_config(Path("config")).persona
+    assert config is not None
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    draft = _edition_draft(snapshot.publication_marker)
+    claim = draft.claims[0].model_copy(update={"text": f"判断：{voice}。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    with pytest.raises(ValueError, match="first-person"):
+        verify_edition(normalized, snapshot, _scope(), config)
+
+
+@pytest.mark.parametrize("phrase", ["忘我投入", "无我协作", "自我检查"])
+def test_editor_preserves_non_pronoun_words_containing_wo(phrase: str) -> None:
+    draft = _edition_draft("a" * 64)
+    claim = draft.claims[0].model_copy(update={"text": f"判断：团队保持{phrase}。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    assert normalize_edition_draft(candidate, _scope()).title_block.text == claim.text
+
+
+def test_editor_preserves_voice_approved_by_public_memory(tmp_path: Path) -> None:
+    config = load_config(Path("config")).persona
+    assert config is not None
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    memory = EditorialMemory(
+        memory_id="mem-first-person",
+        kind=MemoryKind.EXPERIENCE,
+        statement="我会先验证用户是否真的得到价值。",
+        topics=["产品"],
+        valid_from=TARGET,
+        status="approved",
+        confidence="explicit",
+        usage="first_person_allowed",
+        source_path="public.md",
+        source_artifact_id="a" * 64,
+        source_excerpt="我会先验证用户是否真的得到价值。",
+        publicity="public",
+    )
+    draft = _edition_draft(snapshot.publication_marker)
+    claim = draft.claims[0].model_copy(
+        update={
+            "text": "我会先验证用户是否真的得到价值。",
+            "claim_type": "experience_fact",
+            "current_evidence_ids": [],
+            "experience_memory_ids": [memory.memory_id],
+            "quotes": [
+                ClaimQuote(
+                    source_kind="experience_memory",
+                    source_id=memory.memory_id,
+                    quote=memory.source_excerpt,
+                )
+            ],
+        }
+    )
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+    scope = _scope()
+    scope = VerificationScope(
+        memories={memory.memory_id: memory},
+        baseline_evidence=scope.baseline_evidence,
+        current_ids_by_event=scope.current_ids_by_event,
+        baseline_ids_by_event=scope.baseline_ids_by_event,
+        memory_ids_by_event={"event-0": {memory.memory_id}},
+    )
+
+    normalized = normalize_edition_draft(candidate, scope)
+
+    assert normalized.title_block.text == claim.text
+    assert verify_edition(normalized, snapshot, scope, config).hash_is_valid()
+
+    unsupported = _claim(
+        "claim-unsupported-personal",
+        "title_block",
+        "判断：我亲自做过很多成功产品。",
+    )
+    mixed = candidate.model_copy(
+        update={
+            "claims": [claim, unsupported, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(
+                update={
+                    "text": claim.text + unsupported.text,
+                    "claim_ids": [claim.claim_id, unsupported.claim_id],
+                }
+            ),
+        }
+    )
+    with pytest.raises(ValueError, match="first-person"):
+        verify_edition(normalize_edition_draft(mixed, scope), snapshot, scope, config)
+
+
 def test_verifier_rejects_fabricated_provenance_and_source_links(tmp_path: Path) -> None:
     config = load_config(Path("config")).persona
     assert config is not None
@@ -785,9 +1011,7 @@ def test_analysis_normalization_gives_reused_claims_stable_unique_ids(tmp_path: 
     verify_analysis_item(normalized, snapshot, _scope())
     assert normalized.headline_block.claim_ids != normalized.importance_block.claim_ids
     assert normalized == repeated
-    assert len(normalized.claims) == len(
-        {claim.claim_id for claim in normalized.claims}
-    )
+    assert len(normalized.claims) == len({claim.claim_id for claim in normalized.claims})
 
 
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:
@@ -1791,7 +2015,7 @@ class _FakeGateway:
             raise AssertionError(role)
         validator = kwargs.get("validator")
         if validator:
-            validator(value)
+            value = validator(value) or value
         return cast(Any, value)
 
 
@@ -1843,8 +2067,20 @@ class _StandardGateway:
             raise AssertionError(role)
         validator = kwargs.get("validator")
         if validator:
-            validator(value)
+            value = validator(value) or value
         return cast(Any, value)
+
+
+class _ResumeGateway(_StandardGateway):
+    def __init__(self, draft: EditionDraft) -> None:
+        super().__init__(draft)
+        self.roles: list[str] = []
+
+    async def generate(self, role: str, output_type: Any, *args: Any, **kwargs: Any) -> Any:
+        self.roles.append(role)
+        if role in {"persona_planner", "persona_baseline", "persona_analyst"}:
+            raise AssertionError(f"resume unexpectedly invoked {role}")
+        return await super().generate(role, output_type, *args, **kwargs)
 
 
 class _FinalizerGateway:
@@ -1902,7 +2138,7 @@ class _FinalizerGateway:
             raise AssertionError(role)
         validator = kwargs.get("validator")
         if validator:
-            validator(value)
+            value = validator(value) or value
         return cast(Any, value)
 
 
@@ -1913,6 +2149,13 @@ async def test_persona_pipeline_runs_end_to_end_without_provider(tmp_path: Path)
     snapshot = _snapshot(layout)
     activate_upstream_snapshot(layout, TARGET, snapshot.publication_marker)
     draft = _edition_draft(snapshot.publication_marker)
+    title_claim = draft.claims[0].model_copy(update={"text": "判断：我们今天没有必须追的大更新"})
+    draft = draft.model_copy(
+        update={
+            "claims": [title_claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": title_claim.text}),
+        }
+    )
     gateway = _FakeGateway(draft)
     pipeline = PersonaPipeline(
         load_config(Path("config")),
@@ -1930,6 +2173,7 @@ async def test_persona_pipeline_runs_end_to_end_without_provider(tmp_path: Path)
         layout.persona_edition_path(TARGET).read_text(encoding="utf-8")
     )
     assert persisted.hash_is_valid()
+    assert persisted.title_block.text == "判断：产品团队今天没有必须追的大更新"
 
 
 @pytest.mark.asyncio
@@ -2015,6 +2259,175 @@ async def test_standard_pipeline_analyzes_multiple_events_concurrently(
     )
     assert [item.event_id for item in persisted.items] == ["event-0", "event-1"]
     assert persisted.hash_is_valid()
+
+
+async def _resume_source(
+    tmp_path: Path,
+) -> tuple[SiteLayout, UpstreamSnapshot, Any, EditionDraft, Path]:
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    events = [factories.event(0), factories.event(1)]
+    unsigned = UpstreamSnapshot(
+        target_date=TARGET,
+        publication_level=PublicationLevel.L0,
+        publication_marker="d" * 64,
+        events=events,
+        evidence_bundles=[evidence_bundle(event) for event in events],
+        decisions=[factories.judge_decision(index) for index in range(2)],
+        editorial_plan=None,
+        snapshot_sha256="0" * 64,
+    )
+    snapshot = unsigned.model_copy(
+        update={"snapshot_sha256": sha256_payload(unsigned.canonical_payload())}
+    )
+    write_artifact(layout.upstream_object_path(snapshot.publication_marker), snapshot)
+    activate_upstream_snapshot(layout, TARGET, snapshot.publication_marker)
+    config = load_config(Path("config"))
+    draft = _standard_draft(snapshot.publication_marker)
+    source_pipeline = PersonaPipeline(
+        config,
+        Secrets(),
+        layout,
+        Path.cwd(),
+        TARGET,
+        gateway=cast(Any, _StandardGateway(draft)),
+    )
+    first = await source_pipeline.run(TARGET)
+    assert first.editorial_state == "ready", first.reason
+    source_run = next((layout.persona_runs / TARGET.isoformat()).iterdir())
+    layout.persona_edition_path(TARGET).unlink()
+    return layout, snapshot, config, draft, source_run
+
+
+def _resumed_pipeline(
+    layout: SiteLayout,
+    config: Any,
+    draft: EditionDraft,
+    gateway: _ResumeGateway,
+) -> PersonaPipeline:
+    return PersonaPipeline(
+        config,
+        Secrets(),
+        layout,
+        Path.cwd(),
+        TARGET,
+        gateway=cast(Any, gateway),
+    )
+
+
+async def _assert_resume_held(
+    fixture: tuple[SiteLayout, UpstreamSnapshot, Any, EditionDraft, Path],
+    source: Path,
+    reason: str,
+) -> None:
+    layout, _, config, draft, _ = fixture
+    gateway = _ResumeGateway(draft)
+    result = await _resumed_pipeline(layout, config, draft, gateway).run(TARGET, source)
+    assert result.editorial_state == "held"
+    assert reason in str(result.reason)
+    assert gateway.roles == []
+    assert not layout.persona_edition_path(TARGET).exists()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_resumes_verified_analyses_without_reinvoking_earlier_stages(
+    tmp_path: Path,
+) -> None:
+    fixture = await _resume_source(tmp_path)
+    layout, _, config, draft, source_run = fixture
+    gateway = _ResumeGateway(draft)
+    resumed_pipeline = _resumed_pipeline(layout, config, draft, gateway)
+
+    resumed = await resumed_pipeline.run(TARGET, source_run)
+
+    assert resumed.editorial_state == "ready", resumed.reason
+    assert gateway.roles == ["persona_edition_editor", "persona_critic"]
+    run_dirs = sorted((layout.persona_runs / TARGET.isoformat()).iterdir())
+    assert any((run_dir / "resume.json").exists() for run_dir in run_dirs)
+
+
+@pytest.mark.asyncio
+async def test_resumed_analyses_reject_missing_reordered_or_expanded_scope(
+    tmp_path: Path,
+) -> None:
+    layout, snapshot, config, draft, source_run = await _resume_source(tmp_path)
+    pipeline = _resumed_pipeline(layout, config, draft, _ResumeGateway(draft))
+    context = PersonaContext.model_validate_json(
+        (source_run / "context.json").read_text(encoding="utf-8")
+    )
+    memories, _ = pipeline._memory_context(snapshot.events, TARGET)
+    assert context.memory_context_sha256 == _memory_context_sha256(
+        context.retrieved_memories, memories
+    )
+    plan, analyses, scope = pipeline._resume_analysis(source_run, snapshot, context, memories)
+    with pytest.raises(ValueError, match="cover every"):
+        pipeline._verify_resumed_analyses(plan, analyses[:-1], snapshot, scope)
+    with pytest.raises(ValueError, match="order or grade"):
+        pipeline._verify_resumed_analyses(plan, list(reversed(analyses)), snapshot, scope)
+    extra_evidence = analyses[0].model_copy(
+        update={"evidence_ids": [*analyses[0].evidence_ids, "outside-plan"]}
+    )
+    with pytest.raises(ValueError, match="outside the plan"):
+        pipeline._verify_resumed_analyses(plan, [extra_evidence, analyses[1]], snapshot, scope)
+    extra_memory = analyses[0].model_copy(update={"memory_ids": ["mem-outside"]})
+    with pytest.raises(ValueError, match="memory outside"):
+        pipeline._verify_resumed_analyses(plan, [extra_memory, analyses[1]], snapshot, scope)
+
+    memory_id = context.retrieved_memories[0].memory_id
+    changed_memories = {
+        **memories,
+        memory_id: memories[memory_id].model_copy(update={"statement": "内容已经变化。"}),
+    }
+    changed_context = context.model_copy(
+        update={
+            "memory_context_sha256": _memory_context_sha256(
+                context.retrieved_memories, changed_memories
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="context no longer matches"):
+        pipeline._resume_analysis(source_run, snapshot, changed_context, changed_memories)
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_paths_outside_target_date_and_context_drift(
+    tmp_path: Path,
+) -> None:
+    fixture = await _resume_source(tmp_path)
+    _, _, _, _, source_run = fixture
+    outside = tmp_path / "outside-run"
+    outside.mkdir()
+    await _assert_resume_held(fixture, outside, "target date")
+
+    context = PersonaContext.model_validate_json(
+        (source_run / "context.json").read_text(encoding="utf-8")
+    )
+    legacy = context.model_copy(update={"memory_context_sha256": None})
+    (source_run / "context.json").write_text(legacy.model_dump_json(), encoding="utf-8")
+    await _assert_resume_held(fixture, source_run, "memory-content attestation")
+
+    mismatched = context.model_copy(update={"upstream_marker": "e" * 64})
+    (source_run / "context.json").write_text(mismatched.model_dump_json(), encoding="utf-8")
+    await _assert_resume_held(fixture, source_run, "context no longer matches")
+
+
+@pytest.mark.asyncio
+async def test_resume_rejects_baselines_without_persisted_evidence(tmp_path: Path) -> None:
+    fixture = await _resume_source(tmp_path)
+    _, _, _, _, source_run = fixture
+    write_artifact(
+        source_run / "baselines.json",
+        {
+            "event-0": {
+                "event_id": "event-0",
+                "matched_event_id": "historical-event",
+                "baseline_evidence_ids": ["historical-evidence"],
+                "confidence": 0.9,
+                "reasoning": "用于验证恢复拒绝没有证据映射的历史基线。",
+            }
+        },
+    )
+    await _assert_resume_held(fixture, source_run, "without evidence artifacts")
 
 
 @pytest.mark.asyncio

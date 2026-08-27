@@ -23,6 +23,7 @@ from ai_daily.persona_memory import (
 from ai_daily.persona_models import (
     AnalysisItem,
     AnalystOutput,
+    BaselineMatch,
     Critique,
     EditionDraft,
     FinalizerOutput,
@@ -40,6 +41,7 @@ from ai_daily.persona_snapshot import load_upstream_snapshot
 from ai_daily.persona_verifier import (
     VerificationScope,
     normalize_analysis_item,
+    normalize_edition_draft,
     verify_analysis_item,
     verify_edition,
 )
@@ -80,11 +82,18 @@ class PersonaPipeline:
             reservation_cost_cny=self.persona.max_call_cost_cny,
         )
 
-    async def run(self, target_date: date) -> PersonaRunResult:
+    async def run(
+        self,
+        target_date: date,
+        resume_run_dir: Path | None = None,
+    ) -> PersonaRunResult:
         run_dir = self._run_dir(target_date)
         self.gateway.ledger.start_run(recover_stale_reservations=True)
         try:
-            edition = await self._produce(target_date, run_dir)
+            if resume_run_dir is None:
+                edition = await self._produce(target_date, run_dir)
+            else:
+                edition = await self._produce(target_date, run_dir, resume_run_dir)
             with publication_lock(self.layout):
                 active = load_upstream_snapshot(self.layout, target_date)
                 if active.publication_marker != edition.input_marker:
@@ -110,7 +119,12 @@ class PersonaPipeline:
         write_artifact(run_dir / "result.json", result)
         return result
 
-    async def _produce(self, target_date: date, run_dir: Path) -> PersonaEdition:
+    async def _produce(
+        self,
+        target_date: date,
+        run_dir: Path,
+        resume_run_dir: Path | None = None,
+    ) -> PersonaEdition:
         snapshot = load_upstream_snapshot(self.layout, target_date)
         if snapshot.publication_level not in {PublicationLevel.L0, PublicationLevel.L1}:
             raise ValueError(f"upstream level {snapshot.publication_level.value} is not authorized")
@@ -124,6 +138,7 @@ class PersonaPipeline:
             constitution_sha256=constitution_hash(
                 self.project_root / self.persona.constitution_path
             ),
+            memory_context_sha256=_memory_context_sha256(retrieved[0], memories),
             candidate_event_ids=shortlist.event_ids,
             retrieved_memories=retrieved[0],
             has_conflicts=retrieved[1],
@@ -131,6 +146,39 @@ class PersonaPipeline:
         write_artifact(run_dir / "context.json", context)
         if context.has_conflicts:
             raise ValueError("retrieved editorial memories contain an unresolved conflict")
+        plan, analyses, scope = await self._analysis_stage(
+            run_dir,
+            snapshot,
+            context,
+            memories,
+            resume_run_dir,
+        )
+        draft = await self._edit(snapshot, plan, analyses, scope)
+        write_artifact(run_dir / "draft.json", draft)
+        final = await self._review(snapshot, draft, scope, run_dir)
+        return verify_edition(final, snapshot, scope, self.persona)
+
+    async def _analysis_stage(
+        self,
+        run_dir: Path,
+        snapshot: Any,
+        context: PersonaContext,
+        memories: dict[str, Any],
+        resume_run_dir: Path | None,
+    ) -> tuple[PersonaPlan, list[AnalysisItem], VerificationScope]:
+        if resume_run_dir is None:
+            return await self._fresh_analysis(run_dir, snapshot, context, memories)
+        plan, analyses, scope = self._resume_analysis(resume_run_dir, snapshot, context, memories)
+        self._write_resumed_analysis(run_dir, resume_run_dir, plan, analyses)
+        return plan, analyses, scope
+
+    async def _fresh_analysis(
+        self,
+        run_dir: Path,
+        snapshot: Any,
+        context: PersonaContext,
+        memories: dict[str, Any],
+    ) -> tuple[PersonaPlan, list[AnalysisItem], VerificationScope]:
         plan = await self._plan(snapshot, context, memories)
         write_artifact(run_dir / "plan.json", plan)
         baselines, baseline_map = await resolve_baselines(
@@ -147,10 +195,81 @@ class PersonaPipeline:
         scope = _verification_scope(snapshot, plan, baselines, memories, baseline_map)
         analyses = await self._analyze(snapshot, plan, memories, baselines, scope)
         write_artifact(run_dir / "analyses.json", analyses)
-        draft = await self._edit(snapshot, plan, analyses, scope)
-        write_artifact(run_dir / "draft.json", draft)
-        final = await self._review(snapshot, draft, scope, run_dir)
-        return verify_edition(final, snapshot, scope, self.persona)
+        return plan, analyses, scope
+
+    @staticmethod
+    def _write_resumed_analysis(
+        run_dir: Path,
+        source_run_dir: Path,
+        plan: PersonaPlan,
+        analyses: list[AnalysisItem],
+    ) -> None:
+        write_artifact(run_dir / "plan.json", plan)
+        write_artifact(run_dir / "baselines.json", {})
+        write_artifact(run_dir / "analyses.json", analyses)
+        write_artifact(
+            run_dir / "resume.json",
+            {
+                "source_run_dir": str(source_run_dir.resolve()),
+                "plan_sha256": sha256_payload(plan.model_dump(mode="json")),
+                "analyses_sha256": sha256_payload(
+                    [item.model_dump(mode="json") for item in analyses]
+                ),
+            },
+        )
+
+    def _resume_analysis(
+        self,
+        source_run_dir: Path,
+        snapshot: Any,
+        context: PersonaContext,
+        memories: dict[str, Any],
+    ) -> tuple[PersonaPlan, list[AnalysisItem], VerificationScope]:
+        source = source_run_dir.resolve()
+        expected_parent = (self.layout.persona_runs / context.target_date.isoformat()).resolve()
+        if source.parent != expected_parent or not source.is_dir():
+            raise ValueError("resume run must be an existing run for the target date")
+        prior_context = PersonaContext.model_validate_json(
+            (source / "context.json").read_text(encoding="utf-8")
+        )
+        if prior_context.memory_context_sha256 is None:
+            raise ValueError("resume context lacks a memory-content attestation")
+        if prior_context != context:
+            raise ValueError("resume context no longer matches current inputs")
+        plan = PersonaPlan.model_validate_json((source / "plan.json").read_text(encoding="utf-8"))
+        _validate_plan(plan, context, _planner_event_rows(snapshot, context.candidate_event_ids))
+        raw_baselines = json.loads((source / "baselines.json").read_text(encoding="utf-8"))
+        baselines = {
+            key: BaselineMatch.model_validate(value) for key, value in raw_baselines.items()
+        }
+        if baselines:
+            raise ValueError("resume source has historical baselines without evidence artifacts")
+        analyses = [
+            AnalysisItem.model_validate(value)
+            for value in json.loads((source / "analyses.json").read_text(encoding="utf-8"))
+        ]
+        scope = _verification_scope(snapshot, plan, baselines, memories, {})
+        self._verify_resumed_analyses(plan, analyses, snapshot, scope)
+        return plan, analyses, scope
+
+    @staticmethod
+    def _verify_resumed_analyses(
+        plan: PersonaPlan,
+        analyses: list[AnalysisItem],
+        snapshot: Any,
+        scope: VerificationScope,
+    ) -> None:
+        selections = [item for item in plan.selections if item.grade in {"S", "A"}]
+        if len(analyses) != len(selections):
+            raise ValueError("resume analyses do not cover every S/A selection")
+        for selection, item in zip(selections, analyses, strict=True):
+            if item.event_id != selection.event_id or item.grade != selection.grade:
+                raise ValueError("resume analysis order or grade does not match the plan")
+            if not set(item.evidence_ids) <= set(selection.evidence_ids):
+                raise ValueError("resume analysis added evidence outside the plan")
+            if not set(item.memory_ids) <= set(selection.memory_ids):
+                raise ValueError("resume analysis added memory outside the plan")
+            verify_analysis_item(item, snapshot, scope)
 
     def _memory_context(
         self, events: list[Any], target_date: date
@@ -279,9 +398,11 @@ class PersonaPipeline:
             sources=_edition_source_rows(snapshot, plan),
         )
 
-        def validate(value: EditionDraft) -> None:
-            _validate_draft_identity(value, snapshot, plan, analyses, self.persona.column_id)
-            verify_edition(value, snapshot, scope, self.persona)
+        def validate(value: EditionDraft) -> EditionDraft:
+            normalized = normalize_edition_draft(value, scope)
+            _validate_draft_identity(normalized, snapshot, plan, analyses, self.persona.column_id)
+            verify_edition(normalized, snapshot, scope, self.persona)
+            return normalized
 
         return await self.gateway.generate(
             "persona_edition_editor",
@@ -304,13 +425,17 @@ class PersonaPipeline:
         if not first.open_blockers:
             return draft
 
-        def validate_finalizer(value: FinalizerOutput) -> None:
-            verify_edition(value.draft, snapshot, scope, self.persona)
+        def validate_finalizer(value: FinalizerOutput) -> FinalizerOutput:
+            normalized = value.model_copy(
+                update={"draft": normalize_edition_draft(value.draft, scope)}
+            )
+            verify_edition(normalized.draft, snapshot, scope, self.persona)
             expected = {item.blocker_id for item in first.open_blockers}
-            actual = {item.blocker_id for item in value.resolutions}
-            if actual != expected or len(actual) != len(value.resolutions):
+            actual = {item.blocker_id for item in normalized.resolutions}
+            if actual != expected or len(actual) != len(normalized.resolutions):
                 raise ValueError("finalizer must resolve each blocker exactly once")
-            _validate_finalizer_changes(draft, value)
+            _validate_finalizer_changes(draft, normalized)
+            return normalized
 
         finalized = await self.gateway.generate(
             "persona_finalizer",
@@ -788,3 +913,16 @@ def _verification_scope(
             selection.event_id: set(selection.memory_ids) for selection in plan.selections
         },
     )
+
+
+def _memory_context_sha256(
+    retrieved: list[RetrievedMemory],
+    memories: dict[str, Any],
+) -> str:
+    try:
+        payload = {
+            item.memory_id: memories[item.memory_id].model_dump(mode="json") for item in retrieved
+        }
+    except KeyError as error:
+        raise ValueError(f"retrieved memory is missing: {error.args[0]}") from error
+    return sha256_payload(payload)

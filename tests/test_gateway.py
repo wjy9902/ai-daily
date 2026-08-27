@@ -115,6 +115,43 @@ async def test_provider_sdk_retries_are_disabled() -> None:
             await model.provider.client.close()
 
 
+async def test_generate_returns_the_model_replaced_by_semantic_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+
+    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        del messages
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": "event-1",
+                        "selected": True,
+                        "category": "行业动态",
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "模型原始判断",
+                        "evidence_ids": ["event-1-1"],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+
+    result = await gateway.generate(
+        "judge",
+        JudgeDecision,
+        "instructions",
+        "prompt",
+        validator=lambda value: value.model_copy(update={"reason": "规范化判断"}),
+    )
+
+    assert result.reason == "规范化判断"
+
+
 def test_fallback_audit_preserves_requested_model() -> None:
     gateway = ModelGateway(load_config().models, Secrets(), clock=lambda: 1.0)
     role = gateway.config.roles["judge"]
