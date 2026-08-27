@@ -172,6 +172,11 @@ def normalize_analysis_item(
             {key: value.source_excerpt for key, value in scope.memories.items()},
         ),
     }
+    source_maps = {
+        "current_evidence": current,
+        "baseline_evidence": scope.baseline_evidence,
+        "experience_memory": {key: value.source_excerpt for key, value in scope.memories.items()},
+    }
     for claim in item.claims:
         claim_updates: dict[str, str] = {}
         if claim.claim_id in path_by_claim:
@@ -195,6 +200,13 @@ def normalize_analysis_item(
             ]
             quote_updates = {"quotes": quotes}
             claim_updates["text"] = "；".join(quote.quote for quote in quotes)
+        elif (prefix := INTERPRETIVE_PREFIX.get(claim.claim_type)) is not None:
+            evidence = _claim_evidence_text(claim, source_maps)
+            text = claim.text
+            for token in sorted(_ungrounded_anchors(text, prefix, evidence), key=len, reverse=True):
+                replacement = "相关指标" if token[0].isdigit() else "相关版本"
+                text = text.replace(token, replacement)
+            claim_updates["text"] = text
         claims.append(claim.model_copy(update={**claim_updates, **quote_updates}))
 
     claims_by_id = {claim.claim_id: claim for claim in claims}
@@ -336,21 +348,37 @@ def _verify_interpretive_text(
         return
     if not claim.text.startswith(prefix):
         raise ValueError(f"claim {claim.claim_id} {claim.claim_type} must start with {prefix}")
-    evidence = " ".join(
+    evidence = _claim_evidence_text(claim, source_maps)
+    ungrounded = _ungrounded_anchors(claim.text, prefix, evidence)
+    if ungrounded:
+        raise ValueError(
+            f"claim {claim.claim_id} contains ungrounded entity/version/number anchors"
+        )
+
+
+def _claim_evidence_text(
+    claim: AnalysisClaim,
+    source_maps: dict[str, dict[str, str]],
+) -> str:
+    declared = {
+        "current_evidence": claim.current_evidence_ids,
+        "baseline_evidence": claim.baseline_evidence_ids,
+        "experience_memory": claim.experience_memory_ids,
+    }
+    return " ".join(
         source_maps[kind][source_id]
         for kind, source_ids in declared.items()
         for source_id in source_ids
         if source_id in source_maps[kind]
     ).lower()
-    ungrounded = {
+
+
+def _ungrounded_anchors(text: str, prefix: str, evidence: str) -> set[str]:
+    return {
         token
-        for token in ANCHOR_RE.findall(claim.text.removeprefix(prefix))
+        for token in ANCHOR_RE.findall(text.removeprefix(prefix))
         if token.lower() not in evidence
     }
-    if ungrounded:
-        raise ValueError(
-            f"claim {claim.claim_id} contains ungrounded entity/version/number anchors"
-        )
 
 
 def _allowed_for_event(values: dict[str, set[str]], event_id: str | None) -> set[str]:

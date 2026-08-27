@@ -686,7 +686,12 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="exact verified quote"):
         verify_analysis_item(bad, snapshot, _scope())
 
-    wrong_path = item.claims[0].model_copy(update={"field_path": "items[1].headline_block"})
+    wrong_path = item.claims[0].model_copy(
+        update={
+            "field_path": "items[1].headline_block",
+            "text": "判断：GPT-6 将成本降低 90%。",
+        }
+    )
     bad_path = item.model_copy(update={"claims": [wrong_path, *item.claims[1:]]})
     with pytest.raises(ValueError, match="field_path mismatch"):
         verify_analysis_item(bad_path, snapshot, _scope())
@@ -706,6 +711,8 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     assert normalized.claims[1].text == normalized.claims[1].quotes[0].quote
     assert normalized.claims[1].quotes[0].quote == QUOTE
     assert normalized.claims[0].field_path == "items[0].headline_block"
+    assert "GPT-6" not in normalized.claims[0].text
+    assert "90%" not in normalized.claims[0].text
 
 
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:
