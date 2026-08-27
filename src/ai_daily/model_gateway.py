@@ -9,7 +9,12 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelRetry, ModelSettings
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -42,6 +47,10 @@ class MissingProviderSecret(RuntimeError):
 
 
 class ModelInvocationFailed(RuntimeError):
+    pass
+
+
+class ModelOutputValidationFailed(RuntimeError):
     pass
 
 
@@ -167,6 +176,7 @@ class ModelGateway:
                 output_tokens=reserved_output,
             )
         usage = RunUsage()
+        validation_errors: list[str] = []
         try:
             agent: Agent[None, OutputT] = Agent(
                 self._build_model(invocation.endpoint),
@@ -175,7 +185,7 @@ class ModelGateway:
                 retries=OUTPUT_RETRIES,
             )
             if validator is not None:
-                agent.output_validator(self._semantic_validator(validator))
+                agent.output_validator(self._semantic_validator(validator, validation_errors))
             async with agent:
                 result = await agent.run(
                     prompt,
@@ -191,7 +201,12 @@ class ModelGateway:
             self._record_failed_run(invocation, started, error, usage, stage, reservation)
             raise
         except Exception as error:
-            self._record_failed_run(invocation, started, error, usage, stage, reservation)
+            recorded_error: Exception = error
+            if isinstance(error, UnexpectedModelBehavior) and validation_errors:
+                recorded_error = ModelOutputValidationFailed(validation_errors[-1])
+            self._record_failed_run(invocation, started, recorded_error, usage, stage, reservation)
+            if recorded_error is not error:
+                raise recorded_error from error
             raise
         run = self._success_run(
             invocation,
@@ -281,12 +296,15 @@ class ModelGateway:
     @staticmethod
     def _semantic_validator(
         validator: Callable[[OutputT], None],
+        errors: list[str],
     ) -> Callable[[OutputT], OutputT]:
         def validate(output: OutputT) -> OutputT:
             try:
                 validator(output)
             except ValueError as error:
-                raise ModelRetry(str(error)) from error
+                message = str(error).replace("\n", " ").strip()[:300]
+                errors.append(message)
+                raise ModelRetry(message) from error
             return output
 
         return validate
