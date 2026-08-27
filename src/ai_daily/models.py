@@ -269,7 +269,7 @@ class RoleModelConfig(StrictModel):
 
 
 class BudgetConfig(StrictModel):
-    request_limit: int = Field(gt=0, le=100)
+    request_limit: int = Field(gt=0, le=200)
     input_token_limit: int = Field(gt=0)
     output_token_limit: int = Field(gt=0)
     cost_cny_limit: float = Field(gt=0)

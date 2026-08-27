@@ -22,7 +22,9 @@ ai_disclosure: 本文由 AI 参与资料整理和初稿生成，并经过证据�
 budget:
   # These are runaway backstops, not normal-run quotas. The ¥12 ceiling remains
   # binding before current DeepSeek pricing can consume these token allowances.
-  request_limit: 100
+  # Same-day recovery may accumulate schema retries that cost little or nothing;
+  # money remains the binding safety control.
+  request_limit: 120
   input_token_limit: 1500000
   # The persona gateway reserves the worst case before a call. Three concurrent
   # 48k-output calls with one schema retry can reserve 288k even though actual
