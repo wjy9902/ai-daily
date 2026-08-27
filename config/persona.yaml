@@ -25,7 +25,7 @@ budget:
   # Same-day recovery may accumulate schema retries that cost little or nothing;
   # money remains the binding safety control.
   request_limit: 180
-  input_token_limit: 2500000
+  input_token_limit: 2700000
   # The persona gateway reserves the worst case before a call. Two concurrent
   # Recovery calls can accumulate large reported reasoning usage. Keep tokens
   # non-binding and let the ¥22 ceiling stop spend.
