@@ -11,8 +11,8 @@ from ai_daily.models import ModelsConfig, SourceConfig, SourceTier
 def test_project_config_loads_without_secrets() -> None:
     config = load_config(Path("config"))
     assert config.pipeline.lead_max == 5
-    assert config.pipeline.follow_max == 7
-    assert config.pipeline.brief_max == 12
+    assert config.pipeline.follow_max == 8
+    assert config.pipeline.brief_max == 16
     assert len(config.sources) >= 25
     # Assert the invariant, not the vendor: which provider leads is an
     # operational choice that changes with pricing and availability, but every

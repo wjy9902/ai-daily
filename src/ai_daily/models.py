@@ -6,8 +6,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
-type Category = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "快讯"]
-type EditorialCategory = Literal["模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI"]
+type Category = Literal[
+    "模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "前瞻与传闻", "快讯"
+]
+type EditorialCategory = Literal[
+    "模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "前瞻与传闻"
+]
 JUDGE_BATCH_SIZE = 10
 
 
@@ -281,6 +285,7 @@ class PipelineConfig(StrictModel):
     brief_min: int = Field(ge=1, le=16)
     brief_max: int = Field(ge=1, le=16)
     max_research_details: int = Field(ge=0, le=5)
+    max_rumor_details: int = Field(ge=0, le=5)
     max_source_details: int = Field(ge=1, le=5)
     tier_a_min_coverage: float = Field(ge=0, le=1)
     collection_window_hours: int = Field(gt=0, le=72)

@@ -599,7 +599,7 @@ async def test_global_editor_compares_all_candidates_and_can_correct_initial_jud
         selection.headline for selection in result.selections[:4]
     )
     assert gateway.output_schema["properties"]["lead"]["minItems"] == 4
-    assert gateway.output_schema["properties"]["follow"]["maxItems"] == 7
+    assert gateway.output_schema["properties"]["follow"]["maxItems"] == 8
     assert gateway.output_schema["properties"]["brief"]["minItems"] == 8
 
 
@@ -1265,3 +1265,99 @@ def test_plan_validation_leaves_corroboration_to_the_enforcer() -> None:
 
     _, demoted = enforce_lead_corroboration(plan, events)
     assert demoted, "the enforcer must still catch what the validator no longer does"
+
+
+# --------------------------------------------------------------------- rumors
+
+
+def _rumor_plan(rumor_index: int, headline: str, brief: str) -> EditorialPlan:
+    value = valid_global_plan()
+    selections = list(value.selections)
+    selections[rumor_index] = selections[rumor_index].model_copy(
+        update={"category": "前瞻与传闻", "headline": headline, "brief": brief}
+    )
+    return value.model_copy(update={"selections": selections})
+
+
+def test_rumor_copy_requires_attribution() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = _rumor_plan(4, "新模型即将进入灰度测试", "社区里都在讨论这次发布。")
+
+    with pytest.raises(ValueError, match="lacks attribution"):
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+def test_rumor_cannot_lead() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = _rumor_plan(0, "爆料称新模型最快周四发布", "据报道，新模型已进入灰度测试。")
+
+    with pytest.raises(ValueError, match="rumors in lead"):
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+def test_rumor_copy_may_carry_attributed_speculation() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = _rumor_plan(4, "据报道新模型或将于本周发布", "知情人士称谈判仍处早期阶段。")
+
+    validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+def test_the_same_speculation_outside_the_rumor_category_still_fails() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = valid_global_plan()
+    selections = list(plan_value.selections)
+    selections[4] = selections[4].model_copy(
+        update={"headline": "据报道新模型或将于本周发布", "brief": "知情人士称谈判仍处早期阶段。"}
+    )
+    plan_value = plan_value.model_copy(update={"selections": selections})
+
+    with pytest.raises(ValueError, match="speculation"):
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+def test_plan_copy_normalization_leaves_rumor_wording_intact() -> None:
+    from ai_daily.content import _normalize_plan_copy
+
+    plan_value = _rumor_plan(4, "据报道新模型或将于本周发布", "知情人士称谈判仍处早期阶段。")
+
+    normalized = _normalize_plan_copy(plan_value)
+
+    assert normalized.selections[4].headline == "据报道新模型或将于本周发布"
+    assert normalized.selections[4].brief == "知情人士称谈判仍处早期阶段。"
+
+
+def test_lead_demotion_never_promotes_a_rumor() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    weak = events[0].items[0].model_copy(
+        update={"source_channel": SourceChannel.NEWS, "source_tier": SourceTier.B}
+    )
+    events[0] = events[0].model_copy(update={"items": [weak]})
+    plan_value = _rumor_plan(4, "据报道新模型或将于本周发布", "知情人士称谈判仍处早期阶段。")
+
+    adjusted, demoted = enforce_lead_corroboration(plan_value, events)
+
+    assert demoted and "event-0" in demoted[0]
+    leads = [item.event_id for item in adjusted.selections if item.tier is EditorialTier.LEAD]
+    assert "event-4" not in leads
+    assert "event-5" in leads
+
+
+def _rumor_selection() -> EditorialSelection:
+    return plan().selections[0].model_copy(
+        update={"tier": EditorialTier.FOLLOW, "category": "前瞻与传闻"}
+    )
+
+
+def test_rumor_draft_requires_attribution_in_tldr() -> None:
+    from ai_daily.content import _validate_draft
+
+    with pytest.raises(ValueError, match="attribution"):
+        _validate_draft(_quoted_draft(), _rumor_selection(), _bundle())
+
+
+def test_rumor_draft_allows_attributed_speculation() -> None:
+    from ai_daily.content import _validate_draft
+
+    draft = _quoted_draft().model_copy(update={"tldr": "据报道，新模型或将于本周正式发布。"})
+
+    _validate_draft(draft, _rumor_selection(), _bundle())

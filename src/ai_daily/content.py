@@ -44,8 +44,21 @@ class EditorialPlanOutputBase(StrictModel):
 
 
 JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
-PLANNING_EVIDENCE_EXCERPT_CHARS = 800
+# 800 chars starved the editor of the specifics (parameters, prices, dates)
+# that decide prominence: a model release and its pricing change read
+# identically at that length. 2000 keeps the planning payload affordable while
+# giving each candidate a full opening section to be judged on.
+PLANNING_EVIDENCE_EXCERPT_CHARS = 2_000
 DRAFT_EVIDENCE_EXCERPT_CHARS = 6_000
+#: The one category whose copy may report unverified claims — always with
+#: attribution, never as the paper's own voice, and never in the lead slot.
+RUMOR_CATEGORY = "前瞻与传闻"
+#: Copy in the rumor category must name where the claim comes from. Without a
+#: marker like 据报道 or 爆料称 a rumor reads as a verified fact, which is the
+#: exact failure the speculation gates exist to stop.
+RUMOR_ATTRIBUTION_RE = re.compile(
+    r"(?:据报道|据.{0,12}报道|据传|据悉|据爆料|爆料称|消息称|传闻|知情人士|社区发现|尚未官方确认|预告|路线图)"
+)
 SPECULATIVE_COPY_RE = re.compile(
     r"(?:传闻|尚未证实|据猜测|推测|可能性(?:较?高|较?大)|或将|或随后|"
     r"(?:可能|也许|预计|有望).{0,16}(?:发布|推出|上线|开放|宣布|融资|收购|合并))"
@@ -275,7 +288,9 @@ def enforce_lead_corroboration(
     promotable = [
         index
         for index, selection in enumerate(selections)
-        if selection.tier is EditorialTier.FOLLOW and qualified(selection)
+        if selection.tier is EditorialTier.FOLLOW
+        and selection.category != RUMOR_CATEGORY
+        and qualified(selection)
     ]
     for lead_index in bad_leads:
         selection = selections[lead_index]
@@ -299,26 +314,6 @@ def enforce_lead_corroboration(
     tier_rank = {EditorialTier.LEAD: 0, EditorialTier.FOLLOW: 1, EditorialTier.BRIEF: 2}
     selections.sort(key=lambda item: (tier_rank[item.tier], -item.importance))
     return plan.model_copy(update={"selections": selections}), demoted
-
-    events_by_id = {event.event_id: event for event in events}
-    for selection in plan.selections:
-        if selection.tier != EditorialTier.LEAD:
-            continue
-        event = events_by_id.get(selection.event_id)
-        if event is None:
-            raise ValueError(
-                f"editorial plan referenced an unknown event: event_id={selection.event_id}"
-            )
-        if any(item.source_channel in FIRST_PARTY_CHANNELS for item in event.items):
-            continue
-        domains = {registrable_domain(str(item.url)) for item in event.items}
-        if len(domains) < 2:
-            raise ValueError(
-                "lead selection is neither first-party nor independently corroborated: "
-                f"event_id={selection.event_id}, domains={sorted(domains)}; "
-                "demote it to follow or brief, or promote an event with an official "
-                "source or a second independent publisher"
-            )
 
 
 def evidence_bundle(
@@ -524,6 +519,11 @@ def _drop_unselected_viewpoints(plan: EditorialPlan) -> EditorialPlan:
 def _normalize_plan_copy(plan: EditorialPlan) -> EditorialPlan:
     selections: list[EditorialSelection] = []
     for selection in plan.selections:
+        if selection.category == RUMOR_CATEGORY:
+            # Rumor copy is speculative by definition; the attribution
+            # requirement in _validate_factual_copy is its gate instead.
+            selections.append(selection)
+            continue
         headline = _drop_speculative_clauses(selection.headline)
         brief = _drop_speculative_clauses(selection.brief) or headline
         selections.append(
@@ -643,8 +643,15 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "sources.source_time_kind 为 repository_updated 时，"
         "只能把时间描述为官方仓库更新；"
         "除非证据另有明确发布日期，不能把该时间改写为模型首次发布。"
-        "headline 和 brief 只能陈述证据已经确认的事实，不得包含可能、预计、传闻、"
-        "或将、或随后发布等未证实预测；预测只能放入详细稿 caveat，且不得提高重要性。"
+        "除 category 为前瞻与传闻的条目外，headline 和 brief 只能陈述证据已经确认的事实，"
+        "不得包含可能、预计、传闻、或将、或随后发布等未证实预测；"
+        "预测只能放入详细稿 caveat，且不得提高重要性。"
+        "前瞻与传闻是唯一允许收录未证实消息的类目：证据里可信来源报道的发布预告、"
+        "灰度测试发现、洽谈中的交易、路线图爆料应归入该类，"
+        "headline 和 brief 必须写明消息出处(据报道、爆料称、消息称、知情人士等)，"
+        "不得写成已确认事实。前瞻与传闻不得进入 lead 数组，"
+        f"进入 follow 的前瞻与传闻最多 {config.max_rumor_details} 条，其余放 brief。"
+        "不要因为消息未证实就丢弃可信来源的重要爆料；归入前瞻与传闻并注明出处即可。"
         "调查、榜单、流量或样本数据必须在 headline 和 brief 中保留统计口径，"
         "不得把单个平台或单类样本外推为整体市场，也不得凭时间相关性推断因果。"
         "严格区分问题背景规模、训练数据覆盖、模型能力范围和已上线产品范围；"
@@ -680,13 +687,23 @@ def validate_editorial_plan(
 
 def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     for selection in plan.selections:
+        is_rumor = selection.category == RUMOR_CATEGORY
+        if is_rumor and not (
+            RUMOR_ATTRIBUTION_RE.search(selection.headline)
+            or RUMOR_ATTRIBUTION_RE.search(selection.brief)
+        ):
+            raise ValueError(
+                "editorial plan rumor item lacks attribution: "
+                f"event_id={selection.event_id}; 前瞻与传闻 copy must name its "
+                "origin (据报道/爆料称/消息称/知情人士 etc.)"
+            )
         for field, value in (("headline", selection.headline), ("brief", selection.brief)):
             if not value.strip():
                 raise ValueError(
                     f"editorial plan {field} has no verified factual copy: "
                     f"event_id={selection.event_id}"
                 )
-            if SPECULATIVE_COPY_RE.search(value):
+            if not is_rumor and SPECULATIVE_COPY_RE.search(value):
                 raise ValueError(
                     f"editorial plan {field} contains unverified speculation: "
                     f"event_id={selection.event_id}"
@@ -757,9 +774,22 @@ def _validate_plan_quotas(
     _require_range("lead", counts[EditorialTier.LEAD], config.lead_min, config.lead_max)
     _require_range("follow", counts[EditorialTier.FOLLOW], config.follow_min, config.follow_max)
     _require_range("brief", counts[EditorialTier.BRIEF], config.brief_min, config.brief_max)
+    rumor_leads = [
+        selection.event_id
+        for selection in selections
+        if selection.tier is EditorialTier.LEAD and selection.category == RUMOR_CATEGORY
+    ]
+    if rumor_leads:
+        raise ValueError(
+            f"editorial plan put unverified rumors in lead: event_ids={rumor_leads}; "
+            "前瞻与传闻 items may only appear in follow or brief"
+        )
     details = [selection for selection in selections if selection.tier != EditorialTier.BRIEF]
     if sum(selection.category == "前沿研究" for selection in details) > config.max_research_details:
         raise ValueError("editorial plan contains too many detailed research items")
+    rumor_details = sum(selection.category == RUMOR_CATEGORY for selection in details)
+    if rumor_details > config.max_rumor_details:
+        raise ValueError("editorial plan contains too many detailed rumor items")
     if len({selection.category for selection in details}) < min(3, len(details)):
         raise ValueError("editorial plan lacks category breadth")
 
@@ -827,6 +857,13 @@ async def _draft_one(
     gateway: ModelGateway, selection: EditorialSelection, bundle: EvidenceBundle
 ) -> DraftItem:
     depth = "2-4 条核心事实" if selection.tier == EditorialTier.LEAD else "1-3 条核心事实"
+    rumor_rule = (
+        "这是前瞻与传闻稿件：可以转述证据中的未证实消息，但 TL;DR 和每条事实"
+        "都必须写明消息出处(据报道、爆料称、消息称、知情人士等)，"
+        "不得写成已确认事实，caveat 中说明尚未获得官方确认。"
+        if selection.category == RUMOR_CATEGORY
+        else "不要把推测写成事实，信息不足或证据冲突时写入 caveat。"
+    )
     return await gateway.generate(
         "editor",
         DraftItem,
@@ -843,7 +880,7 @@ async def _draft_one(
             "如果找不到能逐字支撑某条事实的原句，就换一条证据支持得住的事实。"
             "why_it_matters、action、caveat 是你的判断与解读，不需要引用原句。"
             "why_it_matters 解释影响，不写空泛赞美；action 只有确有可执行建议时才填写。"
-            "不要把推测写成事实，信息不足或证据冲突时写入 caveat。"
+            f"{rumor_rule}"
             "样本、榜单、流量和市场份额必须保留原始统计口径；"
             "不得把相关性写成因果，也不得用证据外的人事、战略或竞争变化解释数据。"
             "严格区分问题背景规模、训练数据覆盖、模型能力范围和已上线产品范围，"
@@ -909,14 +946,23 @@ def _validate_draft(
     ]
     if draft.action:
         factual_fields.append(("action", draft.action))
-    speculative_fields = [
-        field for field, value in factual_fields if DRAFT_SPECULATION_RE.search(value)
-    ]
-    if speculative_fields:
-        raise ValueError(
-            "editor put speculation outside caveat; rewrite fields="
-            f"{speculative_fields} as verified facts or move uncertainty to caveat"
-        )
+    if selection.category == RUMOR_CATEGORY:
+        # A rumor story is allowed to describe unverified claims, but never in
+        # the paper's own voice: the TL;DR must carry attribution.
+        if not RUMOR_ATTRIBUTION_RE.search(draft.tldr):
+            raise ValueError(
+                "rumor draft tldr lacks attribution; state where the claim "
+                "comes from (据报道/爆料称/消息称/知情人士 etc.)"
+            )
+    else:
+        speculative_fields = [
+            field for field, value in factual_fields if DRAFT_SPECULATION_RE.search(value)
+        ]
+        if speculative_fields:
+            raise ValueError(
+                "editor put speculation outside caveat; rewrite fields="
+                f"{speculative_fields} as verified facts or move uncertainty to caveat"
+            )
     if any(
         evidence.source_time_kind.value == "repository_updated"
         for evidence in bundle.evidence
