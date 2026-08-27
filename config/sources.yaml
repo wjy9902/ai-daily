@@ -361,28 +361,122 @@ sources:
     limit: 5
 
   # ------------------------------------------------------------------------
-  # Self-hosted feed infrastructure — NOT YET DEPLOYED. Roughly half of a
-  # benchmark digest's items break first on vendor X accounts, and Chinese
-  # vendors' first-party posts live on WeChat official accounts. Both are
-  # served by self-hosted converters (RSSHub for X, we-mp-rss for WeChat)
-  # behind HTTPS on our own domain — deployment and the 2026-08-27 tool
-  # survey live in ops/FEED-INFRA.md. Once the services answer, uncomment,
-  # fill in the real URLs, and probe-sources before relying on them. Until
-  # then Techmeme + TestingCatalog + smol.ai relay most of the X news cycle
-  # at a few hours' delay.
-  #
-  # - name: x-openai
-  #   display_name: OpenAI @ X
-  #   kind: rss
-  #   url: https://rsshub.<your-domain>/twitter/user/OpenAI
-  #   tier: A
-  #   channel: official
-  #   limit: 15
-  # (repeat for: OpenAIDevs, AnthropicAI, claudeai, ClaudeDevs, GoogleDeepMind,
-  #  GeminiApp, Alibaba_Qwen, Kimi_Moonshot, MiniMax__AI, xai, ManusAI_HQ,
-  #  cursor_ai — vendor org accounts only; individual staff accounts stay out
-  #  until a recall audit says otherwise)
-  #
+  # X (Twitter) via the self-hosted RSSHub at rsshub.jiayutool.cn — deployed
+  # 2026-08-27, see ops/FEED-INFRA.md. Vendor org accounts only; individual
+  # staff accounts stay out until a recall audit says otherwise. All thirteen
+  # handles verified live through the instance before being enabled.
+
+  - name: x-openai
+    display_name: OpenAI @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/OpenAI
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-openai-devs
+    display_name: OpenAI Developers @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/OpenAIDevs
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-anthropic
+    display_name: Anthropic @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/AnthropicAI
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-claude
+    display_name: Claude @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/claudeai
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-claude-devs
+    display_name: Claude Developers @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/ClaudeDevs
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-deepmind
+    display_name: Google DeepMind @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/GoogleDeepMind
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-gemini
+    display_name: Google Gemini @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/GeminiApp
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-xai
+    display_name: xAI @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/xai
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-qwen
+    display_name: Qwen @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/Alibaba_Qwen
+    tier: A
+    channel: official
+    region: china
+    limit: 15
+
+  - name: x-kimi
+    display_name: Kimi @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/Kimi_Moonshot
+    tier: A
+    channel: official
+    region: china
+    limit: 15
+
+  - name: x-minimax
+    display_name: MiniMax @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/MiniMax_AI
+    tier: A
+    channel: official
+    region: china
+    limit: 15
+
+  - name: x-manus
+    display_name: Manus @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/ManusAI
+    tier: A
+    channel: official
+    region: china
+    limit: 15
+
+  - name: x-cursor
+    display_name: Cursor @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/cursor_ai
+    tier: A
+    channel: official
+    limit: 15
+
+  # WeChat official accounts via the self-hosted we-mp-rss at
+  # werss.jiayutool.cn — fill in the feed paths from its admin UI once the
+  # WeChat Reading authorization is scanned (ops/FEED-INFRA.md).
   # - name: wechat-zhipu
   #   display_name: 智谱公众号
   #   kind: rss
