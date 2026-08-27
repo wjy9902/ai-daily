@@ -2088,7 +2088,6 @@ def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
         source_kind, source_ids = next((kind, ids) for kind, ids in sources if ids)
         return AssemblyText(
             text=claim.text,
-            claim_type=claim.claim_type,
             source_kind=cast(Any, source_kind),
             source_id=source_ids[0],
             quote=claim.quotes[0].quote if claim.quotes else None,
