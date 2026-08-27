@@ -26,7 +26,11 @@ INTERPRETIVE_PREFIX = {
     "recommendation": "建议：",
     "uncertainty": "不确定性：",
 }
-ANCHOR_RE = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9._-]{2,}|\d[\d.]*%?)")
+# Mechanical grounding is reliable for numbers and version-like tokens. Plain
+# Latin words include generic product vocabulary (API, ROI, SDK) and treating
+# every one as a named entity creates false positives without protecting the
+# equivalent Chinese text.
+ANCHOR_RE = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z._-]*\d[A-Za-z0-9._-]*|\d[\d.]*%?)")
 ANALYSIS_BLOCK_NAMES = (
     "headline_block",
     "confirmed_change_block",
