@@ -2708,3 +2708,21 @@ def test_critic_cannot_self_resolve_a_finding() -> None:
 
     with pytest.raises(ValueError, match="must remain open"):
         _validate_critique(critique, "a" * 64, 1)
+
+
+def test_style_violation_warning_is_a_release_blocker() -> None:
+    finding = CritiqueFinding(
+        blocker_id="blocker-broken-sentence",
+        severity="warning",
+        field_path="items[0].confirmed_change_block",
+        issue_type="style_violation",
+        explanation="句子缺少必要标点。",
+        status="open",
+    )
+    critique = Critique(
+        draft_sha256="a" * 64,
+        review_round=1,
+        findings=[finding],
+    )
+
+    assert critique.open_blockers == [finding]

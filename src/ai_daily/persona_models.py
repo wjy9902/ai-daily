@@ -347,7 +347,10 @@ class Critique(StrictModel):
     @property
     def open_blockers(self) -> list[CritiqueFinding]:
         return [
-            item for item in self.findings if item.severity == "blocker" and item.status == "open"
+            item
+            for item in self.findings
+            if item.status == "open"
+            and (item.severity == "blocker" or item.issue_type == "style_violation")
         ]
 
 
