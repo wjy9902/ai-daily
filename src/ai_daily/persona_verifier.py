@@ -152,7 +152,7 @@ def normalize_edition_draft(
     draft: EditionDraft,
     scope: VerificationScope,
 ) -> EditionDraft:
-    """Remove unapproved author voice from interpretive claims, then rebuild blocks."""
+    """Normalize mechanical labels and collective voice, then rebuild blocks."""
     claims = _claim_map(draft.claims)
     normalized: dict[str, AnalysisClaim] = {}
     block_updates: dict[str, PublicTextBlock] = {}
@@ -165,6 +165,9 @@ def normalize_edition_draft(
             text = claim.text
             if claim.claim_type in INTERPRETIVE_PREFIX:
                 text = _neutralize_collective_voice(text)
+                prefix = INTERPRETIVE_PREFIX[claim.claim_type]
+                if not text.startswith(prefix):
+                    text = prefix + text
             normalized[claim_id] = claim.model_copy(update={"text": text})
         block_updates[path] = block.model_copy(
             update={"text": "".join(normalized[item].text for item in block.claim_ids)}
