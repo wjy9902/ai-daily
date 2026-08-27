@@ -203,8 +203,8 @@ class PersonaPipeline:
             {
                 "memory_id": memories[item].memory_id,
                 "kind": memories[item].kind.value,
-                "statement": _bounded_text(memories[item].statement, 350),
-                "source_context": _bounded_text(memories[item].source_context, 350),
+                "statement": _bounded_text(memories[item].statement, 260),
+                "source_context": _bounded_text(memories[item].source_context, 180),
             }
             for item in selection.memory_ids[:4]
         ]
@@ -388,16 +388,43 @@ def _planner_event_rows(snapshot: Any, event_ids: list[str]) -> list[dict[str, A
 def _analyst_event_row(snapshot: Any, selection: PlanSelection) -> dict[str, Any]:
     row = _event_rows(snapshot, [selection.event_id])[0]
     allowed = set(selection.evidence_ids[:3])
-    row["event"]["summary"] = _bounded_text(str(row["event"]["summary"]), 800)
-    row["evidence"]["evidence"] = [
+    event = row["event"]
+    evidence = [
         {
-            **item,
-            "excerpt": _bounded_text(str(item["excerpt"]), 1_600),
+            "evidence_id": item["evidence_id"],
+            "url": str(item["url"])[:500],
+            "title": str(item["title"])[:160],
+            "excerpt": _bounded_text(str(item["excerpt"]), 750),
+            "source": str(item["source"])[:120],
+            "source_time_kind": item["source_time_kind"],
         }
         for item in row["evidence"]["evidence"]
         if item["evidence_id"] in allowed
     ][:3]
-    return row
+    judge = row["judge"]
+    compact_judge = None
+    if judge is not None:
+        compact_judge = {
+            "event_id": judge["event_id"],
+            "category": judge["category"],
+            "relevance": judge["relevance"],
+            "confidence": judge["confidence"],
+            "reason": _bounded_text(str(judge["reason"]), 300),
+            "evidence_ids": judge["evidence_ids"][:3],
+        }
+    return {
+        "event": {
+            "event_id": event["event_id"],
+            "canonical_url": str(event["canonical_url"])[:500],
+            "title": str(event["title"])[:160],
+            "summary": _bounded_text(str(event["summary"]), 600),
+            "published_at": event["published_at"],
+            "source_time_kind": event["source_time_kind"],
+            "score": event["score"],
+        },
+        "evidence": {"event_id": selection.event_id, "evidence": evidence},
+        "judge": compact_judge,
+    }
 
 
 def _json_prompt(**payload: Any) -> str:

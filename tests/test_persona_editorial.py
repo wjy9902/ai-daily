@@ -40,6 +40,8 @@ from ai_daily.persona_models import (
 )
 from ai_daily.persona_pipeline import (
     PersonaPipeline,
+    _analyst_event_row,
+    _json_prompt,
     _validate_critique,
     _validate_finalizer_changes,
 )
@@ -127,6 +129,70 @@ def _snapshot(layout: SiteLayout) -> UpstreamSnapshot:
     )
     write_artifact(layout.upstream_object_path(snapshot.publication_marker), snapshot)
     return snapshot
+
+
+def test_analyst_prompt_drops_nested_raw_items_and_stays_bounded() -> None:
+    event = factories.event(0)
+    raw = event.items[0].model_copy(update={"summary": "长原文。" * 2_500})
+    event = event.model_copy(
+        update={"summary": "事件摘要。" * 1_500, "items": [raw] * 8}
+    )
+    bundle = evidence_bundle(event)
+    evidence = bundle.evidence[0]
+    bundle = bundle.model_copy(
+        update={
+            "evidence": [
+                evidence.model_copy(
+                    update={
+                        "evidence_id": f"event-0-{index}",
+                        "excerpt": "可核验的证据句。" * 500,
+                    }
+                )
+                for index in range(1, 4)
+            ]
+        }
+    )
+    unsigned = UpstreamSnapshot(
+        target_date=TARGET,
+        publication_level=PublicationLevel.L0,
+        publication_marker="a" * 64,
+        events=[event],
+        evidence_bundles=[bundle],
+        decisions=[factories.judge_decision(0)],
+        editorial_plan=None,
+        snapshot_sha256="0" * 64,
+    )
+    selection = PlanSelection(
+        event_id="event-0",
+        grade="S",
+        importance_reason="这项变化影响 AI 产品决策。",
+        evidence_ids=["event-0-1", "event-0-2", "event-0-3"],
+    )
+
+    row = _analyst_event_row(unsigned, selection)
+    prompt = _json_prompt(
+        selection=selection.model_dump(mode="json"),
+        event=row,
+        memories=[
+            {
+                "memory_id": f"memory-{index}",
+                "kind": "experience",
+                "statement": "个人经验。" * 52,
+                "source_context": "来源背景。" * 36,
+            }
+            for index in range(4)
+        ],
+        baseline={
+            "event_id": "event-0",
+            "matched_event_id": "historical-event",
+            "baseline_evidence_ids": ["historical-evidence"],
+            "confidence": 0.9,
+            "reasoning": "同一实体的同一指标。" * 40,
+        },
+    )
+
+    assert "items" not in row["event"]
+    assert len(prompt) <= 10_000
 
 
 def _claim(claim_id: str, path: str, text: str) -> AnalysisClaim:
