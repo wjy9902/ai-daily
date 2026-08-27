@@ -2539,9 +2539,24 @@ async def test_pipeline_resumes_verified_analyses_without_reinvoking_earlier_sta
     resumed = await resumed_pipeline.run(TARGET, source_run)
 
     assert resumed.editorial_state == "ready", resumed.reason
-    assert gateway.roles == ["persona_edition_editor", "persona_critic"]
+    assert gateway.roles == ["persona_critic"]
     run_dirs = sorted((layout.persona_runs / TARGET.isoformat()).iterdir())
     assert any((run_dir / "resume.json").exists() for run_dir in run_dirs)
+
+
+@pytest.mark.asyncio
+async def test_pipeline_rejects_tampered_resumed_draft(tmp_path: Path) -> None:
+    layout, _, config, draft, source_run = await _resume_source(tmp_path)
+    payload = json.loads((source_run / "draft.json").read_text(encoding="utf-8"))
+    payload["input_marker"] = "e" * 64
+    (source_run / "draft.json").write_text(json.dumps(payload), encoding="utf-8")
+    gateway = _ResumeGateway(draft)
+
+    result = await _resumed_pipeline(layout, config, draft, gateway).run(TARGET, source_run)
+
+    assert result.editorial_state == "held"
+    assert gateway.roles == []
+    assert not layout.persona_edition_path(TARGET).exists()
 
 
 @pytest.mark.asyncio

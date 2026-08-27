@@ -164,10 +164,36 @@ class PersonaPipeline:
             memories,
             resume_run_dir,
         )
-        draft = await self._edit(snapshot, plan, analyses, scope)
+        draft = (
+            self._resume_draft(resume_run_dir, snapshot, plan, analyses, scope)
+            if resume_run_dir is not None and (resume_run_dir / "draft.json").is_file()
+            else await self._edit(snapshot, plan, analyses, scope)
+        )
         write_artifact(run_dir / "draft.json", draft)
         final = await self._review(snapshot, draft, scope, run_dir)
         return verify_edition(final, snapshot, scope, self.persona)
+
+    def _resume_draft(
+        self,
+        source_run_dir: Path,
+        snapshot: Any,
+        plan: PersonaPlan,
+        analyses: list[AnalysisItem],
+        scope: VerificationScope,
+    ) -> EditionDraft:
+        draft = EditionDraft.model_validate_json(
+            (source_run_dir / "draft.json").read_text(encoding="utf-8")
+        )
+        normalized = normalize_edition_draft(draft, scope)
+        _validate_draft_identity(
+            normalized,
+            snapshot,
+            plan,
+            analyses,
+            self.persona.column_id,
+        )
+        verify_edition(normalized, snapshot, scope, self.persona)
+        return normalized
 
     async def _analysis_stage(
         self,
