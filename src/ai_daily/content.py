@@ -238,15 +238,12 @@ def lead_is_corroborated(event: Event) -> bool:
     * **One Tier A publication** — a masthead this project already classifies
       as first-rank.
 
-    That third clause is a deliberate concession to how the pipeline actually
-    behaves. Clustering does not merge the same story across outlets today, so
-    every candidate arrives single-sourced and the two-publisher clause is
-    effectively unreachable. Without it, the only stories that could lead were
-    corporate blog posts, and a day whose real news was a DeepSeek release, a
-    Qwen open-sourcing and a supply-chain attack led instead with a benchmark
-    announcement. Source tier is this project's existing statement of which
-    mastheads it trusts, so leaning on it is not a new judgement — and a lone
-    Tier B or C report still cannot lead.
+    That third clause began as a concession to clustering that could not
+    merge the same story across outlets, which made the two-publisher clause
+    unreachable. Cross-outlet merging now works (product-identifier anchors in
+    normalize.py), so big stories do reach two domains — but quieter days
+    still surface single-outlet Tier A reports worth leading with, so the
+    clause stays. A lone Tier B or C report still cannot lead.
     """
 
     if any(item.source_channel in FIRST_PARTY_CHANNELS for item in event.items):

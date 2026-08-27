@@ -181,6 +181,103 @@ def _is_high_signal_community_item(item: RawItem) -> bool:
     return isinstance(score, (int, float)) and score >= COMMUNITY_DISCOVERY_SCORE
 
 
+#: Punctuation stripped when normalizing a product identifier, so that
+#: "GLM-5.3-Flash", "GLM 5.3 Flash" and "glm5.3flash" all collapse to the
+#: same key.
+_PRODUCT_ID_STRIP = re.compile(r"[.\-+_]")
+#: A roundup title enumerates many products ("Sonnet 4.5、GLM-4.6、Ring-1T…").
+#: Using its identifiers for merging would chain unrelated stories together
+#: through the roundup, so such titles contribute none.
+_PRODUCT_ID_ROUNDUP_LIMIT = 3
+
+
+def title_product_identifiers(title: str) -> set[str]:
+    """Versioned product names from a TITLE, as cross-outlet merge anchors.
+
+    Different outlets word the same announcement differently — and a Chinese
+    report shares almost no tokens with the vendor's English post — but both
+    keep the product name verbatim: "GLM-5.3-Flash", "Qwen3.8", "Grok 4".
+    A token qualifies when it mixes letters and digits ("glm-5.3-flash");
+    a bare name followed by a version ("Grok 4", "GPT 5.5") is joined into
+    one identifier. Titles only: summaries (and digest-style titles, see the
+    roundup limit) mention many products and would over-merge.
+    """
+
+    tokens = [token.lower() for token in LATIN_TOKEN_RE.findall(title)]
+    identifiers: set[str] = set()
+    for index, token in enumerate(tokens):
+        normalized = _PRODUCT_ID_STRIP.sub("", token)
+        has_alpha = any(ch.isalpha() for ch in normalized)
+        has_digit = any(ch.isdigit() for ch in normalized)
+        if has_alpha and has_digit and len(normalized) >= 4 and not _is_year_number(normalized):
+            identifiers.add(normalized)
+        # "Kimi K3" / "Grok 4": the name alone is generic and the version
+        # alone is noise, but joined they are as specific as a long id.
+        if index + 1 < len(tokens):
+            following = _PRODUCT_ID_STRIP.sub("", tokens[index + 1])
+            joined = normalized + following
+            if (
+                has_alpha
+                and not has_digit
+                and any(ch.isdigit() for ch in following)
+                and len(joined) >= 4
+                and not _is_year_number(joined)
+            ):
+                identifiers.add(joined)
+    if len(identifiers) > _PRODUCT_ID_ROUNDUP_LIMIT:
+        return set()
+    return identifiers
+
+
+def _is_year_number(identifier: str) -> bool:
+    """True when the identifier's digits are just a calendar year.
+
+    "WRC 2026" or "CES 2027" name an event, not a product: two stories
+    sharing them are two announcements from the same venue, and merging on
+    them chains a whole conference into one event.
+    """
+
+    digits = "".join(ch for ch in identifier if ch.isdigit())
+    return bool(re.fullmatch(r"20[2-3]\d", digits))
+
+
+def _same_story_by_product(left_title: str, right_title: str) -> bool:
+    """Whether two titles report the same story, anchored on a product name.
+
+    A shared versioned product name is necessary but not sufficient: on launch
+    day the same model appears in a release story, a pricing story and a
+    partner-platform story, and those must stay distinct events. Two cases:
+
+    * **Different scripts** (one title Chinese, one Latin): word overlap is
+      structurally impossible, so the shared product name is the whole
+      signal. This is the case the plain similarity clause could never merge.
+    * **Same script**: demand the titles also agree beyond the bare version —
+      either one title is essentially just the product name (a Hacker News
+      style bare link), or the titles share at least one digit-free word
+      ("granite", "transcribe", "千问"). Two same-language stories whose only
+      common ground is a version number ("GPT-5.6 API 上线" vs "GPT-5.6
+      更新数据政策") are different stories about the same model.
+    """
+
+    shared = title_product_identifiers(left_title) & title_product_identifiers(right_title)
+    if not shared:
+        return False
+    left_cjk = bool(CHINESE_RE.search(left_title))
+    right_cjk = bool(CHINESE_RE.search(right_title))
+    if left_cjk != right_cjk:
+        return True
+    left_tokens = title_tokens(left_title)
+    right_tokens = title_tokens(right_title)
+    if min(len(left_tokens), len(right_tokens)) <= 2:
+        return True
+    digit_free_overlap = {
+        token
+        for token in left_tokens & right_tokens
+        if not any(ch.isdigit() for ch in token)
+    }
+    return bool(digit_free_overlap)
+
+
 def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
     left_time = left.published_at or left.discovered_at
     right_time = right.published_at or right.discovered_at
@@ -188,6 +285,8 @@ def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
         return False
     identifiers = story_identifiers(left) & story_identifiers(right)
     if identifiers:
+        return True
+    if _same_story_by_product(left.title, right.title):
         return True
     if left.source == right.source and left.source_channel == SourceChannel.RELEASE:
         return False

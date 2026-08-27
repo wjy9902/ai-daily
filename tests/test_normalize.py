@@ -156,3 +156,79 @@ def test_history_filter_keeps_a_distinct_followup_for_the_same_model() -> None:
     ]
     history = HistoricalIndex(urls=set(), titles={"OpenAI 发布 GPT-5"})
     assert remove_historical([event], history) == [event]
+
+
+# ------------------------------------------------- cross-outlet product merge
+
+
+def test_cluster_merges_cross_language_reports_sharing_a_product_identifier() -> None:
+    events = cluster_items(
+        [
+            item("1", "https://z.ai/blog/glm", "GLM-5.3-Flash: frontier intelligence"),
+            item("2", "https://qbitai.com/glm", "智谱正式发布并开源GLM-5.3-Flash"),
+        ]
+    )
+    assert len(events) == 1
+    assert len(events[0].items) == 2
+
+
+def test_cluster_joins_a_bare_name_with_its_version_number() -> None:
+    events = cluster_items(
+        [
+            item("1", "https://moonshot.cn/k3", "月之暗面正式发布 Kimi K3，总参数 2.8T"),
+            item("2", "https://the-decoder.com/k3", "Moonshot AI releases Kimi K3 open weights"),
+        ]
+    )
+    assert len(events) == 1
+
+
+def test_cluster_ignores_event_year_identifiers() -> None:
+    events = cluster_items(
+        [
+            item("1", "https://qbitai.com/wrc-a", "WRC 2026 生数科技发布世界模型路线"),
+            item("2", "https://leiphone.com/wrc-b", "WRC 2026 现场：人形机器人厂商密集亮相"),
+        ]
+    )
+    assert len(events) == 2
+
+
+def test_cluster_ignores_identifiers_from_roundup_titles() -> None:
+    roundup = item(
+        "1",
+        "https://digest.example.com/daily",
+        "新模型狂潮：Claude Sonnet-4.5、DeepSeek-V3.2、GLM-4.6、Ring-1T 同日发布",
+    )
+    single = item("2", "https://z.ai/blog/glm46", "GLM-4.6 is now generally available")
+    events = cluster_items([roundup, single])
+    assert len(events) == 2
+
+
+def test_title_product_identifiers_normalize_punctuation_variants() -> None:
+    from ai_daily.normalize import title_product_identifiers
+
+    spaced = title_product_identifiers("Google announces Gemini 3.5 for speech")
+    hyphenated = title_product_identifiers("gemini-3.5 hands-on")
+    assert spaced & hyphenated
+    assert not title_product_identifiers("K3")  # a bare short id alone proves nothing
+
+
+def test_same_script_titles_need_agreement_beyond_the_product_name() -> None:
+    # Same model, two different English stories: a partner rollout and a
+    # platform integration share only the model name and must stay apart.
+    events = cluster_items(
+        [
+            item("1", "https://openai.com/replit", "Replit expands creation with GPT-5.6 Luna"),
+            item("2", "https://aws.amazon.com/br", "Cross-Region inference for GPT-5.6 on Bedrock"),
+        ]
+    )
+    assert len(events) == 2
+
+
+def test_a_bare_link_title_merges_with_the_story_it_names() -> None:
+    events = cluster_items(
+        [
+            item("1", "https://news.ycombinator.com/item?id=1", "GLM-5.3-Flash"),
+            item("2", "https://testingcatalog.com/glm", "Z.ai launches GLM-5.3-Flash under MIT"),
+        ]
+    )
+    assert len(events) == 1
