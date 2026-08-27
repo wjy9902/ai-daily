@@ -730,7 +730,7 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     wrong_path = item.claims[0].model_copy(
         update={
             "field_path": "items[1].headline_block",
-            "text": "判断：GPT-6 将成本降低 90%。",
+            "text": "判断：1V2、GPT-6 将成本降低 90%。",
             "quotes": [
                 ClaimQuote(
                     source_kind="current_evidence",
@@ -760,6 +760,7 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     assert normalized.claims[1].quotes[0].quote == QUOTE
     assert normalized.claims[0].field_path == "items[0].headline_block"
     assert "GPT-6" not in normalized.claims[0].text
+    assert "V2" not in normalized.claims[0].text
     assert "90%" not in normalized.claims[0].text
     assert normalized.claims[0].quotes == []
 
