@@ -81,6 +81,24 @@ roles:
     <<: *persona_editor
   persona_edition_editor:
     <<: *persona_editor
+    primary:
+      provider: openai
+      model: gpt-5.6-terra
+      timeout_seconds: 180
+      # The edition JSON is much smaller than planner reasoning output, but five
+      # fully traced items can exceed the shared 8k fallback ceiling.
+      max_output_tokens: 12000
+      temperature: 1.0
+      input_cost_cny_per_million: 12.0
+      output_cost_cny_per_million: 96.0
+    fallback:
+      provider: deepseek
+      model: deepseek-v4-pro
+      timeout_seconds: 180
+      max_output_tokens: 48000
+      temperature: 0.2
+      input_cost_cny_per_million: 3.13
+      output_cost_cny_per_million: 6.26
   persona_critic:
     <<: *persona_editor
   persona_finalizer:
