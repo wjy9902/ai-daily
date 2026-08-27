@@ -135,9 +135,7 @@ class DailyPublication(StrictModel):
     briefs: list[BriefCard] = Field(default_factory=list)
     viewpoints: list[Viewpoint] = Field(default_factory=list)
     notice: str | None = Field(default=None, max_length=300)
-    degradation_reasons: list[Annotated[str, Field(max_length=300)]] = Field(
-        default_factory=list
-    )
+    degradation_reasons: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list)
     marker: str = Field(default="", pattern=r"^$|^[a-f0-9]{64}$")
 
     def canonical_payload(self) -> dict[str, Any]:

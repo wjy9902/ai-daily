@@ -1,6 +1,6 @@
 # 部署现状
 
-> 最后更新：2026-08-13。恢复步骤见 [`RESTORE.md`](RESTORE.md)，设计见
+> 最后更新：2026-08-27。恢复步骤见 [`RESTORE.md`](RESTORE.md)，设计见
 > [`../docs/plan/SELF-HOST-MIGRATION.md`](../docs/plan/SELF-HOST-MIGRATION.md)。
 
 ## 线上
@@ -26,8 +26,14 @@
 ├── releases/     <date>-<ts>/ 每次发布一个，保留 30 个
 ├── current →     软链，指向当前 release
 ├── fallback/     预构建兜底页，渲染器挂了也能服务
-├── status/       status.json（Caddy 单独路由，no-store）
-└── budget/       <date>.json 当日模型预算台账
+├── status/       基础日报与主编版独立状态（Caddy no-store）
+├── budget/       <date>.json 基础日报模型预算台账
+├── upstream/     marker-keyed 基础日报快照与日期激活指针
+├── persona-editions/  已验证的甲鱼主编版结构化成稿
+├── persona-runs/ 计划、分析、审稿和渲染回执
+├── persona-budget/ 独立模型预算与原子预留台账
+├── wechat-targets/ 微信创建前冻结的 HTML、元数据与请求哈希
+└── wechat-slots.sqlite3 账号/栏目/日期唯一发布 slot
 ```
 
 **工具链为什么不在 `/home`**：unit 开着 `ProtectHome=yes`。这个进程解析敌意网页内容，
@@ -79,6 +85,8 @@ DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产
    （GLM-5.3-Flash、Kimi K3 等）跨媒体、跨语言合并，带年份/榜单/同语言重叠三道
    护栏。当天实测 681 条原始条目下，跨域佐证事件从 1 个升至 7 个，
    「两个独立域佐证」首次实际可达。
+4. **甲鱼主编版尚未部署**：代码与 systemd unit 已在隔离分支完成验证；合并和部署前不得把
+   `ai-daily-persona.timer` 标记为已上线。真实账号只读探测确认草稿可用、freepublish 无权限。
 
 ## 常用命令
 
@@ -106,3 +114,15 @@ ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'cd /www/wwwroot/ai-daily/app && s
 # 回滚展示层到上一个 release
 ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'ls -1t /www/wwwroot/ai-daily/releases | head -3'
 ```
+
+部署主编版代码后安装独立定时器（默认仅网站）：
+
+```bash
+cp ops/systemd/ai-daily-persona.{service,timer} /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ai-daily-persona.timer
+systemctl list-timers ai-daily-persona.timer
+```
+
+草稿模式必须在签名授权、永久封面、独立 HMAC keys 全部配置后，人工修改 service 的
+`ExecStart` 为 `--mode draft --execute --authorization ...`。不要启用 freepublish 或群发替代路径。

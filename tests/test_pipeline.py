@@ -247,9 +247,7 @@ def _draft_output(value: dict[str, object]) -> DraftItem:
         tldr="这是一项已经确认的重要变化。",
         tldr_evidence_id=evidence_id,
         tldr_quote=quote,
-        facts=[
-            FactClaim(text="证据确认该变化已经发生。", evidence_id=evidence_id, quote=quote)
-        ],
+        facts=[FactClaim(text="证据确认该变化已经发生。", evidence_id=evidence_id, quote=quote)],
         why_it_matters="它会影响实际模型与产品判断。",
         evidence_ids=[evidence_id],
     )
@@ -349,9 +347,7 @@ async def test_candidate_filter_rejects_unverified_publication_dates(
     pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
     tracker = DegradationTracker()
 
-    filtered, candidates = await pipeline._candidates(
-        run_time.date(), undated, tmp_path, tracker
-    )
+    filtered, candidates = await pipeline._candidates(run_time.date(), undated, tmp_path, tracker)
 
     assert filtered == []
     assert candidates == []
@@ -851,6 +847,18 @@ async def test_a_misconfigured_source_set_is_still_fatal(tmp_path: Path) -> None
 
     with pytest.raises(QualityGateFailed, match="no Tier A sources"):
         pipeline._check_source_health(health, DegradationTracker())
+
+
+def test_relative_artifacts_live_under_writable_site_root(tmp_path: Path) -> None:
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = "artifacts"
+
+    pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
+
+    assert pipeline.artifacts_dir == _site(tmp_path).root / "artifacts"
+    unit = Path("ops/systemd/ai-daily.service").read_text(encoding="utf-8")
+    assert "ReadWritePaths=/www/wwwroot/ai-daily" in unit
+    assert "ReadOnlyPaths=/www/wwwroot/ai-daily/app" in unit
 
 
 def test_low_tier_a_coverage_is_recorded_but_never_fatal() -> None:

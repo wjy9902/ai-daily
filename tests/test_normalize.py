@@ -40,9 +40,7 @@ def test_cluster_preserves_the_time_kind_of_latest_verified_source_time() -> Non
     published = item("1", "https://example.com/a", "Qwen model release today").model_copy(
         update={"published_at": datetime(2026, 8, 12, 8, tzinfo=UTC)}
     )
-    repository_update = item(
-        "2", "https://example.com/a", "Qwen model release today"
-    ).model_copy(
+    repository_update = item("2", "https://example.com/a", "Qwen model release today").model_copy(
         update={
             "published_at": datetime(2026, 8, 12, 10, tzinfo=UTC),
             "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,

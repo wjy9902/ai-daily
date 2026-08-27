@@ -125,9 +125,7 @@ class FakeGateway:
             tldr="官方发布了新模型。",
             tldr_evidence_id=evidence_id,
             tldr_quote=quote,
-            facts=[
-                FactClaim(text="官方公告确认发布。", evidence_id=evidence_id, quote=quote)
-            ],
+            facts=[FactClaim(text="官方公告确认发布。", evidence_id=evidence_id, quote=quote)],
             why_it_matters="开发者可以开始评估。",
             action="阅读官方说明并运行小规模评测。",
             evidence_ids=["event-1-1"],
@@ -237,9 +235,7 @@ class SpeculativeDraftGateway(FakeGateway):
         if isinstance(value, DraftItem):
             return value.model_copy(
                 update={
-                    "why_it_matters": (
-                        "若平台默认切换该模型，可能牺牲质量来改善利润率。"
-                    ),
+                    "why_it_matters": ("若平台默认切换该模型，可能牺牲质量来改善利润率。"),
                     "caveat": "这只是推测。",
                 }
             )
@@ -264,9 +260,7 @@ class FirstAvailabilityDraftGateway(FakeGateway):
     ) -> Any:
         value = await super().generate(role, output_type, instructions, prompt)
         if isinstance(value, DraftItem):
-            return value.model_copy(
-                update={"why_it_matters": "该模型首次以开源权重形式可用。"}
-            )
+            return value.model_copy(update={"why_it_matters": "该模型首次以开源权重形式可用。"})
         return value
 
 
@@ -275,9 +269,9 @@ async def test_editor_normalizes_repository_update_copy_before_validation() -> N
         update={
             "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
             "items": [
-                event().items[0].model_copy(
-                    update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
-                )
+                event()
+                .items[0]
+                .model_copy(update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED})
             ],
         }
     )
@@ -295,9 +289,9 @@ async def test_editor_removes_unverified_first_availability_claim() -> None:
         update={
             "source_time_kind": SourceTimeKind.REPOSITORY_UPDATED,
             "items": [
-                event().items[0].model_copy(
-                    update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
-                )
+                event()
+                .items[0]
+                .model_copy(update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED})
             ],
         }
     )
@@ -436,7 +430,7 @@ async def test_one_bad_batch_does_not_discard_the_others() -> None:
             instructions: str,
             prompt: str,
             validator: Any = None,
-        stage: Any = None,
+            stage: Any = None,
         ) -> Any:
             self.attempts += 1
             if self.attempts == 1:
@@ -466,7 +460,7 @@ async def test_every_batch_failing_is_still_a_stage_failure() -> None:
             instructions: str,
             prompt: str,
             validator: Any = None,
-        stage: Any = None,
+            stage: Any = None,
         ) -> Any:
             self.attempts += 1
             raise RuntimeError("provider failed")
@@ -649,9 +643,7 @@ async def test_global_editor_drops_speculative_brief_clause() -> None:
         for value in events
     ]
     plan_value = valid_global_plan()
-    plan_value.selections[0].brief = (
-        "模型已通过API提供；权重可能随后发布；支持三档推理等级。"
-    )
+    plan_value.selections[0].brief = "模型已通过API提供；权重可能随后发布；支持三档推理等级。"
 
     result = await plan_digest(  # type: ignore[arg-type]
         PlanningGateway(plan_value), events, decisions, load_config(Path("config")).pipeline
@@ -1081,9 +1073,7 @@ def test_registrable_domain_reduces_to_etld_plus_one(url: str, expected: str) ->
     assert registrable_domain(url) == expected
 
 
-def _lead_event(
-    urls: list[str], channel: SourceChannel = SourceChannel.NEWS
-) -> Event:
+def _lead_event(urls: list[str], channel: SourceChannel = SourceChannel.NEWS) -> Event:
     items = [
         RawItem(
             source=f"source-{index}",
@@ -1115,9 +1105,7 @@ def test_a_first_party_source_may_lead() -> None:
     assert lead_is_corroborated(
         _lead_event(["https://example.com/release"], SourceChannel.OFFICIAL)
     )
-    assert lead_is_corroborated(
-        _lead_event(["https://example.com/release"], SourceChannel.RELEASE)
-    )
+    assert lead_is_corroborated(_lead_event(["https://example.com/release"], SourceChannel.RELEASE))
 
 
 def test_two_distinct_registrable_domains_may_lead() -> None:
@@ -1129,15 +1117,10 @@ def test_two_distinct_registrable_domains_may_lead() -> None:
 def test_syndicated_copies_of_one_publisher_may_not_lead() -> None:
     """Two URLs from the same publisher are one source, not corroboration."""
 
-    event = _lead_event(
-        ["https://www.example.com/story", "https://news.example.com/story"]
-    )
+    event = _lead_event(["https://www.example.com/story", "https://news.example.com/story"])
     syndicated = event.model_copy(
         update={
-            "items": [
-                item.model_copy(update={"source_tier": SourceTier.B})
-                for item in event.items
-            ]
+            "items": [item.model_copy(update={"source_tier": SourceTier.B}) for item in event.items]
         }
     )
     assert not lead_is_corroborated(syndicated)
@@ -1154,10 +1137,7 @@ def test_a_single_tier_a_publication_may_lead() -> None:
     event = _lead_event(["https://www.qbitai.com/2026/08/1.html"])
     tier_a = event.model_copy(
         update={
-            "items": [
-                item.model_copy(update={"source_tier": SourceTier.A})
-                for item in event.items
-            ]
+            "items": [item.model_copy(update={"source_tier": SourceTier.A}) for item in event.items]
         }
     )
     assert lead_is_corroborated(tier_a)
@@ -1168,10 +1148,7 @@ def test_a_single_lower_tier_source_may_not_lead() -> None:
     for tier in (SourceTier.B, SourceTier.C):
         lowered = event.model_copy(
             update={
-                "items": [
-                    item.model_copy(update={"source_tier": tier})
-                    for item in event.items
-                ]
+                "items": [item.model_copy(update={"source_tier": tier}) for item in event.items]
             }
         )
         assert not lead_is_corroborated(lowered)
@@ -1191,9 +1168,7 @@ def test_an_uncorroborated_lead_is_demoted_not_rejected() -> None:
     )
 
     assert demoted and "event-1" in demoted[0]
-    assert all(
-        selection.tier is not EditorialTier.LEAD for selection in adjusted.selections
-    )
+    assert all(selection.tier is not EditorialTier.LEAD for selection in adjusted.selections)
 
 
 def test_a_qualified_follow_is_promoted_into_the_vacated_lead_slot() -> None:
@@ -1211,12 +1186,10 @@ def test_a_qualified_follow_is_promoted_into_the_vacated_lead_slot() -> None:
         }
     )
     events = [
-        _lead_event(["https://example.com/story"]).model_copy(
-            update={"event_id": lead_id}
+        _lead_event(["https://example.com/story"]).model_copy(update={"event_id": lead_id}),
+        _lead_event(["https://official.example/post"], SourceChannel.OFFICIAL).model_copy(
+            update={"event_id": follow_id}
         ),
-        _lead_event(
-            ["https://official.example/post"], SourceChannel.OFFICIAL
-        ).model_copy(update={"event_id": follow_id}),
     ]
 
     adjusted, demoted = enforce_lead_corroboration(base, events)
@@ -1250,7 +1223,9 @@ def test_plan_validation_leaves_corroboration_to_the_enforcer() -> None:
     events[0] = events[0].model_copy(
         update={
             "items": [
-                events[0].items[0].model_copy(
+                events[0]
+                .items[0]
+                .model_copy(
                     update={
                         "source_channel": SourceChannel.NEWS,
                         "source_tier": SourceTier.B,
@@ -1328,8 +1303,10 @@ def test_plan_copy_normalization_leaves_rumor_wording_intact() -> None:
 
 def test_lead_demotion_never_promotes_a_rumor() -> None:
     events = [numbered_event(index) for index in range(17)]
-    weak = events[0].items[0].model_copy(
-        update={"source_channel": SourceChannel.NEWS, "source_tier": SourceTier.B}
+    weak = (
+        events[0]
+        .items[0]
+        .model_copy(update={"source_channel": SourceChannel.NEWS, "source_tier": SourceTier.B})
     )
     events[0] = events[0].model_copy(update={"items": [weak]})
     plan_value = _rumor_plan(4, "据报道新模型或将于本周发布", "知情人士称谈判仍处早期阶段。")
@@ -1343,8 +1320,10 @@ def test_lead_demotion_never_promotes_a_rumor() -> None:
 
 
 def _rumor_selection() -> EditorialSelection:
-    return plan().selections[0].model_copy(
-        update={"tier": EditorialTier.FOLLOW, "category": "前瞻与传闻"}
+    return (
+        plan()
+        .selections[0]
+        .model_copy(update={"tier": EditorialTier.FOLLOW, "category": "前瞻与传闻"})
     )
 
 

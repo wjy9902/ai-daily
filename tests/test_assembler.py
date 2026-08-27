@@ -65,8 +65,7 @@ def _draft(index: int, fact_size: int = 20) -> DraftItem:
         tldr_evidence_id=evidence_id,
         tldr_quote=quote,
         facts=[
-            FactClaim(text="甲" * fact_size, evidence_id=evidence_id, quote=quote)
-            for _ in range(4)
+            FactClaim(text="甲" * fact_size, evidence_id=evidence_id, quote=quote) for _ in range(4)
         ],
         why_it_matters="开发者需要评估。",
         action="阅读公告并测试。",
@@ -192,9 +191,7 @@ def test_selected_event_without_verified_publication_time_is_rejected() -> None:
 
 
 def test_repository_change_is_labeled_as_update_not_publication() -> None:
-    event = _event(0).model_copy(
-        update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED}
-    )
+    event = _event(0).model_copy(update={"source_time_kind": SourceTimeKind.REPOSITORY_UPDATED})
 
     body = assemble_markdown(
         date(2026, 8, 12),
@@ -208,9 +205,7 @@ def test_repository_change_is_labeled_as_update_not_publication() -> None:
 
 
 def test_community_submission_time_cannot_be_rendered_as_publication() -> None:
-    event = _event(0).model_copy(
-        update={"source_time_kind": SourceTimeKind.COMMUNITY_SUBMITTED}
-    )
+    event = _event(0).model_copy(update={"source_time_kind": SourceTimeKind.COMMUNITY_SUBMITTED})
 
     with pytest.raises(ValueError, match="community submission time"):
         assemble_markdown(

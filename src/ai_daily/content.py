@@ -68,13 +68,9 @@ DRAFT_SPECULATION_RE = re.compile(
     r"若[^，。；]{0,40}(?:将|会|可能|意味着)|"
     r"可能.{0,24}(?:发布|推出|上线|开放|宣布|融资|收购|合并|牺牲|换取|改善))"
 )
-EVIDENCE_PIPELINE_META_RE = re.compile(
-    r"(?:证据|摘要|材料).{0,20}(?:截断|被截|未完整|不完整)"
-)
+EVIDENCE_PIPELINE_META_RE = re.compile(r"(?:证据|摘要|材料).{0,20}(?:截断|被截|未完整|不完整)")
 REPOSITORY_RELEASE_RE = re.compile(r"发布|推出|上线|开放")
-REPOSITORY_FIRST_AVAILABILITY_RE = re.compile(
-    r"首次(?=.{0,20}(?:可用|提供|出现|开源))"
-)
+REPOSITORY_FIRST_AVAILABILITY_RE = re.compile(r"首次(?=.{0,20}(?:可用|提供|出现|开源))")
 SAMPLE_EXTRAPOLATION_RE = re.compile(
     r"(?:表明|意味着|说明).{0,40}(?:用户选择|整体市场|全行业|市场格局)"
 )
@@ -297,9 +293,7 @@ def enforce_lead_corroboration(
             selections[lead_index] = selections[lead_index].model_copy(
                 update={"tier": EditorialTier.FOLLOW}
             )
-            selections[swap] = selections[swap].model_copy(
-                update={"tier": EditorialTier.LEAD}
-            )
+            selections[swap] = selections[swap].model_copy(update={"tier": EditorialTier.LEAD})
         else:
             # Nothing qualified is left to take its place, so the issue simply
             # runs with fewer leads. A shorter front page beats an unsupported
@@ -523,9 +517,7 @@ def _normalize_plan_copy(plan: EditorialPlan) -> EditorialPlan:
             continue
         headline = _drop_speculative_clauses(selection.headline)
         brief = _drop_speculative_clauses(selection.brief) or headline
-        selections.append(
-            selection.model_copy(update={"headline": headline, "brief": brief})
-        )
+        selections.append(selection.model_copy(update={"headline": headline, "brief": brief}))
     return plan.model_copy(
         update={
             "today_highlight": _deterministic_highlight(selections),
@@ -543,9 +535,7 @@ def _drop_speculative_clauses(value: str) -> str:
 
 def _normalize_repository_plan(plan: EditorialPlan, events: list[Event]) -> EditorialPlan:
     repository_events = {
-        event.event_id
-        for event in events
-        if event.source_time_kind.value == "repository_updated"
+        event.event_id for event in events if event.source_time_kind.value == "repository_updated"
     }
     repository_evidence = {
         evidence_id
@@ -586,8 +576,7 @@ def _repository_update_copy(value: str) -> str:
 
 def _has_repository_release_claim(value: str) -> bool:
     return bool(
-        REPOSITORY_RELEASE_RE.search(value)
-        or REPOSITORY_FIRST_AVAILABILITY_RE.search(value)
+        REPOSITORY_RELEASE_RE.search(value) or REPOSITORY_FIRST_AVAILABILITY_RE.search(value)
     )
 
 
@@ -832,8 +821,7 @@ async def draft_selected(
             raise
         except Exception as error:
             failures.append(
-                f"{selection.event_id} ({selection.headline[:30]}): "
-                f"{type(error).__name__}: {error}"
+                f"{selection.event_id} ({selection.headline[:30]}): {type(error).__name__}: {error}"
             )
     return drafts, failures
 
@@ -904,12 +892,9 @@ def _drop_speculative_action(draft: DraftItem) -> DraftItem:
     return draft
 
 
-def _normalize_repository_draft(
-    draft: DraftItem, bundle: EvidenceBundle
-) -> DraftItem:
+def _normalize_repository_draft(draft: DraftItem, bundle: EvidenceBundle) -> DraftItem:
     if not any(
-        evidence.source_time_kind.value == "repository_updated"
-        for evidence in bundle.evidence
+        evidence.source_time_kind.value == "repository_updated" for evidence in bundle.evidence
     ):
         return draft
     update = {
@@ -960,10 +945,7 @@ def _validate_draft(
                 "editor put speculation outside caveat; rewrite fields="
                 f"{speculative_fields} as verified facts or move uncertainty to caveat"
             )
-    if any(
-        evidence.source_time_kind.value == "repository_updated"
-        for evidence in bundle.evidence
-    ):
+    if any(evidence.source_time_kind.value == "repository_updated" for evidence in bundle.evidence):
         release_fields = [
             field for field, value in factual_fields if _has_repository_release_claim(value)
         ]

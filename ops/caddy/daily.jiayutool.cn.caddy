@@ -12,6 +12,12 @@ daily.jiayutool.cn {
 		file_server
 	}
 
+	handle /status/persona.json {
+		root * /www/wwwroot/ai-daily
+		header Cache-Control "no-store"
+		file_server
+	}
+
 	# The feed changes daily and is polled by readers; keep it short.
 	handle /rss.xml {
 		header Cache-Control "public, max-age=300"

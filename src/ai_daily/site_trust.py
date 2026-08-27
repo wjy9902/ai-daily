@@ -44,10 +44,7 @@ def daily_marker(target_date: date) -> str:
 
 def signed_daily_body(target_date: date, content: str) -> str:
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    marker = (
-        f"<!-- ai-daily:{target_date.isoformat()}:{SIGNED_MARKER_VERSION}:"
-        f"sha256={digest} -->"
-    )
+    marker = f"<!-- ai-daily:{target_date.isoformat()}:{SIGNED_MARKER_VERSION}:sha256={digest} -->"
     return f"{marker}\n{content}"
 
 

@@ -66,6 +66,7 @@ SystemCallArchitectures=native
 
 # The only writable path. Everything else on / is read-only to this unit.
 ReadWritePaths=/www/wwwroot/ai-daily
+ReadOnlyPaths=/www/wwwroot/ai-daily/app
 
 StandardOutput=journal
 StandardError=journal

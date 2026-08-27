@@ -85,9 +85,7 @@ def test_an_exhausted_stage_does_not_starve_the_others() -> None:
 
     config = load_config(Path("config")).models.budget
     ledger = BudgetLedger(config)
-    ledger.record_requests(
-        ledger.stage_remaining_requests(BudgetStage.JUDGE), BudgetStage.JUDGE
-    )
+    ledger.record_requests(ledger.stage_remaining_requests(BudgetStage.JUDGE), BudgetStage.JUDGE)
 
     with pytest.raises(StageBudgetExceeded, match="judge"):
         ledger.check_stage(BudgetStage.JUDGE)
@@ -137,7 +135,12 @@ def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:
     ledger.record_requests(1, BudgetStage.PLAN)
 
     snapshot = ledger.snapshot()
-    assert snapshot["stage_requests"] == {"judge": 3, "plan": 1, "draft": 0}
+    assert snapshot["stage_requests"] == {
+        "judge": 3,
+        "plan": 1,
+        "draft": 0,
+        "persona": 0,
+    }
 
     stored = json.loads((tmp_path / "budget.json").read_text(encoding="utf-8"))
     assert stored["stage_requests"]["judge"] == 3

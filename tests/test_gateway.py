@@ -6,7 +6,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ai_daily.budget import BudgetExceeded, BudgetStage
+from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
 from ai_daily.config import Secrets, load_config
 from ai_daily.model_gateway import (
     Invocation,
@@ -15,7 +15,7 @@ from ai_daily.model_gateway import (
     ModelInvocationFailed,
     is_recoverable,
 )
-from ai_daily.models import JudgeDecision, ModelEndpoint
+from ai_daily.models import BudgetConfig, JudgeDecision, ModelEndpoint
 
 
 def test_only_transient_failures_are_recoverable() -> None:
@@ -287,7 +287,7 @@ async def test_generate_repairs_semantically_invalid_output_with_same_provider(
 async def test_semantic_validation_failure_does_not_cross_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gateway = ModelGateway(load_config().models, Secrets())
+    gateway = ModelGateway(load_config().models, Secrets(), reservation_cost_cny=0.5)
     endpoints: list[str] = []
     calls = 0
 
@@ -335,6 +335,8 @@ async def test_semantic_validation_failure_does_not_cross_provider(
     assert gateway.runs[-1].request_count == 2
     assert gateway.runs[-1].status == "failed"
     assert gateway.runs[-1].input_tokens > 0
+    assert gateway.ledger.reserved_requests == 0
+    assert gateway.ledger.reserved_cost_cny == pytest.approx(0)
 
 
 async def test_new_invocation_cannot_exceed_daily_request_budget() -> None:
@@ -404,3 +406,114 @@ async def test_concurrent_invocations_stay_bounded_and_audited(
     assert maximum == 1
     assert gateway.ledger.requests == 8
     assert sum(run.request_count for run in gateway.runs) == 8
+
+
+async def test_three_concurrent_persona_calls_reserve_and_release_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = load_config().models
+    budget = BudgetConfig(
+        request_limit=6,
+        input_token_limit=100_000,
+        output_token_limit=60_000,
+        cost_cny_limit=3.0,
+    )
+    ledger = BudgetLedger(budget)
+    gateway = ModelGateway(
+        base.model_copy(update={"budget": budget}),
+        Secrets(),
+        ledger=ledger,
+        max_concurrency=3,
+        reservation_cost_cny=1.0,
+    )
+    active = 0
+    maximum = 0
+    counter = 0
+
+    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        nonlocal active, maximum, counter
+        active += 1
+        maximum = max(maximum, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        counter += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "event_id": f"event-{counter}",
+                        "selected": True,
+                        "category": "行业动态",
+                        "relevance": 90,
+                        "confidence": 0.9,
+                        "reason": "重要事件",
+                        "evidence_ids": [f"event-{counter}-1"],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+
+    results = await asyncio.gather(
+        *[
+            gateway.generate(
+                "judge",
+                JudgeDecision,
+                "instructions",
+                f"prompt-{index}",
+                stage=BudgetStage.PERSONA,
+            )
+            for index in range(3)
+        ]
+    )
+
+    assert len(results) == 3
+    assert maximum == 3
+    assert ledger.reserved_requests == 0
+    assert ledger.reserved_input_tokens == 0
+    assert ledger.reserved_output_tokens == 0
+    assert ledger.reserved_cost_cny == pytest.approx(0)
+    assert ledger.stage_reserved_requests[BudgetStage.PERSONA.value] == 0
+
+
+async def test_cancelled_persona_call_releases_budget_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = load_config().models
+    ledger = BudgetLedger(base.budget)
+    gateway = ModelGateway(
+        base,
+        Secrets(),
+        ledger=ledger,
+        max_concurrency=3,
+        reservation_cost_cny=0.5,
+    )
+    started = asyncio.Event()
+
+    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
+    task = asyncio.create_task(
+        gateway.generate(
+            "judge",
+            JudgeDecision,
+            "instructions",
+            "prompt",
+            stage=BudgetStage.PERSONA,
+        )
+    )
+    await started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert ledger.reserved_requests == 0
+    assert ledger.reserved_input_tokens == 0
+    assert ledger.reserved_output_tokens == 0
+    assert ledger.reserved_cost_cny == pytest.approx(0)

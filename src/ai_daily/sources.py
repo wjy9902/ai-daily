@@ -117,9 +117,7 @@ DATE_RE = re.compile(
     r"Dec(?:ember)?)\.?\s+\d{1,2},\s+\d{4})\b",
     re.IGNORECASE,
 )
-NUMERIC_DATE_RE = re.compile(
-    r"\b(20\d{2}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?\b"
-)
+NUMERIC_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?\b")
 PUBLISHED_META_KEYS = {
     "article:published_time",
     "citation_publication_date",
@@ -888,9 +886,7 @@ class Collector:
         document = html.fromstring(response.content, base_url=url)
         title = _meta(document, "og:title") or _plain_text(document.findtext(".//title") or "")
         summary = _meta(document, "og:description")
-        default_timezone = (
-            ZoneInfo("Asia/Shanghai") if source.region == SourceRegion.CHINA else UTC
-        )
+        default_timezone = ZoneInfo("Asia/Shanghai") if source.region == SourceRegion.CHINA else UTC
         return RawItem(
             **_source_fields(source),
             source_item_id=url,
