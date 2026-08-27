@@ -20,7 +20,7 @@ no_major_max_chars: 600
 publish_mode: draft_only
 ai_disclosure: 本文由 AI 参与资料整理和初稿生成，并经过证据约束与自动审稿。
 budget:
-  # These are runaway backstops, not normal-run quotas. The ¥22 ceiling remains
+  # These are runaway backstops, not normal-run quotas. The ¥24 ceiling remains
   # binding before current DeepSeek pricing can consume these token allowances.
   # Same-day recovery may accumulate schema retries that cost little or nothing;
   # money remains the binding safety control.
@@ -28,8 +28,8 @@ budget:
   input_token_limit: 2700000
   # The persona gateway reserves the worst case before a call. Two concurrent
   # Recovery calls can accumulate large reported reasoning usage. Keep tokens
-  # non-binding and let the ¥22 ceiling stop spend.
+  # non-binding and let the ¥24 ceiling stop spend.
   output_token_limit: 3000000
   # Fresh successful editions are expected to stay around ¥1-2. The higher hard
   # stop preserves same-day recovery after charged provider or validation failures.
-  cost_cny_limit: 22.0
+  cost_cny_limit: 24.0
