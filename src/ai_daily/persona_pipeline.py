@@ -26,6 +26,7 @@ from ai_daily.persona_models import (
     Critique,
     EditionDraft,
     FinalizerOutput,
+    OmittedEvent,
     PersonaContext,
     PersonaEdition,
     PersonaPlan,
@@ -178,7 +179,7 @@ class PersonaPipeline:
             PersonaPlan,
             _planner_instructions(),
             prompt,
-            validator=lambda value: _validate_plan(value, context, event_rows),
+            validator=lambda value: _normalize_plan(value, context, event_rows),
             stage=BudgetStage.PERSONA,
         )
 
@@ -600,6 +601,32 @@ def _validate_plan(
     omitted = set(omitted_ids)
     if omitted != event_ids - selected_ids - set(plan.watchlist_event_ids):
         raise ValueError("persona plan omitted inventory is incomplete")
+
+
+def _normalize_plan(
+    plan: PersonaPlan,
+    context: PersonaContext,
+    rows: list[dict[str, Any]],
+) -> PersonaPlan:
+    """Fill only missing audit rows; selection remains entirely model-owned."""
+    selected = {item.event_id for item in plan.selections}
+    watchlist = set(plan.watchlist_event_ids)
+    listed = {item.event_id for item in plan.omitted}
+    missing = [
+        event_id
+        for event_id in context.candidate_event_ids
+        if event_id not in selected | watchlist | listed
+    ]
+    normalized = plan.model_copy(
+        update={
+            "omitted": [
+                *plan.omitted,
+                *(OmittedEvent(event_id=event_id, reason="capacity") for event_id in missing),
+            ]
+        }
+    )
+    _validate_plan(normalized, context, rows)
+    return normalized
 
 
 def _validate_analysis(
