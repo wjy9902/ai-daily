@@ -81,6 +81,7 @@ from ai_daily.persona_wechat import (
     WechatResponseError,
     account_fingerprint,
     attest_release,
+    canonical_draft_html_sha256,
     publish_draft,
     reconcile_draft,
     sign_authorization,
@@ -1414,6 +1415,20 @@ def test_hmac_authorization_attestation_and_slot_idempotency(tmp_path: Path) -> 
     slots.update(attestation.publication_slot, "failed", retryable=True)
     slots.claim(attestation.publication_slot, "attempt-3")
     assert slots.get(attestation.publication_slot)["attempt_id"] == "attempt-3"  # type: ignore[index]
+
+
+def test_draft_html_canonicalization_allows_stripped_link_wrappers() -> None:
+    linked = '<p>来源：<a href="https://example.com">https://example.com</a></p>'
+    unlinked = "<p>来源：https://example.com</p>"
+
+    assert canonical_draft_html_sha256(linked) == canonical_draft_html_sha256(unlinked)
+
+
+def test_draft_html_canonicalization_rejects_changed_link_text() -> None:
+    expected = '<p>来源：<a href="https://example.com">https://example.com</a></p>'
+    changed = "<p>来源：https://evil.example</p>"
+
+    assert canonical_draft_html_sha256(expected) != canonical_draft_html_sha256(changed)
 
 
 class _ReadTimeoutWechatClient:

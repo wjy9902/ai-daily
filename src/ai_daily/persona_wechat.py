@@ -665,15 +665,24 @@ class _DraftHTMLCanonicalizer(HTMLParser):
         self.tokens: list[object] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            return
         self.tokens.append(("start", tag, sorted((name, value or "") for name, value in attrs)))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            return
         self.tokens.append(("end", tag))
 
     def handle_data(self, data: str) -> None:
+        if self.tokens and isinstance(self.tokens[-1], tuple):
+            previous = self.tokens[-1]
+            if previous[0] == "data":
+                self.tokens[-1] = ("data", str(previous[1]) + data)
+                return
         self.tokens.append(("data", data))
 
 
