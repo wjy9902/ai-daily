@@ -36,7 +36,7 @@ from ai_daily.persona_models import (
 )
 from ai_daily.persona_render import render_persona
 from ai_daily.persona_snapshot import load_upstream_snapshot
-from ai_daily.persona_verifier import VerificationScope, verify_edition
+from ai_daily.persona_verifier import VerificationScope, verify_analysis_item, verify_edition
 from ai_daily.publication import PublicationLevel
 from ai_daily.site_publisher import SiteLayout, publication_lock
 
@@ -138,9 +138,9 @@ class PersonaPipeline:
             run_dir / "baselines.json",
             {key: value.model_dump(mode="json") for key, value in baselines.items()},
         )
-        analyses = await self._analyze(snapshot, plan, memories, baselines)
-        write_artifact(run_dir / "analyses.json", analyses)
         scope = _verification_scope(snapshot, plan, baselines, memories, baseline_map)
+        analyses = await self._analyze(snapshot, plan, memories, baselines, scope)
+        write_artifact(run_dir / "analyses.json", analyses)
         draft = await self._edit(snapshot, plan, analyses, scope)
         write_artifact(run_dir / "draft.json", draft)
         final = await self._review(snapshot, draft, scope, run_dir)
@@ -183,10 +183,17 @@ class PersonaPipeline:
         plan: PersonaPlan,
         memories: dict[str, Any],
         baselines: dict[str, Any],
+        scope: VerificationScope,
     ) -> list[AnalysisItem]:
         selections = [item for item in plan.selections if item.grade in {"S", "A"}]
         tasks = [
-            self._analyze_one(snapshot, selection, memories, baselines.get(selection.event_id))
+            self._analyze_one(
+                snapshot,
+                selection,
+                memories,
+                baselines.get(selection.event_id),
+                scope,
+            )
             for selection in selections
         ]
         return list(await asyncio.gather(*tasks)) if tasks else []
@@ -197,6 +204,7 @@ class PersonaPipeline:
         selection: PlanSelection,
         memories: dict[str, Any],
         baseline: Any,
+        scope: VerificationScope,
     ) -> AnalysisItem:
         event = _analyst_event_row(snapshot, selection)
         selected_memories = [
@@ -220,7 +228,7 @@ class PersonaPipeline:
             AnalystOutput,
             _analyst_instructions(),
             prompt,
-            validator=lambda value: _validate_analysis(value, selection),
+            validator=lambda value: _validate_analysis(value, selection, snapshot, scope),
             stage=BudgetStage.PERSONA,
         )
         return output.item
@@ -232,14 +240,15 @@ class PersonaPipeline:
         analyses: list[AnalysisItem],
         scope: VerificationScope,
     ) -> EditionDraft:
-        prompt = _json_prompt(
+        prompt = _json_prompt_limited(
+            90_000,
             column_id=self.persona.column_id,
             target_date=snapshot.target_date.isoformat(),
             input_marker=snapshot.publication_marker,
             ai_disclosure=self.persona.ai_disclosure,
             plan=plan.model_dump(mode="json"),
             analyses=[item.model_dump(mode="json") for item in analyses],
-            candidates=_event_rows(snapshot, [item.event_id for item in plan.selections]),
+            sources=_edition_source_rows(snapshot, plan),
         )
 
         def validate(value: EditionDraft) -> None:
@@ -427,6 +436,31 @@ def _analyst_event_row(snapshot: Any, selection: PlanSelection) -> dict[str, Any
     }
 
 
+def _edition_source_rows(snapshot: Any, plan: PersonaPlan) -> list[dict[str, Any]]:
+    selected = {selection.event_id: set(selection.evidence_ids) for selection in plan.selections}
+    watchlist = set(plan.watchlist_event_ids)
+    rows: list[dict[str, Any]] = []
+    for bundle in snapshot.evidence_bundles:
+        if bundle.event_id not in selected and bundle.event_id not in watchlist:
+            continue
+        allowed = selected.get(bundle.event_id)
+        evidence = (
+            bundle.evidence
+            if allowed is None
+            else [item for item in bundle.evidence if item.evidence_id in allowed]
+        )
+        for item in evidence[:3]:
+            rows.append(
+                {
+                    "event_id": bundle.event_id,
+                    "evidence_id": item.evidence_id,
+                    "url": str(item.url),
+                    "excerpt": _bounded_text(item.excerpt, 400),
+                }
+            )
+    return rows
+
+
 def _json_prompt(**payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -442,10 +476,7 @@ def _bounded_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     prefix = text[:limit]
-    boundary = max(
-        prefix.rfind(mark)
-        for mark in ("。", "\uff01", "\uff1f", ".", "!", "?", "\n")
-    )
+    boundary = max(prefix.rfind(mark) for mark in ("。", "\uff01", "\uff1f", ".", "!", "?", "\n"))
     return prefix[: boundary + 1] if boundary >= limit // 2 else ""
 
 
@@ -476,7 +507,9 @@ def _analyst_instructions() -> str:
 def _edition_instructions(minimum: int, maximum: int) -> str:
     return (
         "你是版面编辑，只可重组输入分析，不得增加外部事实。"
-        "把 items 路径按最终顺序重写；draft.claims 必须完整包含所有公开块使用的 claim，"
+        "输入分析已逐条通过证据校验。可删减或压缩判断，但事实 claim 若保留，"
+        "text 必须原样等于 quote，不得改写事实原文。把 items 路径按最终顺序重写；"
+        "draft.claims 必须完整包含所有公开块使用的 claim，"
         "item.claims 必须恰好包含该 item 的 claims。"
         "每个 block.text 必须严格等于其 claims.text 顺序拼接。"
         "所有推论、建议和不确定性必须保留“判断：”“建议：”“不确定性：”前缀。"
@@ -542,7 +575,12 @@ def _validate_plan(
         raise ValueError("persona plan omitted inventory is incomplete")
 
 
-def _validate_analysis(output: AnalystOutput, selection: PlanSelection) -> None:
+def _validate_analysis(
+    output: AnalystOutput,
+    selection: PlanSelection,
+    snapshot: Any,
+    scope: VerificationScope,
+) -> None:
     item = output.item
     if item.event_id != selection.event_id or item.grade != selection.grade:
         raise ValueError("analyst output does not match selection")
@@ -550,6 +588,7 @@ def _validate_analysis(output: AnalystOutput, selection: PlanSelection) -> None:
         raise ValueError("analyst output added evidence")
     if not set(item.memory_ids) <= set(selection.memory_ids):
         raise ValueError("analyst output added memory")
+    verify_analysis_item(item, snapshot, scope)
 
 
 def _validate_draft_identity(

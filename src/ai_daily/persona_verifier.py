@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from ai_daily.content import quote_supports
 from ai_daily.persona_models import (
     AnalysisClaim,
+    AnalysisItem,
     EditionDraft,
     EditorialMemory,
     PersonaEdition,
@@ -80,6 +81,62 @@ def verify_edition(
     payload = draft.model_dump(mode="json")
     edition = PersonaEdition.model_validate({**payload, "payload_sha256": "0" * 64})
     return edition.model_copy(update={"payload_sha256": edition.compute_payload_sha256()})
+
+
+def verify_analysis_item(
+    item: AnalysisItem,
+    snapshot: UpstreamSnapshot,
+    scope: VerificationScope,
+) -> None:
+    """Apply edition evidence rules before an analyst result can be reused."""
+    current_by_event = {
+        bundle.event_id: {evidence.evidence_id: evidence.excerpt for evidence in bundle.evidence}
+        for bundle in snapshot.evidence_bundles
+    }
+    current = current_by_event.get(item.event_id, {})
+    if not item.evidence_ids or not set(item.evidence_ids) <= set(current):
+        raise ValueError(f"item {item.event_id} has out-of-scope current evidence")
+    if len(item.evidence_ids) != len(set(item.evidence_ids)):
+        raise ValueError(f"item {item.event_id} contains duplicate current evidence")
+    if not set(item.memory_ids) <= scope.memory_ids_by_event.get(item.event_id, set()):
+        raise ValueError(f"item {item.event_id} has out-of-scope memory")
+
+    claims = _claim_map(item.claims)
+    blocks = list(_analysis_blocks(item))
+    for path, block in blocks:
+        _verify_block(path, block, claims)
+    _verify_claim_inventory(blocks, claims)
+    for claim in claims.values():
+        if not set(claim.current_evidence_ids) <= set(item.evidence_ids):
+            raise ValueError(f"item {item.event_id} claim used undeclared evidence")
+        if not set(claim.experience_memory_ids) <= set(item.memory_ids):
+            raise ValueError(f"item {item.event_id} claim used undeclared memory")
+        _verify_claim(claim, current, scope, item.event_id)
+
+    confirmed = [claims[claim_id] for claim_id in item.confirmed_change_block.claim_ids]
+    if any(claim.claim_type != "current_fact" for claim in confirmed):
+        raise ValueError(f"item {item.event_id} confirmed change must be current facts")
+    if item.delta_from_before_block is not None:
+        delta = [claims[claim_id] for claim_id in item.delta_from_before_block.claim_ids]
+        if not all(claim.current_evidence_ids and claim.baseline_evidence_ids for claim in delta):
+            raise ValueError(f"item {item.event_id} delta lacks current or baseline evidence")
+
+
+def _analysis_blocks(item: AnalysisItem) -> Iterable[tuple[str, PublicTextBlock]]:
+    names = (
+        "headline_block",
+        "confirmed_change_block",
+        "delta_from_before_block",
+        "importance_block",
+        "product_implication_block",
+        "recommended_action_block",
+        "counter_case_block",
+        "watch_signal_block",
+    )
+    for name in names:
+        block = getattr(item, name)
+        if block is not None:
+            yield f"items[0].{name}", block
 
 
 def _claim_map(claims: list[AnalysisClaim]) -> dict[str, AnalysisClaim]:
@@ -280,13 +337,10 @@ def _verify_item_sources(
         if item.delta_from_before_block is not None:
             delta_claims = [claims[item_id] for item_id in item.delta_from_before_block.claim_ids]
             if not all(
-                claim.current_evidence_ids and claim.baseline_evidence_ids
-                for claim in delta_claims
+                claim.current_evidence_ids and claim.baseline_evidence_ids for claim in delta_claims
             ):
                 raise ValueError(f"item {item.event_id} delta lacks current or baseline evidence")
-        confirmed_claims = [
-            claims[item_id] for item_id in item.confirmed_change_block.claim_ids
-        ]
+        confirmed_claims = [claims[item_id] for item_id in item.confirmed_change_block.claim_ids]
         if any(claim.claim_type != "current_fact" for claim in confirmed_claims):
             raise ValueError(f"item {item.event_id} confirmed change must be current facts")
         item_paths = {path for path, _ in _blocks(draft) if path.startswith(f"items[{index}].")}
@@ -333,11 +387,7 @@ def _verify_length(
     config: PersonaRuntimeConfig,
 ) -> None:
     body_chars = sum(
-        sum(
-            1
-            for character in unicodedata.normalize("NFC", block.text)
-            if not character.isspace()
-        )
+        sum(1 for character in unicodedata.normalize("NFC", block.text) if not character.isspace())
         for path, block in blocks
         if path not in {"title_block", "digest_block"}
     )

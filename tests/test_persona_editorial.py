@@ -52,7 +52,7 @@ from ai_daily.persona_snapshot import (
     load_upstream_snapshot,
     persist_upstream_snapshot,
 )
-from ai_daily.persona_verifier import VerificationScope, verify_edition
+from ai_daily.persona_verifier import VerificationScope, verify_analysis_item, verify_edition
 from ai_daily.persona_wechat import (
     PublicationSlots,
     WechatAPIError,
@@ -134,9 +134,7 @@ def _snapshot(layout: SiteLayout) -> UpstreamSnapshot:
 def test_analyst_prompt_drops_nested_raw_items_and_stays_bounded() -> None:
     event = factories.event(0)
     raw = event.items[0].model_copy(update={"summary": "长原文。" * 2_500})
-    event = event.model_copy(
-        update={"summary": "事件摘要。" * 1_500, "items": [raw] * 8}
-    )
+    event = event.model_copy(update={"summary": "事件摘要。" * 1_500, "items": [raw] * 8})
     bundle = evidence_bundle(event)
     evidence = bundle.evidence[0]
     bundle = bundle.model_copy(
@@ -607,6 +605,32 @@ def test_verifier_rejects_paraphrase_disguised_as_verified_fact(tmp_path: Path) 
         verify_edition(bad, snapshot, _scope(), config)
 
 
+def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    item = _standard_item("event-0", 0)
+
+    verify_analysis_item(item, snapshot, _scope())
+
+    fact = item.claims[1].model_copy(update={"text": "并非证据原文的事实改写。"})
+    bad = item.model_copy(
+        update={
+            "claims": [item.claims[0], fact, *item.claims[2:]],
+            "confirmed_change_block": item.confirmed_change_block.model_copy(
+                update={"text": fact.text}
+            ),
+        }
+    )
+    with pytest.raises(ValueError, match="exact verified quote"):
+        verify_analysis_item(bad, snapshot, _scope())
+
+    wrong_path = item.claims[0].model_copy(update={"field_path": "items[1].headline_block"})
+    bad_path = item.model_copy(update={"claims": [wrong_path, *item.claims[1:]]})
+    with pytest.raises(ValueError, match="field_path mismatch"):
+        verify_analysis_item(bad_path, snapshot, _scope())
+
+
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:
     config = load_config(Path("config")).persona
     assert config is not None
@@ -731,9 +755,9 @@ def test_same_day_daily_upgrade_is_rejected_after_persona_freeze(tmp_path: Path)
 
     committed = json.loads(layout.publication_path(TARGET).read_text(encoding="utf-8"))
     assert committed["marker"] == original.marker
-    assert edition.payload_sha256 in (
-        layout.current.resolve() / "jiayu" / "index.html"
-    ).read_text(encoding="utf-8")
+    assert edition.payload_sha256 in (layout.current.resolve() / "jiayu" / "index.html").read_text(
+        encoding="utf-8"
+    )
 
 
 @pytest.mark.asyncio
@@ -1074,9 +1098,7 @@ async def test_reconcile_rejects_tampered_edition_before_remote_access(tmp_path:
     inputs["slots"].claim(slot_id, "attempt-unknown")
     inputs["slots"].update(slot_id, "unknown")
     client = _ReconcileWechatClient("remote-media-id")
-    tampered = inputs["edition"].model_copy(
-        update={"payload_sha256": "f" * 64}
-    )
+    tampered = inputs["edition"].model_copy(update={"payload_sha256": "f" * 64})
 
     with pytest.raises(
         WechatPublicationError,
@@ -1775,9 +1797,7 @@ async def test_pipeline_does_not_freeze_stale_edition_if_marker_changes_before_c
         }
     )
     replacement = replacement_unsigned.model_copy(
-        update={
-            "snapshot_sha256": sha256_payload(replacement_unsigned.canonical_payload())
-        }
+        update={"snapshot_sha256": sha256_payload(replacement_unsigned.canonical_payload())}
     )
     write_artifact(layout.upstream_object_path(replacement.publication_marker), replacement)
 
