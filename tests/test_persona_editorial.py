@@ -25,6 +25,8 @@ from ai_daily.persona_models import (
     ClaimQuote,
     Critique,
     CritiqueFinding,
+    EditionAssembly,
+    EditionAssemblyItem,
     EditionDraft,
     EditorialMemory,
     FinalizerOutput,
@@ -2069,6 +2071,30 @@ def test_finalizer_must_declare_real_public_field_changes() -> None:
     _validate_finalizer_changes(draft, FinalizerOutput(draft=changed, resolutions=[resolution]))
 
 
+def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
+    return EditionAssembly(
+        title_block=draft.title_block,
+        digest_block=draft.digest_block,
+        thesis_block=draft.thesis_block,
+        items=[
+            EditionAssemblyItem(
+                event_id=item.event_id,
+                headline_block=item.headline_block,
+                confirmed_change_block=item.confirmed_change_block,
+                delta_from_before_block=item.delta_from_before_block,
+                importance_block=item.importance_block,
+                product_implication_block=item.product_implication_block,
+                recommended_action_block=item.recommended_action_block,
+                counter_case_block=item.counter_case_block,
+                watch_signal_block=item.watch_signal_block,
+            )
+            for item in draft.items
+        ],
+        watchlist_blocks=draft.watchlist_blocks,
+        claims=draft.claims,
+    )
+
+
 class _FakeGateway:
     def __init__(self, draft: EditionDraft) -> None:
         config = load_config(Path("config")).persona
@@ -2094,7 +2120,7 @@ class _FakeGateway:
                 omitted=[],
             )
         elif role == "persona_edition_editor":
-            value = self.draft
+            value = _assembly_from_draft(self.draft)
         elif role == "persona_critic":
             prompt = json.loads(args[1])
             value = Critique(
@@ -2146,7 +2172,7 @@ class _StandardGateway:
             self.active_analysts -= 1
             value = AnalystOutput(item=_standard_item(event_id, 0))
         elif role == "persona_edition_editor":
-            value = self.draft
+            value = _assembly_from_draft(self.draft)
         elif role == "persona_critic":
             prompt = json.loads(args[1])
             value = Critique(
