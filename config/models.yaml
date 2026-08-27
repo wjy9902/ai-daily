@@ -82,23 +82,23 @@ roles:
   persona_edition_editor:
     <<: *persona_editor
     primary:
+      provider: deepseek
+      model: deepseek-v4-flash
+      timeout_seconds: 120
+      # This role needs reliable schema emission more than deep reasoning. The
+      # same model already produces stable structured judge output in production.
+      max_output_tokens: 24000
+      temperature: 0.1
+      input_cost_cny_per_million: 1.01
+      output_cost_cny_per_million: 2.02
+    fallback:
       provider: openai
       model: gpt-5.6-terra
-      timeout_seconds: 180
-      # The edition JSON is much smaller than planner reasoning output, but five
-      # fully traced items can exceed the shared 8k fallback ceiling.
-      max_output_tokens: 12000
+      timeout_seconds: 150
+      max_output_tokens: 8192
       temperature: 1.0
       input_cost_cny_per_million: 12.0
       output_cost_cny_per_million: 96.0
-    fallback:
-      provider: deepseek
-      model: deepseek-v4-pro
-      timeout_seconds: 180
-      max_output_tokens: 48000
-      temperature: 0.2
-      input_cost_cny_per_million: 3.13
-      output_cost_cny_per_million: 6.26
   persona_critic:
     <<: *persona_editor
   persona_finalizer:
