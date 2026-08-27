@@ -50,6 +50,7 @@ from ai_daily.persona_pipeline import (
     _compact_edition_assembly,
     _json_prompt,
     _memory_context_sha256,
+    _normalize_finalizer_changed_fields,
     _normalize_plan,
     _safe_confirmed_change,
     _validate_critique,
@@ -2089,6 +2090,14 @@ def test_finalizer_must_declare_real_public_field_changes() -> None:
         }
     )
     _validate_finalizer_changes(draft, FinalizerOutput(draft=changed, resolutions=[resolution]))
+
+    wrong_metadata = FinalizerOutput(
+        draft=changed,
+        resolutions=[resolution.model_copy(update={"changed_fields": ["digest_block"]})],
+    )
+    normalized = _normalize_finalizer_changed_fields(draft, wrong_metadata)
+    assert normalized.resolutions[0].changed_fields == ["thesis_block"]
+    _validate_finalizer_changes(draft, normalized)
 
 
 def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
