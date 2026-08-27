@@ -4,13 +4,14 @@ budget:
   # Sized from the pipeline's actual shape rather than a round number: one
   # judge call per batch of ten candidates (10), one planning call, one draft
   # per detailed story (13), and any of them able to spend a second request on
-  # its retry — 48 for a single issue at worst. This leaves room for most of a
-  # second attempt from a later window. tests/test_budget_staging.py asserts
-  # the arithmetic so a config change cannot quietly starve a stage.
+  # its retry — 48 for a single issue at worst. 100 (the schema ceiling) keeps
+  # room for a second full attempt from a later window; the 2026-08-27 manual
+  # fourth run showed 90 does not. tests/test_budget_staging.py asserts the
+  # arithmetic so a config change cannot quietly starve a stage.
   #
   # Money, not request count, is still the real ceiling: a full issue costs
   # about ¥0.75, so ¥5 stops a runaway long before this does.
-  request_limit: 90
+  request_limit: 100
   # Token ceilings are a backstop against a runaway loop, not the spending
   # control. Cost is. The old 30k output ceiling was the binding constraint and
   # aborted a real run at nine requests, which is the budget stopping work that
