@@ -689,6 +689,9 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
         f"standard 正文长度(不含标题摘要)须为 {minimum}-{maximum} 个字符。"
         "输出必须紧凑；recommended_action 仅在必要时保留；"
         "事实 claim 的 text 必须与 quote 完全相同。"
+        "任何 text 和 quote 都不得含“我、我的、本人、我们、咱们”；"
+        "confirmed_change 必须从同一分析中选择不含这些词的 current_fact 原句，"
+        "不得选择企业以第一人称发布的原文。"
         "no_major_update 也要说明今天为什么没有足够大的变化以及继续观察什么。"
         "禁止第一人称和夸张宣传语。"
     )
