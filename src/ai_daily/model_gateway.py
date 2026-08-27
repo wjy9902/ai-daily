@@ -96,7 +96,8 @@ class ModelGateway:
     ) -> OutputT:
         role_config = self.config.roles[role]
         fallback_reason: str | None = None
-        for attempt, endpoint in enumerate((role_config.primary, role_config.fallback), start=1):
+        endpoints = (role_config.primary, role_config.primary, role_config.fallback)
+        for attempt, endpoint in enumerate(endpoints, start=1):
             invocation = Invocation(role, role_config.primary, endpoint, attempt, fallback_reason)
             try:
                 return await self._invoke_endpoint(
@@ -110,7 +111,7 @@ class ModelGateway:
             except (BudgetExceeded, UsageLimitExceeded, MissingProviderSecret):
                 raise
             except Exception as error:
-                if attempt == 1 and is_recoverable(error):
+                if attempt < len(endpoints) and is_recoverable(error):
                     fallback_reason = self._safe_error(error)
                     continue
                 raise ModelInvocationFailed(self._safe_error(error)) from error

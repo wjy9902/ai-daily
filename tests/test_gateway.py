@@ -27,7 +27,7 @@ def test_only_transient_failures_are_recoverable() -> None:
     assert not is_recoverable(ModelHTTPError(400, "model"))
 
 
-async def test_generate_falls_back_after_pydantic_ai_wrapped_timeout(
+async def test_generate_retries_primary_after_pydantic_ai_wrapped_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gateway = ModelGateway(load_config().models, Secrets())
@@ -62,7 +62,7 @@ async def test_generate_falls_back_after_pydantic_ai_wrapped_timeout(
     role = gateway.config.roles["judge"]
     assert [call.endpoint.provider for call in calls] == [
         role.primary.provider,
-        role.fallback.provider,
+        role.primary.provider,
     ]
     assert calls[1].fallback_reason == "ModelAPIError"
 
@@ -123,7 +123,7 @@ def test_fallback_audit_preserves_requested_model() -> None:
             role="judge",
             requested=role.primary,
             endpoint=role.fallback,
-            attempt=2,
+            attempt=3,
             fallback_reason="ModelHTTPError:503",
         ),
         1.0,
@@ -151,7 +151,7 @@ async def test_generate_falls_back_only_after_a_recoverable_failure(
         stage: object = None,
     ) -> JudgeDecision:
         calls.append(invocation)
-        if invocation.attempt == 1:
+        if invocation.attempt < 3:
             raise httpx.ReadTimeout("timeout")
         return JudgeDecision(
             event_id="event-1",
@@ -170,9 +170,11 @@ async def test_generate_falls_back_only_after_a_recoverable_failure(
     assert result.event_id == "event-1"
     assert [call.endpoint for call in calls] == [
         gateway.config.roles["judge"].primary,
+        gateway.config.roles["judge"].primary,
         gateway.config.roles["judge"].fallback,
     ]
     assert calls[1].fallback_reason.startswith("ReadTimeout")
+    assert calls[2].fallback_reason.startswith("ReadTimeout")
 
 
 async def test_generate_does_not_fallback_after_unrecoverable_error(
