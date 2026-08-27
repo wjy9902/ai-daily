@@ -187,16 +187,26 @@ class PersonaPipeline:
     ) -> list[AnalysisItem]:
         selections = [item for item in plan.selections if item.grade in {"S", "A"}]
         tasks = [
-            self._analyze_one(
-                snapshot,
-                selection,
-                memories,
-                baselines.get(selection.event_id),
-                scope,
+            asyncio.create_task(
+                self._analyze_one(
+                    snapshot,
+                    selection,
+                    memories,
+                    baselines.get(selection.event_id),
+                    scope,
+                )
             )
             for selection in selections
         ]
-        return list(await asyncio.gather(*tasks)) if tasks else []
+        if not tasks:
+            return []
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _analyze_one(
         self,

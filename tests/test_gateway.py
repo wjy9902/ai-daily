@@ -320,7 +320,7 @@ async def test_semantic_validation_failure_does_not_cross_provider(
 
     monkeypatch.setattr(gateway, "_build_model", build_model)
 
-    with pytest.raises(ModelInvocationFailed, match="UnexpectedModelBehavior"):
+    with pytest.raises(ModelInvocationFailed, match="event_id must be event-1"):
         await gateway.generate(
             "judge",
             JudgeDecision,
@@ -334,6 +334,7 @@ async def test_semantic_validation_failure_does_not_cross_provider(
     assert gateway.ledger.requests == 2
     assert gateway.runs[-1].request_count == 2
     assert gateway.runs[-1].status == "failed"
+    assert gateway.runs[-1].error_type == "ModelOutputValidationFailed"
     assert gateway.runs[-1].input_tokens > 0
     assert gateway.ledger.reserved_requests == 0
     assert gateway.ledger.reserved_cost_cny == pytest.approx(0)
