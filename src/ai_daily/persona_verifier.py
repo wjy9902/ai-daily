@@ -116,7 +116,7 @@ def verify_edition(
         _verify_block(path, block, claims)
         if FORBIDDEN_STYLE_RE.search(block.text):
             raise ValueError(f"forbidden hype at {path}")
-        if _contains_first_person(block.text) and not _first_person_allowed(
+        if contains_first_person(block.text) and not _first_person_allowed(
             block, claims, scope.memories
         ):
             raise ValueError(
@@ -257,7 +257,7 @@ def _replace_reader_pronouns(text: str) -> str:
     return text.replace("我的", "用户的").replace("本人", "用户").replace("我", "用户")
 
 
-def _contains_first_person(text: str) -> bool:
+def contains_first_person(text: str) -> bool:
     """Detect author voice after removing a small set of exact non-pronoun words."""
     return FIRST_PERSON_RE.search(NON_AUTHOR_FIRST_PERSON_RE.sub("", text)) is not None
 

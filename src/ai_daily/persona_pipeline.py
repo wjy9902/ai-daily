@@ -47,6 +47,7 @@ from ai_daily.persona_render import render_persona
 from ai_daily.persona_snapshot import load_upstream_snapshot
 from ai_daily.persona_verifier import (
     VerificationScope,
+    contains_first_person,
     normalize_analysis_item,
     normalize_edition_draft,
     verify_analysis_item,
@@ -768,7 +769,7 @@ def _expand_edition_item(
     base = f"items[{index}]"
     values = {
         "headline_block": item.headline,
-        "confirmed_change_block": item.confirmed_change,
+        "confirmed_change_block": _safe_confirmed_change(item.confirmed_change, source),
         "importance_block": item.importance,
         "product_implication_block": item.product_implication,
         "recommended_action_block": item.recommended_action,
@@ -814,6 +815,31 @@ def _expand_edition_item(
         analysis_confidence=source.analysis_confidence,
     )
     return result, item_claims
+
+
+def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
+    if not contains_first_person(value.text) and not (
+        value.quote and contains_first_person(value.quote)
+    ):
+        return value
+    candidates = [
+        claim
+        for claim in source.claims
+        if claim.claim_type == "current_fact"
+        and claim.current_evidence_ids
+        and len(claim.quotes) == 1
+        and claim.text == claim.quotes[0].quote
+        and not contains_first_person(claim.text)
+    ]
+    if not candidates:
+        return value
+    claim = min(candidates, key=lambda candidate: len(candidate.text))
+    return AssemblyText(
+        text=claim.text,
+        source_kind="current_evidence",
+        source_id=claim.current_evidence_ids[0],
+        quote=claim.quotes[0].quote,
+    )
 
 
 def _required_block(
