@@ -54,6 +54,10 @@ COLLECTIVE_VOICE_PATTERN = "|".join(
 )
 FIRST_PERSON_RE = re.compile(rf"(?:{COLLECTIVE_VOICE_PATTERN}|我的|本人|我)")
 NON_AUTHOR_FIRST_PERSON_RE = re.compile(r"(?:忘我|无我|自我)")
+PERSONAL_EXPERIENCE_RE = re.compile(
+    r"(?:我(?:亲自|曾经|曾|用过|使用过|试过|测试过|体验过|经历过|做过|发现过)"
+    r"|本人(?:亲测|试过|用过|测试过))"
+)
 COLLECTIVE_VOICE_RE = re.compile(COLLECTIVE_VOICE_PATTERN)
 FORBIDDEN_STYLE_RE = re.compile(
     r"(?:颠覆一切|震撼发布|炸裂|王炸|遥遥领先|史诗级|必然取代|彻底改变世界)"
@@ -210,9 +214,27 @@ def _neutralize_collective_voice(text: str) -> str:
 
 
 def _neutralize_generic_voice(text: str) -> str:
-    return GENERIC_READER_VOICE_RE.sub(
+    normalized = GENERIC_READER_VOICE_RE.sub(
         lambda match: GENERIC_READER_VOICE_REPLACEMENTS[match.group(0)], text
     )
+    if PERSONAL_EXPERIENCE_RE.search(normalized):
+        return normalized
+    return _replace_reader_pronouns_outside_words(normalized)
+
+
+def _replace_reader_pronouns_outside_words(text: str) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in NON_AUTHOR_FIRST_PERSON_RE.finditer(text):
+        parts.append(_replace_reader_pronouns(text[cursor : match.start()]))
+        parts.append(match.group(0))
+        cursor = match.end()
+    parts.append(_replace_reader_pronouns(text[cursor:]))
+    return "".join(parts)
+
+
+def _replace_reader_pronouns(text: str) -> str:
+    return text.replace("我的", "用户的").replace("本人", "用户").replace("我", "用户")
 
 
 def _contains_first_person(text: str) -> bool:
