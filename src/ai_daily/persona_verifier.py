@@ -172,11 +172,6 @@ def normalize_analysis_item(
             {key: value.source_excerpt for key, value in scope.memories.items()},
         ),
     }
-    source_maps = {
-        "current_evidence": current,
-        "baseline_evidence": scope.baseline_evidence,
-        "experience_memory": {key: value.source_excerpt for key, value in scope.memories.items()},
-    }
     for claim in item.claims:
         claim_updates: dict[str, str] = {}
         if claim.claim_id in path_by_claim:
@@ -202,9 +197,10 @@ def normalize_analysis_item(
             claim_updates["text"] = "；".join(quote.quote for quote in quotes)
         elif (prefix := INTERPRETIVE_PREFIX.get(claim.claim_type)) is not None:
             quote_updates = {"quotes": []}
-            evidence = _claim_evidence_text(claim, source_maps)
             text = claim.text
-            for token in sorted(_ungrounded_anchors(text, prefix, evidence), key=len, reverse=True):
+            for token in sorted(
+                set(ANCHOR_RE.findall(text.removeprefix(prefix))), key=len, reverse=True
+            ):
                 replacement = "相关指标" if token[0].isdigit() else "相关版本"
                 text = text.replace(token, replacement)
             claim_updates["text"] = text
