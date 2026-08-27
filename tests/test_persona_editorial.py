@@ -729,6 +729,34 @@ def test_editor_normalization_covers_every_unapproved_voice_token(
     assert normalized.title_block.text == f"判断：{neutral}继续验证。"
 
 
+@pytest.mark.parametrize(
+    ("claim_type", "text", "expected"),
+    [
+        ("inference", "这项变化值得跟进。", "判断：这项变化值得跟进。"),
+        ("recommendation", "先做小流量验证。", "建议：先做小流量验证。"),
+        ("uncertainty", "长期效果尚待观察。", "不确定性：长期效果尚待观察。"),
+    ],
+)
+def test_editor_normalization_adds_missing_interpretive_label(
+    claim_type: str,
+    text: str,
+    expected: str,
+) -> None:
+    draft = _edition_draft("a" * 64)
+    claim = draft.claims[0].model_copy(update={"claim_type": claim_type, "text": text})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    assert normalized.title_block.text == expected
+    assert normalized.claims[0].text == expected
+
+
 @pytest.mark.parametrize("voice", ["我的判断", "本人建议", "我亲自测试过"])
 def test_editor_does_not_rewrite_unsupported_personal_experience(
     voice: str,
