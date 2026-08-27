@@ -464,6 +464,7 @@ class PersonaPipeline:
             actual = {item.blocker_id for item in normalized.resolutions}
             if actual != expected or len(actual) != len(normalized.resolutions):
                 raise ValueError("finalizer must resolve each blocker exactly once")
+            normalized = _normalize_finalizer_changed_fields(draft, normalized)
             _validate_finalizer_changes(draft, normalized)
             return normalized
 
@@ -1177,6 +1178,25 @@ def _validate_finalizer_changes(before: EditionDraft, output: FinalizerOutput) -
     declared = {field for resolution in output.resolutions for field in resolution.changed_fields}
     if not actual or actual != declared:
         raise ValueError("finalizer changed_fields must exactly match public changes")
+
+
+def _normalize_finalizer_changed_fields(
+    before: EditionDraft, output: FinalizerOutput
+) -> FinalizerOutput:
+    before_fields = _public_field_payloads(before)
+    after_fields = _public_field_payloads(output.draft)
+    changed_fields = sorted(
+        path
+        for path in set(before_fields) | set(after_fields)
+        if before_fields.get(path) != after_fields.get(path)
+    )
+    if not changed_fields:
+        raise ValueError("finalizer did not change any public fields")
+    resolutions = [
+        resolution.model_copy(update={"changed_fields": changed_fields})
+        for resolution in output.resolutions
+    ]
+    return output.model_copy(update={"resolutions": resolutions})
 
 
 def _public_field_payloads(draft: EditionDraft) -> dict[str, object]:
