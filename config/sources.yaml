@@ -475,15 +475,63 @@ sources:
     limit: 15
 
   # WeChat official accounts via the self-hosted we-mp-rss at
-  # werss.jiayutool.cn — fill in the feed paths from its admin UI once the
-  # WeChat Reading authorization is scanned (ops/FEED-INFRA.md).
-  # - name: wechat-zhipu
-  #   display_name: 智谱公众号
-  #   kind: rss
-  #   url: https://werss.<your-domain>/<feed-path-from-we-mp-rss-ui>
-  #   tier: A
-  #   channel: official
-  #   region: china
-  #   limit: 10
-  # (repeat for: 通义千问, 月之暗面 Kimi, MiniMax — tier A official; 机器之心,
-  #  新智元 — tier B news, their sites have no usable feeds since 2026)
+  # werss.jiayutool.cn (ops/FEED-INFRA.md) — deployed 2026-08-27, collection
+  # runs through WeChat Reading every 20 minutes. Caveat: that channel only
+  # surfaces each account's latest article per sweep, and item pubDate is the
+  # discovery time, so a same-day burst of posts can be sampled rather than
+  # complete. Vendor accounts are first-party; 机器之心/新智元 lost their site
+  # feeds in 2026 and this is their only programmable inlet.
+
+  - name: wechat-zhipu
+    display_name: 智谱公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3923277442.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+
+  - name: wechat-qwen
+    display_name: 千问大模型公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3948884294.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+
+  - name: wechat-kimi
+    display_name: 月之暗面 Kimi 公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3702378138.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+
+  - name: wechat-minimax
+    display_name: MiniMax 公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3191077711.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+
+  - name: wechat-jiqizhixin
+    display_name: 机器之心
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3073282833.rss
+    tier: B
+    channel: news
+    region: china
+    limit: 10
+
+  - name: wechat-xinzhiyuan
+    display_name: 新智元
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3271041950.rss
+    tier: B
+    channel: news
+    region: china
+    limit: 10
