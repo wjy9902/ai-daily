@@ -714,9 +714,18 @@ def _expand_edition_assembly(
         for index, item in enumerate(assembly.items)
     ]
     items = [item for item, _ in expanded_items]
-    title_block, title_claim = _expand_assembly_text(assembly.title, "title_block")
-    digest_block, digest_claim = _expand_assembly_text(assembly.digest, "digest_block")
-    thesis_block, thesis_claim = _expand_assembly_text(assembly.thesis, "thesis_block")
+    edition_evidence_ids = list(
+        dict.fromkeys(evidence_id for item in analyses for evidence_id in item.evidence_ids)
+    )
+    title_block, title_claim = _expand_assembly_text(
+        assembly.title, "title_block", edition_evidence_ids or None
+    )
+    digest_block, digest_claim = _expand_assembly_text(
+        assembly.digest, "digest_block", edition_evidence_ids or None
+    )
+    thesis_block, thesis_claim = _expand_assembly_text(
+        assembly.thesis, "thesis_block", edition_evidence_ids or None
+    )
     watchlist = [
         _expand_assembly_text(value, f"watchlist_blocks[{index}]")
         for index, value in enumerate(assembly.watchlist)
@@ -767,7 +776,15 @@ def _expand_edition_item(
         "watch_signal_block": item.watch_signal,
     }
     expanded = {
-        name: _expand_assembly_text(value, f"{base}.{name}") if value is not None else None
+        name: (
+            _expand_assembly_text(
+                value,
+                f"{base}.{name}",
+                source.evidence_ids if name != "confirmed_change_block" else None,
+            )
+            if value is not None
+            else None
+        )
         for name, value in values.items()
     }
     item_claims = [claim for value in expanded.values() if value for _, claim in [value]]
@@ -809,7 +826,9 @@ def _required_block(
 
 
 def _expand_assembly_text(
-    value: AssemblyText, field_path: str
+    value: AssemblyText,
+    field_path: str,
+    current_evidence_ids: list[str] | None = None,
 ) -> tuple[PublicTextBlock, AnalysisClaim]:
     slug = re.sub(r"[^a-z0-9]+", "-", field_path.lower()).strip("-")
     source_lists: dict[str, list[str]] = {
@@ -817,22 +836,31 @@ def _expand_assembly_text(
         "baseline_evidence_ids": [],
         "experience_memory_ids": [],
     }
-    source_field = {
-        "current_evidence": "current_evidence_ids",
-        "baseline_evidence": "baseline_evidence_ids",
-        "experience_memory": "experience_memory_ids",
-    }[value.source_kind]
-    source_lists[source_field] = [value.source_id]
-    quotes = (
-        [ClaimQuote(source_kind=value.source_kind, source_id=value.source_id, quote=value.quote)]
-        if value.quote is not None
-        else []
-    )
+    claim_type = _assembly_claim_type(field_path)
+    if current_evidence_ids is not None:
+        source_lists["current_evidence_ids"] = current_evidence_ids
+    else:
+        source_field = {
+            "current_evidence": "current_evidence_ids",
+            "baseline_evidence": "baseline_evidence_ids",
+            "experience_memory": "experience_memory_ids",
+        }[value.source_kind]
+        source_lists[source_field] = [value.source_id]
+    quotes = []
+    if claim_type in {"current_fact", "baseline_fact", "experience_fact"}:
+        if value.quote is not None:
+            quotes = [
+                ClaimQuote(
+                    source_kind=value.source_kind,
+                    source_id=value.source_id,
+                    quote=value.quote,
+                )
+            ]
     claim = AnalysisClaim(
         claim_id=f"claim-{slug}",
         field_path=field_path,
         text=value.text,
-        claim_type=_assembly_claim_type(field_path),
+        claim_type=claim_type,
         quotes=quotes,
         **source_lists,
     )
