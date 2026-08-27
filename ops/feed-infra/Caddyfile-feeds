@@ -1,0 +1,16 @@
+# Reverse-proxy the feed infrastructure behind HTTPS on real subdomains.
+# The pipeline's collector refuses plain HTTP and non-public DNS, so
+# http://127.0.0.1:1200 can never be a source URL — these subdomains can.
+#
+# The production box already runs Caddy (it fronts daily.jiayutool.cn and
+# zb.jiayutool.cn). Append these blocks to the existing Caddyfile and reload
+# with `systemctl reload caddy` — a graceful reload, no downtime for the
+# other sites. Caddy issues the certificates itself once DNS resolves.
+
+rsshub.jiayutool.cn {
+	reverse_proxy 127.0.0.1:1200
+}
+
+werss.jiayutool.cn {
+	reverse_proxy 127.0.0.1:8001
+}

@@ -1,0 +1,93 @@
+# 自建信源基础设施（X + 微信公众号）
+
+## 为什么需要
+
+对照橘鸦「AI 早报」2026-08-27 期做的逐条覆盖审计：对方 19 条里 9 条的第一手
+信源是 X（OpenAI 误路由致歉、Antigravity CLI 语音模式、Cowork 内置浏览器、
+Fable 5.1 灰度爆料等），另有多条（GLM-5.3-Flash 发布详情）first-party 出处是
+微信公众号。厂商现在把大量公告只发 X 和公众号，不进博客——没有这两类信源，
+这部分新闻结构性缺失。
+
+Techmeme + TestingCatalog + smol.ai（已配置）能以几小时延迟转述其中大部分，
+这是当前的过渡方案；自建信源才能拿到当天早晨可用的第一手条目。
+
+## GitHub 工具调研结论（2026-08-27）
+
+| 项目 | 状态 | 结论 |
+|---|---|---|
+| [DIYgod/RSSHub](https://github.com/DIYgod/RSSHub)（45.9k★） | 活跃，前一天有提交 | **采用**：X 官方账号→RSS，也覆盖微博/即刻等数百站点 |
+| [rachelos/we-mp-rss](https://github.com/rachelos/we-mp-rss)（4.4k★） | 活跃 | **采用**：公众号→RSS（基于微信读书授权），自带定时抓取和管理界面 |
+| cooderl/wewe-rss（9.7k★） | **已归档** 2026-03 | 弃用，we-mp-rss 是其活跃继任者 |
+| zedeus/nitter（13.6k★） | **已归档** | 此路已死；公共实例全部下线/410 |
+| xcancel.com | 在线 | 需逐个 RSS 阅读器邮件申请白名单，不可自动化 |
+| rsshub.app 官方实例 | 在线 | twitter 路由 404（必须自建并配 X 凭据） |
+| [vladkens/twscrape](https://github.com/vladkens/twscrape)（2.7k★） | 活跃 | 备选 Plan B：Python 库、多账号轮换，可作为原生 source kind 集成，RSSHub twitter 路由失效时再启用 |
+| X API v2 | — | 可行但 Basic 档约 $200/月，最后手段 |
+| ourongxing/newsnow（21.5k★）、imsyy/DailyHotApi（4k★） | 活跃 | 二期候选：各平台热榜聚合，作 community 渠道旁证（同 Hacker News 语义，无发布时间不能当新闻时间） |
+| searxng/searxng（36.1k★） | 活跃 | 二期候选：自建元搜索，给头条做第二信源佐证，解决"两个独立域"实际不可达的问题 |
+| RSS-Bridge（9.2k★） | 活跃 | RSSHub 覆盖不到的站点再考虑 |
+
+## 部署（生产服务器）
+
+采集器有两条硬约束，部署必须满足：**HTTPS + 解析到公网 IP**
+（`sources.py` 的 pinned-DNS 校验），所以服务要挂在自己域名的子域下，
+不能用 `http://localhost:1200`。
+
+```bash
+# 1. 起服务（rsshub + we-mp-rss 一个 compose 管完）
+cd ops/feed-infra
+echo 'TWITTER_AUTH_TOKEN=<X 小号的 auth_token cookie>' > .env
+docker compose up -d
+```
+
+2. 给两个子域配 HTTPS 反代。生产机的反代是 **Caddy**（与 daily/zb 两站同实例），
+   把 `Caddyfile-feeds` 里的两个站点块追加进现有 Caddyfile 后
+   `systemctl reload caddy`（平滑重载，不影响其他站点），证书自动签发：
+   - `rsshub.jiayutool.cn` → 127.0.0.1:1200
+   - `werss.jiayutool.cn` → 127.0.0.1:8001
+
+   DNS 需要在阿里云控制台加两条 A 记录指向服务器 IP（若已有泛解析则跳过）。
+
+3. 初始化 we-mp-rss：浏览器打开 `https://werss.<domain>`，用微信读书扫码
+   授权，然后在管理界面逐个添加公众号，并从界面复制每个公众号的 RSS 地址。
+
+```bash
+# 4. 验证
+curl -s https://rsshub.<domain>/twitter/user/OpenAI | head -40
+curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
+```
+
+注意事项：
+
+- `TWITTER_AUTH_TOKEN` 用**小号**，不要用主账号；支持逗号分隔多账号轮换。
+  token 属于机密，只放服务器 `.env`，绝不入库（同 API key 轮换纪律）。
+- 微信读书授权同理用小号，授权会过期，we-mp-rss 有到期提醒，需要偶尔重新扫码。
+- 两个服务都对上游变化敏感，把它们当"经常部分失败"的源对待——管线的
+  source health 会记录，不会拖垮刊期。
+- compose 里已配 10 分钟缓存，三个 timer 窗口不会对 X 重复施压。
+
+## 接入管线
+
+两个服务输出的都是标准 RSS，`config/sources.yaml` 末尾有注释好的模板
+（X 账号一段、公众号一段），把占位域名换成实际地址后取消注释即可，无需改代码。
+
+建议首批：
+
+**X 官方账号（tier A / channel official）**
+OpenAI、OpenAIDevs、AnthropicAI、claudeai、ClaudeDevs、GoogleDeepMind、
+GeminiApp、xai、Alibaba_Qwen、Kimi_Moonshot、MiniMax__AI、ManusAI_HQ、cursor_ai。
+员工个人账号噪声高、常被官方账号转发覆盖，第一批不加；跑稳两周后按漏报审计再定。
+
+**微信公众号（tier A / channel official / region china）**
+智谱（Z.ai 公告的中文一手出处）、通义千问、月之暗面 Kimi、MiniMax、
+机器之心、新智元（机器之心站点 RSS 已死，公众号是其唯一可编程入口；
+量子位已有站点源，不必重复）。媒体类公众号 channel 用 news、tier B。
+
+上线后先在服务器跑 `uv run ai-daily probe-sources`，确认每个新源
+`status: ok` 且 `with_publication_time > 0`，再正式并入。
+
+## 本地开发注意
+
+本地开发机若开着 fake-IP 模式的代理（198.18.0.0/15），pinned-DNS 校验会
+拒绝所有源，`probe-sources` 会显示 0/N。这不是配置问题；用直连网络或在
+服务器上探测。

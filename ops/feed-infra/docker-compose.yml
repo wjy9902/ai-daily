@@ -1,0 +1,33 @@
+# Self-hosted feed infrastructure for ai-daily.
+# See ops/FEED-INFRA.md for what runs here, why, and the nginx side.
+#
+#   cd ops/feed-infra && docker compose up -d
+#
+# Secrets live in a local .env next to this file (never committed):
+#   TWITTER_AUTH_TOKEN=<auth_token cookie of a throwaway X account>
+
+services:
+  # RSSHub — turns X accounts (and hundreds of other sites) into RSS.
+  # https://github.com/DIYgod/RSSHub
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: rsshub
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1200:1200"
+    environment:
+      NODE_ENV: production
+      CACHE_EXPIRE: "600"          # 10 min cache: three timer windows must not
+      CACHE_CONTENT_EXPIRE: "3600" # hammer X once per source per run
+      TWITTER_AUTH_TOKEN: ${TWITTER_AUTH_TOKEN}
+
+  # we-mp-rss — WeChat official accounts to RSS, via a WeChat Reading login.
+  # https://github.com/rachelos/we-mp-rss (active successor of archived wewe-rss)
+  we-mp-rss:
+    image: rachelos/we-mp-rss:latest
+    container_name: we-mp-rss
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - ./data/we-mp-rss:/app/data

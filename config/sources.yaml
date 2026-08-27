@@ -15,6 +15,35 @@ sources:
     tier: A
     channel: official
     limit: 15
+  # Anthropic splits announcements across three surfaces. Product news that
+  # never touches anthropic.com/news (Claude in Chrome GA, Cowork features)
+  # lands on claude.com/blog; research announcements land on /research and
+  # engineering posts on /engineering. Missing these cost the 2026-08-27 issue
+  # two stories the benchmark digest led with.
+  - name: claude-blog
+    display_name: Claude Blog
+    kind: html_index
+    url: https://claude.com/blog
+    link_pattern: '^https://claude\.com/blog/[^/]+$'
+    tier: A
+    channel: official
+    limit: 15
+  - name: anthropic-research
+    display_name: Anthropic Research
+    kind: html_index
+    url: https://www.anthropic.com/research
+    link_pattern: '^https://www\.anthropic\.com/research/[^/]+$'
+    tier: A
+    channel: official
+    limit: 10
+  - name: anthropic-engineering
+    display_name: Anthropic Engineering
+    kind: html_index
+    url: https://www.anthropic.com/engineering
+    link_pattern: '^https://www\.anthropic\.com/engineering/[^/]+$'
+    tier: A
+    channel: official
+    limit: 10
   - name: google-ai
     display_name: Google AI
     kind: rss
@@ -22,6 +51,18 @@ sources:
     tier: A
     channel: official
     limit: 20
+  # The technology/ai feed misses product-line posts (Gemini app, Workspace,
+  # Search) that are exactly the announcements readers act on — the Gemini Live
+  # productivity upgrade shipped under products/, invisible to the feed above.
+  # The all-posts feed overlaps it; identical URLs collapse in clustering.
+  - name: google-blog
+    display_name: Google Blog
+    kind: rss
+    url: https://blog.google/rss/
+    tier: A
+    channel: official
+    ai_focused: false
+    limit: 30
   - name: deepmind
     display_name: Google DeepMind
     kind: rss
@@ -168,6 +209,39 @@ sources:
     channel: news
     region: china
     limit: 30
+  # 高频中文科技媒体：MiniMax 业绩会、国产芯片适配这类只在中文媒体首发的
+  # 厂商动态，量子位和雷峰网经常晚于或漏于 IT之家。全站 feed 非 AI 居多，
+  # 交给 is_ai_related 词表过滤。
+  - name: ithome
+    display_name: IT之家
+    kind: rss
+    url: https://www.ithome.com/rss/
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 40
+  # Techmeme aggregates the X-first news cycle (deals, leaks, "Sources:"
+  # reporting from Bloomberg/Reuters/The Information) that no configured RSS
+  # source carries. Until direct X ingestion exists this is the widest net for
+  # the business-and-rumor half of the day.
+  - name: techmeme
+    display_name: Techmeme
+    kind: rss
+    url: https://www.techmeme.com/feed.xml
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 30
+  # TestingCatalog specializes in gray releases, A/B tests and unannounced
+  # features spotted in production apps — the 前瞻与传闻 beat.
+  - name: testingcatalog
+    display_name: TestingCatalog
+    kind: rss
+    url: https://www.testingcatalog.com/rss/
+    tier: B
+    channel: news
+    limit: 20
   - name: ai-news
     display_name: AI News
     kind: rss
@@ -285,3 +359,37 @@ sources:
     tier: B
     channel: release
     limit: 5
+
+  # ------------------------------------------------------------------------
+  # Self-hosted feed infrastructure — NOT YET DEPLOYED. Roughly half of a
+  # benchmark digest's items break first on vendor X accounts, and Chinese
+  # vendors' first-party posts live on WeChat official accounts. Both are
+  # served by self-hosted converters (RSSHub for X, we-mp-rss for WeChat)
+  # behind HTTPS on our own domain — deployment and the 2026-08-27 tool
+  # survey live in ops/FEED-INFRA.md. Once the services answer, uncomment,
+  # fill in the real URLs, and probe-sources before relying on them. Until
+  # then Techmeme + TestingCatalog + smol.ai relay most of the X news cycle
+  # at a few hours' delay.
+  #
+  # - name: x-openai
+  #   display_name: OpenAI @ X
+  #   kind: rss
+  #   url: https://rsshub.<your-domain>/twitter/user/OpenAI
+  #   tier: A
+  #   channel: official
+  #   limit: 15
+  # (repeat for: OpenAIDevs, AnthropicAI, claudeai, ClaudeDevs, GoogleDeepMind,
+  #  GeminiApp, Alibaba_Qwen, Kimi_Moonshot, MiniMax__AI, xai, ManusAI_HQ,
+  #  cursor_ai — vendor org accounts only; individual staff accounts stay out
+  #  until a recall audit says otherwise)
+  #
+  # - name: wechat-zhipu
+  #   display_name: 智谱公众号
+  #   kind: rss
+  #   url: https://werss.<your-domain>/<feed-path-from-we-mp-rss-ui>
+  #   tier: A
+  #   channel: official
+  #   region: china
+  #   limit: 10
+  # (repeat for: 通义千问, 月之暗面 Kimi, MiniMax — tier A official; 机器之心,
+  #  新智元 — tier B news, their sites have no usable feeds since 2026)
