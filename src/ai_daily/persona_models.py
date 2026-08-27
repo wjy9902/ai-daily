@@ -262,26 +262,31 @@ class AssemblyText(StrictModel):
     quote: str | None = Field(default=None, min_length=12, max_length=1000)
 
 
+class AssemblyInterpretiveText(AssemblyText):
+    text: str = Field(min_length=1, max_length=30)
+    quote: None = None
+
+
 class EditionAssemblyItem(StrictModel):
     event_id: str
-    headline: AssemblyText
+    headline: AssemblyInterpretiveText
     confirmed_change: AssemblyText
-    importance: AssemblyText
-    product_implication: AssemblyText
-    recommended_action: AssemblyText | None = None
-    counter_case: AssemblyText
-    watch_signal: AssemblyText
+    importance: AssemblyInterpretiveText
+    product_implication: AssemblyInterpretiveText
+    recommended_action: AssemblyInterpretiveText | None = None
+    counter_case: AssemblyInterpretiveText
+    watch_signal: AssemblyInterpretiveText
 
 
 class EditionAssembly(StrictModel):
     """Compact model output expanded into an EditionDraft at the trust boundary."""
 
     schema_version: Literal[1] = SCHEMA_VERSION
-    title: AssemblyText
-    digest: AssemblyText
-    thesis: AssemblyText
+    title: AssemblyInterpretiveText
+    digest: AssemblyInterpretiveText
+    thesis: AssemblyInterpretiveText
     items: list[EditionAssemblyItem] = Field(max_length=5)
-    watchlist: list[AssemblyText] = Field(max_length=2)
+    watchlist: list[AssemblyInterpretiveText] = Field(max_length=2)
 
 
 class EditionDraft(StrictModel):

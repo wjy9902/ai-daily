@@ -701,6 +701,7 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
         "输出必须紧凑；recommended_action 仅在必要时保留；"
         "confirmed_change 固定是 current_fact，必须引用 current_evidence，"
         "且 text 必须与 quote 完全相同；其他字段不得当作事实原句输出。"
+        "除 confirmed_change 外，每个 text 都必须是 30 字以内的完整短句。"
         "任何 text 和 quote 都不得含“我、我的、本人、我们、咱们”；"
         "confirmed_change 必须从同一分析中选择不含这些词的 current_fact 原句，"
         "不得选择企业以第一人称发布的原文。"
@@ -850,6 +851,14 @@ def _compact_edition_assembly(
     ]
     if sum(len(value.text) for value in body_values) <= maximum:
         return assembly.model_copy(update={"items": items})
+    items = [item.model_copy(update={"recommended_action": None}) for item in items]
+    assembly = assembly.model_copy(update={"items": items, "watchlist": []})
+    body_values = [
+        assembly.thesis,
+        *(value for item in items for value in _assembly_item_body_values(item)),
+    ]
+    if sum(len(value.text) for value in body_values) <= maximum:
+        return assembly
     fixed = sum(len(item.confirmed_change.text) for item in items)
     editable = [
         assembly.thesis,
@@ -906,11 +915,11 @@ def _compact_text(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     prefix = text[:limit]
-    boundaries = [prefix.rfind(mark) for mark in ("。", "；", "，", ".", ";", ",", " ")]
+    boundaries = [prefix.rfind(mark) for mark in ("。", "\uff01", "\uff1f", ".", "!", "?")]
     boundary = max(boundaries)
     if boundary >= limit // 2:
         return prefix[: boundary + 1].rstrip()
-    return prefix.rstrip()
+    return text
 
 
 def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
