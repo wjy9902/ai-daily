@@ -50,6 +50,7 @@ from ai_daily.persona_pipeline import (
     _json_prompt,
     _memory_context_sha256,
     _normalize_plan,
+    _safe_confirmed_change,
     _validate_critique,
     _validate_finalizer_changes,
 )
@@ -410,6 +411,23 @@ def _standard_item(event_id: str, index: int) -> AnalysisItem:
         evidence_ids=[f"{event_id}-1"],
         analysis_confidence=0.9,
     )
+
+
+def test_confirmed_change_uses_verified_non_first_person_fact() -> None:
+    source = _standard_item("event-0", 0)
+    unsafe_text = "今天，我们正式上线新的多模态模型。"
+    unsafe = AssemblyText(
+        text=unsafe_text,
+        source_kind="current_evidence",
+        source_id="event-0-1",
+        quote=unsafe_text,
+    )
+
+    result = _safe_confirmed_change(unsafe, source)
+
+    assert result.text == "Evidence for story 0."
+    assert result.quote == result.text
+    assert result.source_id == "event-0-1"
 
 
 def _standard_draft(marker: str) -> EditionDraft:
