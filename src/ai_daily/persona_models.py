@@ -126,6 +126,7 @@ class PersonaContext(StrictModel):
     target_date: date
     upstream_marker: str = Field(pattern=r"^[a-f0-9]{64}$")
     constitution_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    memory_context_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     candidate_event_ids: list[str] = Field(max_length=30)
     retrieved_memories: list[RetrievedMemory] = Field(max_length=16)
     has_conflicts: bool = False

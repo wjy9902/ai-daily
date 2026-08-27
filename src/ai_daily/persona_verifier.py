@@ -20,7 +20,16 @@ from ai_daily.persona_models import (
     sha256_payload,
 )
 
-FIRST_PERSON_RE = re.compile(r"(?:^|[^你他她它])(?:我|我的|我们|咱们|本人)")
+COLLECTIVE_VOICE_REPLACEMENTS = {
+    "我们": "产品团队",
+    "咱们": "产品团队",
+}
+COLLECTIVE_VOICE_PATTERN = "|".join(
+    re.escape(value) for value in sorted(COLLECTIVE_VOICE_REPLACEMENTS, key=len, reverse=True)
+)
+FIRST_PERSON_RE = re.compile(rf"(?:{COLLECTIVE_VOICE_PATTERN}|我的|本人|我)")
+NON_AUTHOR_FIRST_PERSON_RE = re.compile(r"(?:忘我|无我|自我)")
+COLLECTIVE_VOICE_RE = re.compile(COLLECTIVE_VOICE_PATTERN)
 FORBIDDEN_STYLE_RE = re.compile(
     r"(?:颠覆一切|震撼发布|炸裂|王炸|遥遥领先|史诗级|必然取代|彻底改变世界)"
 )
@@ -78,7 +87,7 @@ def verify_edition(
         _verify_block(path, block, claims)
         if FORBIDDEN_STYLE_RE.search(block.text):
             raise ValueError(f"forbidden hype at {path}")
-        if FIRST_PERSON_RE.search(block.text) and not _first_person_allowed(
+        if _contains_first_person(block.text) and not _first_person_allowed(
             block, claims, scope.memories
         ):
             raise ValueError(f"unapproved first-person voice at {path}")
@@ -139,6 +148,77 @@ def verify_analysis_item(
             raise ValueError(f"item {item.event_id} delta lacks current or baseline evidence")
 
 
+def normalize_edition_draft(
+    draft: EditionDraft,
+    scope: VerificationScope,
+) -> EditionDraft:
+    """Remove unapproved author voice from interpretive claims, then rebuild blocks."""
+    claims = _claim_map(draft.claims)
+    normalized: dict[str, AnalysisClaim] = {}
+    block_updates: dict[str, PublicTextBlock] = {}
+    for path, block in _blocks(draft):
+        for claim_id in block.claim_ids:
+            try:
+                claim = claims[claim_id]
+            except KeyError as error:
+                raise ValueError(f"unknown claim id at {path}: {claim_id}") from error
+            text = claim.text
+            if claim.claim_type in INTERPRETIVE_PREFIX:
+                text = _neutralize_collective_voice(text)
+            normalized[claim_id] = claim.model_copy(update={"text": text})
+        block_updates[path] = block.model_copy(
+            update={"text": "".join(normalized[item].text for item in block.claim_ids)}
+        )
+    return _rebuild_edition(draft, normalized, block_updates)
+
+
+def _neutralize_collective_voice(text: str) -> str:
+    return COLLECTIVE_VOICE_RE.sub(
+        lambda match: COLLECTIVE_VOICE_REPLACEMENTS[match.group(0)], text
+    )
+
+
+def _contains_first_person(text: str) -> bool:
+    """Detect author voice after removing a small set of exact non-pronoun words."""
+    return FIRST_PERSON_RE.search(NON_AUTHOR_FIRST_PERSON_RE.sub("", text)) is not None
+
+
+def _rebuild_edition(
+    draft: EditionDraft,
+    claims: dict[str, AnalysisClaim],
+    blocks: dict[str, PublicTextBlock],
+) -> EditionDraft:
+    items: list[AnalysisItem] = []
+    for index, item in enumerate(draft.items):
+        try:
+            item_claims = [claims[claim.claim_id] for claim in item.claims]
+        except KeyError as error:
+            raise ValueError(
+                f"item {item.event_id} referenced unknown claim {error.args[0]}"
+            ) from error
+        updates: dict[str, object] = {"claims": item_claims}
+        for name in ANALYSIS_BLOCK_NAMES:
+            if getattr(item, name) is not None:
+                updates[name] = blocks[f"items[{index}].{name}"]
+        items.append(item.model_copy(update=updates))
+    try:
+        draft_claims = [claims[claim.claim_id] for claim in draft.claims]
+    except KeyError as error:
+        raise ValueError(f"unreferenced edition claim {error.args[0]}") from error
+    return draft.model_copy(
+        update={
+            "title_block": blocks["title_block"],
+            "digest_block": blocks["digest_block"],
+            "thesis_block": blocks["thesis_block"],
+            "items": items,
+            "watchlist_blocks": [
+                blocks[f"watchlist_blocks[{index}]"] for index in range(len(draft.watchlist_blocks))
+            ],
+            "claims": draft_claims,
+        }
+    )
+
+
 def normalize_analysis_item(
     item: AnalysisItem,
     snapshot: UpstreamSnapshot,
@@ -159,19 +239,20 @@ def normalize_analysis_item(
                 template = claim_templates[claim_id]
             except KeyError as error:
                 raise ValueError(f"unknown claim id at {path}: {claim_id}") from error
-            canonical_id = "claim-" + sha256_payload(
-                {
-                    "event_id": item.event_id,
-                    "field_path": path,
-                    "position": position,
-                    "source_claim_id": claim_id,
-                }
-            )[:20]
+            canonical_id = (
+                "claim-"
+                + sha256_payload(
+                    {
+                        "event_id": item.event_id,
+                        "field_path": path,
+                        "position": position,
+                        "source_claim_id": claim_id,
+                    }
+                )[:20]
+            )
             canonical_ids.append(canonical_id)
             claims_to_normalize.append(
-                template.model_copy(
-                    update={"claim_id": canonical_id, "field_path": path}
-                )
+                template.model_copy(update={"claim_id": canonical_id, "field_path": path})
             )
         block_updates[name] = block.model_copy(update={"claim_ids": canonical_ids})
     if len(claims_to_normalize) > 12:
@@ -224,9 +305,7 @@ def normalize_analysis_item(
             body = claim.text.removeprefix(prefix)
             while ANCHOR_RE.search(body):
                 body = ANCHOR_RE.sub(
-                    lambda match: "相关指标"
-                    if match.group(0)[0].isdigit()
-                    else "相关版本",
+                    lambda match: "相关指标" if match.group(0)[0].isdigit() else "相关版本",
                     body,
                 )
             claim_updates["text"] = prefix + body
@@ -444,14 +523,18 @@ def _first_person_allowed(
     claims: dict[str, AnalysisClaim],
     memories: dict[str, EditorialMemory],
 ) -> bool:
-    memory_ids = {
-        memory_id
-        for claim_id in block.claim_ids
-        for memory_id in claims[claim_id].experience_memory_ids
-    }
-    return bool(memory_ids) and all(
-        memory_id in memories and memories[memory_id].usage == "first_person_allowed"
-        for memory_id in memory_ids
+    try:
+        referenced = [claims[claim_id] for claim_id in block.claim_ids]
+    except KeyError as error:
+        raise ValueError(f"unknown claim id: {error.args[0]}") from error
+    return bool(referenced) and all(
+        claim.claim_type == "experience_fact"
+        and bool(claim.experience_memory_ids)
+        and all(
+            memory_id in memories and memories[memory_id].usage == "first_person_allowed"
+            for memory_id in claim.experience_memory_ids
+        )
+        for claim in referenced
     )
 
 

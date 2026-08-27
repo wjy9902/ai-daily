@@ -390,7 +390,7 @@ async def _persona_run_unlocked(args: argparse.Namespace) -> int:
             Path(args.config_dir).resolve().parent,
             target,
         )
-        result = await pipeline.run(target)
+        result = await pipeline.run(target, getattr(args, "resume_run", None))
         if result.editorial_state == "held":
             write_persona_status(layout, result.model_dump(mode="json"))
             _emit(result.model_dump(mode="json"))
@@ -581,6 +581,11 @@ def build_parser() -> argparse.ArgumentParser:
     persona.add_argument("--mode", choices=("dry-run", "site", "draft"), required=True)
     persona.add_argument("--authorization", type=Path)
     persona.add_argument("--execute", action="store_true")
+    persona.add_argument(
+        "--resume-run",
+        type=Path,
+        help="reuse a verified run that has no historical baseline match",
+    )
 
     persona_daily = subparsers.add_parser("persona-daily", help="stable-marker timer entry")
     persona_daily.add_argument("--date")
@@ -588,6 +593,11 @@ def build_parser() -> argparse.ArgumentParser:
     persona_daily.add_argument("--authorization", type=Path)
     persona_daily.add_argument("--execute", action="store_true")
     persona_daily.add_argument("--stability-seconds", type=int, default=30)
+    persona_daily.add_argument(
+        "--resume-run",
+        type=Path,
+        help="reuse a verified run that has no historical baseline match",
+    )
 
     wechat_probe = subparsers.add_parser("wechat-probe", help="probe read-only capabilities")
     wechat_probe.add_argument("--date")
