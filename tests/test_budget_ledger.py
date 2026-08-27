@@ -102,7 +102,7 @@ def test_an_exhausted_stage_stops_only_that_stage(tmp_path: Path) -> None:
         ledger.check_stage(BudgetStage.JUDGE)
     ledger.check_stage(BudgetStage.PLAN)
     ledger.check_stage(BudgetStage.DRAFT)
-    assert ledger.remaining_requests() == 6
+    assert ledger.remaining_requests() == 10 - int(10 * STAGE_SHARE[BudgetStage.JUDGE])
 
 
 def test_stage_exhaustion_by_cost_also_spares_the_other_stages(tmp_path: Path) -> None:

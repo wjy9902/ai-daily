@@ -2,9 +2,9 @@ budget:
   # Shared by every timer window of the same day, not per process.
   #
   # Sized from the pipeline's actual shape rather than a round number: one
-  # judge call per batch of ten candidates (8), one planning call, one draft
-  # per detailed story (12), and any of them able to spend a second request on
-  # its retry — 42 for a single issue at worst. This leaves room for a full
+  # judge call per batch of ten candidates (10), one planning call, one draft
+  # per detailed story (13), and any of them able to spend a second request on
+  # its retry — 48 for a single issue at worst. This leaves room for most of a
   # second attempt from a later window. tests/test_budget_staging.py asserts
   # the arithmetic so a config change cannot quietly starve a stage.
   #

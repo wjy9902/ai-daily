@@ -33,14 +33,17 @@ class BudgetStage(StrEnum):
     DRAFT = "draft"
 
 
-#: How the day's budget is divided, in proportion to how many calls each stage
-#: actually makes: roughly eight judge calls, one plan call and twelve drafts.
-#: Planning held 15% while needing a single call, which is budget sitting idle
-#: in the one stage that cannot use it.
+#: How the day's budget is divided. Sized against observed spend, not call
+#: counts: planning is one call per run but the most expensive kind of call
+#: (full candidate payload in, whole plan out, validator retries billed), and
+#: the day holds up to three timer windows that may each need to replan. On
+#: 2026-08-27 planning alone cost ¥0.75 while its slice at 10% was ¥0.50,
+#: which left the later windows unable to replan at all. Judging is the cheap
+#: stage in practice (¥0.26 that same day), so its share shrinks instead.
 STAGE_SHARE: dict[BudgetStage, float] = {
-    BudgetStage.JUDGE: 0.40,
-    BudgetStage.PLAN: 0.10,
-    BudgetStage.DRAFT: 0.50,
+    BudgetStage.JUDGE: 0.30,
+    BudgetStage.PLAN: 0.25,
+    BudgetStage.DRAFT: 0.45,
 }
 
 
