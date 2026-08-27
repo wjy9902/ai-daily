@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -24,7 +25,9 @@ from ai_daily.persona_models import (
     AnalysisClaim,
     AnalysisItem,
     AnalystOutput,
+    AssemblyText,
     BaselineMatch,
+    ClaimQuote,
     Critique,
     EditionAssembly,
     EditionAssemblyItem,
@@ -36,6 +39,7 @@ from ai_daily.persona_models import (
     PersonaPlan,
     PersonaRunResult,
     PlanSelection,
+    PublicTextBlock,
     RetrievedMemory,
     sha256_payload,
 )
@@ -677,15 +681,14 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
     return (
         "你是版面编辑，只可重组输入分析，不得增加外部事实。"
         "输入分析已逐条通过证据校验。可删减或压缩判断，但事实 claim 若保留，"
-        "text 必须原样等于 quote，不得改写事实原文。把 items 路径按最终顺序重写；"
-        "claims 必须完整且仅包含所有公开块使用的 claim。"
-        "每个 block.text 必须严格等于其 claims.text 顺序拼接。"
+        "text 必须原样等于 quote，不得改写事实原文。"
+        "程序会为每个输出字段生成一个 claim 和 block；你只输出文字、claim_type、"
+        "一个 source_kind/source_id，以及事实 claim 必需的原文 quote。"
         "所有推论、建议和不确定性必须保留“判断：”“建议：”“不确定性：”前缀。"
-        "标题、摘要、主旨、观察清单也必须创建可追溯 claims。"
+        "标题、摘要、主旨、观察清单也必须引用一个输入来源。"
         f"standard 正文长度(不含标题摘要)须为 {minimum}-{maximum} 个字符。"
-        "输出必须紧凑：每个必填 block 和观察项只用一个简洁 claim；"
-        "省略 delta_from_before_block，recommended_action_block 仅在必要时保留；"
-        "事实 claim 只保留一条必要 quote 和最少来源 ID。"
+        "输出必须紧凑；recommended_action 仅在必要时保留；"
+        "事实 claim 的 text 必须与 quote 完全相同。"
         "no_major_update 也要说明今天为什么没有足够大的变化以及继续观察什么。"
         "禁止第一人称和夸张宣传语。"
     )
@@ -701,15 +704,27 @@ def _expand_edition_assembly(
 ) -> EditionDraft:
     if [item.event_id for item in assembly.items] != [item.event_id for item in analyses]:
         raise ValueError("edition changed analyzed event order")
-    claim_by_id = {claim.claim_id: claim for claim in assembly.claims}
     source_by_event = {item.event_id: item for item in analyses}
-    items = [
-        _expand_edition_item(item, source_by_event[item.event_id], claim_by_id)
-        for item in assembly.items
+    expanded_items = [
+        _expand_edition_item(index, item, source_by_event[item.event_id])
+        for index, item in enumerate(assembly.items)
     ]
-    used_evidence = {
-        evidence_id for claim in assembly.claims for evidence_id in claim.current_evidence_ids
-    }
+    items = [item for item, _ in expanded_items]
+    title_block, title_claim = _expand_assembly_text(assembly.title, "title_block")
+    digest_block, digest_claim = _expand_assembly_text(assembly.digest, "digest_block")
+    thesis_block, thesis_claim = _expand_assembly_text(assembly.thesis, "thesis_block")
+    watchlist = [
+        _expand_assembly_text(value, f"watchlist_blocks[{index}]")
+        for index, value in enumerate(assembly.watchlist)
+    ]
+    claims = [
+        title_claim,
+        digest_claim,
+        thesis_claim,
+        *(claim for _, item_claims in expanded_items for claim in item_claims),
+        *(claim for _, claim in watchlist),
+    ]
+    used_evidence = {evidence_id for claim in claims for evidence_id in claim.current_evidence_ids}
     source_links = [
         evidence.url
         for bundle in snapshot.evidence_bundles
@@ -720,64 +735,110 @@ def _expand_edition_assembly(
         column_id=column_id,
         target_date=snapshot.target_date,
         edition_type=plan.edition_type,
-        title_block=assembly.title_block,
-        digest_block=assembly.digest_block,
-        thesis_block=assembly.thesis_block,
+        title_block=title_block,
+        digest_block=digest_block,
+        thesis_block=thesis_block,
         items=items,
-        watchlist_blocks=assembly.watchlist_blocks,
+        watchlist_blocks=[block for block, _ in watchlist],
         source_links=source_links,
         ai_disclosure=ai_disclosure,
         input_marker=snapshot.publication_marker,
-        claims=assembly.claims,
+        claims=claims,
     )
 
 
 def _expand_edition_item(
+    index: int,
     item: EditionAssemblyItem,
     source: AnalysisItem,
-    claims: dict[str, AnalysisClaim],
-) -> AnalysisItem:
-    blocks = (
-        item.headline_block,
-        item.confirmed_change_block,
-        item.delta_from_before_block,
-        item.importance_block,
-        item.product_implication_block,
-        item.recommended_action_block,
-        item.counter_case_block,
-        item.watch_signal_block,
-    )
-    claim_ids = list(
-        dict.fromkeys(
-            claim_id for block in blocks if block is not None for claim_id in block.claim_ids
-        )
-    )
-    try:
-        item_claims = [claims[claim_id] for claim_id in claim_ids]
-    except KeyError as error:
-        raise ValueError(f"edition block referenced unknown claim {error.args[0]}") from error
+) -> tuple[AnalysisItem, list[AnalysisClaim]]:
+    base = f"items[{index}]"
+    values = {
+        "headline_block": item.headline,
+        "confirmed_change_block": item.confirmed_change,
+        "importance_block": item.importance,
+        "product_implication_block": item.product_implication,
+        "recommended_action_block": item.recommended_action,
+        "counter_case_block": item.counter_case,
+        "watch_signal_block": item.watch_signal,
+    }
+    expanded = {
+        name: _expand_assembly_text(value, f"{base}.{name}") if value is not None else None
+        for name, value in values.items()
+    }
+    item_claims = [claim for value in expanded.values() if value for _, claim in [value]]
     used_evidence = {
         evidence_id for claim in item_claims for evidence_id in claim.current_evidence_ids
     }
     used_memories = {
         memory_id for claim in item_claims for memory_id in claim.experience_memory_ids
     }
-    return AnalysisItem(
+    result = AnalysisItem(
         event_id=item.event_id,
         grade=source.grade,
-        headline_block=item.headline_block,
-        confirmed_change_block=item.confirmed_change_block,
-        delta_from_before_block=item.delta_from_before_block,
-        importance_block=item.importance_block,
-        product_implication_block=item.product_implication_block,
-        recommended_action_block=item.recommended_action_block,
-        counter_case_block=item.counter_case_block,
-        watch_signal_block=item.watch_signal_block,
+        headline_block=_required_block(expanded, "headline_block"),
+        confirmed_change_block=_required_block(expanded, "confirmed_change_block"),
+        importance_block=_required_block(expanded, "importance_block"),
+        product_implication_block=_required_block(expanded, "product_implication_block"),
+        recommended_action_block=(
+            expanded["recommended_action_block"][0]
+            if expanded["recommended_action_block"]
+            else None
+        ),
+        counter_case_block=_required_block(expanded, "counter_case_block"),
+        watch_signal_block=_required_block(expanded, "watch_signal_block"),
         claims=item_claims,
         evidence_ids=[item for item in source.evidence_ids if item in used_evidence],
         memory_ids=[item for item in source.memory_ids if item in used_memories],
         analysis_confidence=source.analysis_confidence,
     )
+    return result, item_claims
+
+
+def _required_block(
+    expanded: dict[str, tuple[PublicTextBlock, AnalysisClaim] | None], name: str
+) -> PublicTextBlock:
+    value = expanded[name]
+    if value is None:
+        raise ValueError(f"edition omitted required block {name}")
+    return value[0]
+
+
+def _expand_assembly_text(
+    value: AssemblyText, field_path: str
+) -> tuple[PublicTextBlock, AnalysisClaim]:
+    slug = re.sub(r"[^a-z0-9]+", "-", field_path.lower()).strip("-")
+    source_lists: dict[str, list[str]] = {
+        "current_evidence_ids": [],
+        "baseline_evidence_ids": [],
+        "experience_memory_ids": [],
+    }
+    source_field = {
+        "current_evidence": "current_evidence_ids",
+        "baseline_evidence": "baseline_evidence_ids",
+        "experience_memory": "experience_memory_ids",
+    }[value.source_kind]
+    source_lists[source_field] = [value.source_id]
+    quotes = (
+        [ClaimQuote(source_kind=value.source_kind, source_id=value.source_id, quote=value.quote)]
+        if value.quote is not None
+        else []
+    )
+    claim = AnalysisClaim(
+        claim_id=f"claim-{slug}",
+        field_path=field_path,
+        text=value.text,
+        claim_type=value.claim_type,
+        quotes=quotes,
+        **source_lists,
+    )
+    block = PublicTextBlock(
+        block_id=f"block-{slug}",
+        block_type=field_path.rsplit(".", 1)[-1],
+        text=value.text,
+        claim_ids=[claim.claim_id],
+    )
+    return block, claim
 
 
 def _critic_instructions(round_number: int, digest: str) -> str:

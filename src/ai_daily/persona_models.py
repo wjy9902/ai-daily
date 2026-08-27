@@ -255,28 +255,41 @@ class AnalystOutput(StrictModel):
     item: AnalysisItem
 
 
+class AssemblyText(StrictModel):
+    text: str = Field(min_length=1, max_length=800)
+    claim_type: Literal[
+        "current_fact",
+        "baseline_fact",
+        "experience_fact",
+        "inference",
+        "recommendation",
+        "uncertainty",
+    ]
+    source_kind: Literal["current_evidence", "baseline_evidence", "experience_memory"]
+    source_id: str = Field(min_length=1)
+    quote: str | None = Field(default=None, min_length=12, max_length=1000)
+
+
 class EditionAssemblyItem(StrictModel):
     event_id: str
-    headline_block: PublicTextBlock
-    confirmed_change_block: PublicTextBlock
-    delta_from_before_block: PublicTextBlock | None = None
-    importance_block: PublicTextBlock
-    product_implication_block: PublicTextBlock
-    recommended_action_block: PublicTextBlock | None = None
-    counter_case_block: PublicTextBlock
-    watch_signal_block: PublicTextBlock
+    headline: AssemblyText
+    confirmed_change: AssemblyText
+    importance: AssemblyText
+    product_implication: AssemblyText
+    recommended_action: AssemblyText | None = None
+    counter_case: AssemblyText
+    watch_signal: AssemblyText
 
 
 class EditionAssembly(StrictModel):
     """Compact model output expanded into an EditionDraft at the trust boundary."""
 
     schema_version: Literal[1] = SCHEMA_VERSION
-    title_block: PublicTextBlock
-    digest_block: PublicTextBlock
-    thesis_block: PublicTextBlock
+    title: AssemblyText
+    digest: AssemblyText
+    thesis: AssemblyText
     items: list[EditionAssemblyItem] = Field(max_length=5)
-    watchlist_blocks: list[PublicTextBlock] = Field(max_length=2)
-    claims: list[AnalysisClaim] = Field(min_length=1)
+    watchlist: list[AssemblyText] = Field(max_length=2)
 
 
 class EditionDraft(StrictModel):
