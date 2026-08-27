@@ -8,10 +8,9 @@ memory_limit: 16
 # Two-way concurrency leaves token and cost reservation headroom for a same-day
 # retry while preserving every selected analysis.
 analyst_concurrency: 2
-# Minimum per-call reservation. The gateway raises this to the endpoint's
-# prompt/token price ceiling when that is higher, while the daily ¥5 cap remains
-# absolute. ¥1 leaves room for three analysts after a charged failed attempt.
-max_call_cost_cny: 1.0
+# Minimum per-call reservation. The gateway raises this to the prompt/token
+# price ceiling (about ¥0.6-1.0 for current calls), while the ¥5 cap is absolute.
+max_call_cost_cny: 0.25
 baseline_window_days: 90
 evidence_retention_days: 120
 standard_min_chars: 700
