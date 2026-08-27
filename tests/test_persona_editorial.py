@@ -29,6 +29,7 @@ from ai_daily.persona_models import (
     FinalizerOutput,
     FinalizerResolution,
     OperationReceipt,
+    PersonaContext,
     PersonaEdition,
     PersonaPlan,
     PlanSelection,
@@ -42,6 +43,7 @@ from ai_daily.persona_pipeline import (
     PersonaPipeline,
     _analyst_event_row,
     _json_prompt,
+    _normalize_plan,
     _validate_critique,
     _validate_finalizer_changes,
 )
@@ -196,6 +198,45 @@ def test_analyst_prompt_drops_nested_raw_items_and_stays_bounded() -> None:
 
     assert "items" not in row["event"]
     assert len(prompt) <= 10_000
+
+
+def test_plan_normalization_completes_only_the_omitted_audit_inventory() -> None:
+    candidate_ids = ["event-0", "event-1", "event-2"]
+    context = PersonaContext(
+        target_date=TARGET,
+        upstream_marker="a" * 64,
+        constitution_sha256="b" * 64,
+        candidate_event_ids=candidate_ids,
+        retrieved_memories=[],
+    )
+    rows = [
+        {
+            "event": {"event_id": event_id},
+            "evidence": {"evidence": [{"evidence_id": f"{event_id}-1"}]},
+        }
+        for event_id in candidate_ids
+    ]
+    plan = PersonaPlan(
+        edition_type="standard",
+        today_thesis="这项变化值得 AI 产品团队今天处理。",
+        selections=[
+            PlanSelection(
+                event_id="event-0",
+                grade="S",
+                importance_reason="这项变化影响 AI 产品决策。",
+                evidence_ids=["event-0-1"],
+            )
+        ],
+        watchlist_event_ids=["event-1"],
+        omitted=[],
+    )
+
+    normalized = _normalize_plan(plan, context, rows)
+
+    assert normalized.selections == plan.selections
+    assert normalized.watchlist_event_ids == plan.watchlist_event_ids
+    assert [item.event_id for item in normalized.omitted] == ["event-2"]
+    assert normalized.omitted[0].reason == "capacity"
 
 
 @pytest.mark.asyncio
