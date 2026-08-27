@@ -24,6 +24,31 @@ COLLECTIVE_VOICE_REPLACEMENTS = {
     "我们": "产品团队",
     "咱们": "产品团队",
 }
+GENERIC_READER_VOICE_REPLACEMENTS = {
+    "在我看来，": "",
+    "在我看来": "",
+    "我的判断是": "",
+    "我的建议是": "",
+    "我为什么认为": "为什么",
+    "我认为": "",
+    "我觉得": "",
+    "我判断": "",
+    "我建议": "",
+    "帮助我": "帮助用户",
+    "帮我": "帮助用户",
+    "助我": "帮助用户",
+    "替我": "替用户",
+    "让我": "让用户",
+    "给我": "给用户",
+    "对我": "对用户",
+    "于我": "于用户",
+}
+GENERIC_READER_VOICE_RE = re.compile(
+    "|".join(
+        re.escape(value)
+        for value in sorted(GENERIC_READER_VOICE_REPLACEMENTS, key=len, reverse=True)
+    )
+)
 COLLECTIVE_VOICE_PATTERN = "|".join(
     re.escape(value) for value in sorted(COLLECTIVE_VOICE_REPLACEMENTS, key=len, reverse=True)
 )
@@ -90,7 +115,10 @@ def verify_edition(
         if _contains_first_person(block.text) and not _first_person_allowed(
             block, claims, scope.memories
         ):
-            raise ValueError(f"unapproved first-person voice at {path}")
+            raise ValueError(
+                f"unapproved first-person voice at {path}; remove 我/我的/本人/"
+                "我们/咱们 unless every claim is an approved experience_fact"
+            )
     _verify_claim_inventory(blocks, claims)
     _verify_item_sources(draft, claims, current_by_event, scope)
     for claim in claims.values():
@@ -164,7 +192,7 @@ def normalize_edition_draft(
                 raise ValueError(f"unknown claim id at {path}: {claim_id}") from error
             text = claim.text
             if claim.claim_type in INTERPRETIVE_PREFIX:
-                text = _neutralize_collective_voice(text)
+                text = _neutralize_generic_voice(_neutralize_collective_voice(text))
                 prefix = INTERPRETIVE_PREFIX[claim.claim_type]
                 if not text.startswith(prefix):
                     text = prefix + text
@@ -178,6 +206,12 @@ def normalize_edition_draft(
 def _neutralize_collective_voice(text: str) -> str:
     return COLLECTIVE_VOICE_RE.sub(
         lambda match: COLLECTIVE_VOICE_REPLACEMENTS[match.group(0)], text
+    )
+
+
+def _neutralize_generic_voice(text: str) -> str:
+    return GENERIC_READER_VOICE_RE.sub(
+        lambda match: GENERIC_READER_VOICE_REPLACEMENTS[match.group(0)], text
     )
 
 
