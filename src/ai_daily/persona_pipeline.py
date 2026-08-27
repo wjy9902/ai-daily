@@ -58,7 +58,10 @@ from ai_daily.site_publisher import SiteLayout, publication_lock
 
 PLANNER_PROMPT_LIMIT = 45_000
 ANALYST_PROMPT_LIMIT = 10_000
-CRITIC_PROMPT_LIMIT = 20_000
+# Critic and finalizer prompts carry the verified edition's duplicated per-item
+# and root claim inventories. The public body remains tightly capped, but its
+# provenance serialization is larger than the visible article.
+CRITIC_PROMPT_LIMIT = 60_000
 
 
 class PersonaPipeline:
