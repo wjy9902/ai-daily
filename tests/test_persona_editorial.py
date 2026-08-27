@@ -47,6 +47,7 @@ from ai_daily.persona_models import (
 from ai_daily.persona_pipeline import (
     PersonaPipeline,
     _analyst_event_row,
+    _compact_edition_assembly,
     _json_prompt,
     _memory_context_sha256,
     _normalize_plan,
@@ -2130,6 +2131,34 @@ def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
         ],
         watchlist=[compact(block) for block in draft.watchlist_blocks],
     )
+
+
+def test_compact_edition_preserves_facts_and_enforces_body_budget() -> None:
+    draft = _standard_draft("a" * 64)
+    assembly = _assembly_from_draft(draft)
+
+    compact = _compact_edition_assembly(assembly, draft.items, 900)
+
+    assert [item.confirmed_change for item in compact.items] == [
+        item.confirmed_change for item in assembly.items
+    ]
+    body = [
+        compact.thesis,
+        *(
+            value
+            for item in compact.items
+            for value in (
+                item.headline,
+                item.confirmed_change,
+                item.importance,
+                item.product_implication,
+                item.counter_case,
+                item.watch_signal,
+            )
+        ),
+        *compact.watchlist,
+    ]
+    assert sum(len(value.text) for value in body) <= 900
 
 
 class _FakeGateway:
