@@ -68,7 +68,7 @@ def test_persona_recovery_request_budget_stays_within_schema_ceiling() -> None:
     config = load_config(Path("config"))
 
     assert config.persona is not None
-    assert config.persona.budget.request_limit == 120
+    assert config.persona.budget.request_limit == 140
 
 
 def test_huggingface_model_source_requires_namespace() -> None:
