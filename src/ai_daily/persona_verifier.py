@@ -188,8 +188,21 @@ def normalize_edition_draft(
     claims = _claim_map(draft.claims)
     normalized: dict[str, AnalysisClaim] = {}
     block_updates: dict[str, PublicTextBlock] = {}
+    dropped_claim_ids: set[str] = set()
     for path, block in _blocks(draft):
-        for claim_id in block.claim_ids:
+        claim_ids = block.claim_ids
+        unknown_claim_ids = set(claim_ids) - set(claims)
+        if unknown_claim_ids:
+            unknown = sorted(unknown_claim_ids)[0]
+            raise ValueError(f"unknown claim id at {path}: {unknown}")
+        if path.endswith(".confirmed_change_block"):
+            claim_ids = [
+                claim_id for claim_id in claim_ids if claims[claim_id].claim_type == "current_fact"
+            ]
+            if not claim_ids:
+                raise ValueError(f"confirmed change has no current facts at {path}")
+            dropped_claim_ids.update(set(block.claim_ids) - set(claim_ids))
+        for claim_id in claim_ids:
             try:
                 claim = claims[claim_id]
             except KeyError as error:
@@ -202,9 +215,16 @@ def normalize_edition_draft(
                     text = prefix + text
             normalized[claim_id] = claim.model_copy(update={"text": text})
         block_updates[path] = block.model_copy(
-            update={"text": "".join(normalized[item].text for item in block.claim_ids)}
+            update={
+                "claim_ids": claim_ids,
+                "text": "".join(normalized[item].text for item in claim_ids),
+            }
         )
-    return _rebuild_edition(draft, normalized, block_updates)
+    referenced_claim_ids = {
+        claim_id for block in block_updates.values() for claim_id in block.claim_ids
+    }
+    prunable_claim_ids = dropped_claim_ids - referenced_claim_ids
+    return _rebuild_edition(draft, normalized, block_updates, prunable_claim_ids)
 
 
 def _neutralize_collective_voice(text: str) -> str:
@@ -246,11 +266,15 @@ def _rebuild_edition(
     draft: EditionDraft,
     claims: dict[str, AnalysisClaim],
     blocks: dict[str, PublicTextBlock],
+    prunable_claim_ids: set[str] | None = None,
 ) -> EditionDraft:
+    prunable = prunable_claim_ids or set()
     items: list[AnalysisItem] = []
     for index, item in enumerate(draft.items):
         try:
-            item_claims = [claims[claim.claim_id] for claim in item.claims]
+            item_claims = [
+                claims[claim.claim_id] for claim in item.claims if claim.claim_id not in prunable
+            ]
         except KeyError as error:
             raise ValueError(
                 f"item {item.event_id} referenced unknown claim {error.args[0]}"
@@ -261,7 +285,9 @@ def _rebuild_edition(
                 updates[name] = blocks[f"items[{index}].{name}"]
         items.append(item.model_copy(update=updates))
     try:
-        draft_claims = [claims[claim.claim_id] for claim in draft.claims]
+        draft_claims = [
+            claims[claim.claim_id] for claim in draft.claims if claim.claim_id not in prunable
+        ]
     except KeyError as error:
         raise ValueError(f"unreferenced edition claim {error.args[0]}") from error
     return draft.model_copy(

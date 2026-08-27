@@ -809,6 +809,40 @@ def test_editor_neutralizes_generic_reader_voice(voice: str, neutral: str) -> No
     assert normalized.title_block.text == f"判断：{neutral}。"
 
 
+def test_editor_removes_interpretation_from_confirmed_change_block() -> None:
+    draft = _standard_draft("a" * 64)
+    item = draft.items[0]
+    current_id = item.confirmed_change_block.claim_ids[0]
+    misplaced = item.claims[0].model_copy(
+        update={
+            "claim_id": "claim-misplaced-inference",
+            "field_path": "items[0].confirmed_change_block",
+        }
+    )
+    confirmed = item.confirmed_change_block.model_copy(
+        update={
+            "claim_ids": [current_id, misplaced.claim_id],
+            "text": item.confirmed_change_block.text + misplaced.text,
+        }
+    )
+    bad_item = item.model_copy(
+        update={"confirmed_change_block": confirmed, "claims": [*item.claims, misplaced]}
+    )
+    candidate = draft.model_copy(
+        update={
+            "items": [bad_item, *draft.items[1:]],
+            "claims": [*draft.claims, misplaced],
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    assert normalized.items[0].confirmed_change_block.claim_ids == [current_id]
+    assert normalized.items[0].confirmed_change_block.text == item.confirmed_change_block.text
+    assert misplaced.claim_id not in {claim.claim_id for claim in normalized.items[0].claims}
+    assert misplaced.claim_id not in {claim.claim_id for claim in normalized.claims}
+
+
 @pytest.mark.parametrize("voice", ["帮助我更快完成工作", "有利于我判断", "助我验证"])
 def test_verifier_rejects_first_person_after_common_prefixes(
     voice: str,
