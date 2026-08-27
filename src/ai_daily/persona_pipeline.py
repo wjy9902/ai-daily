@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ai_daily.artifacts import write_artifact
 from ai_daily.budget import BudgetLedger, BudgetStage
@@ -682,13 +682,14 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
         "你是版面编辑，只可重组输入分析，不得增加外部事实。"
         "输入分析已逐条通过证据校验。可删减或压缩判断，但事实 claim 若保留，"
         "text 必须原样等于 quote，不得改写事实原文。"
-        "程序会为每个输出字段生成一个 claim 和 block；你只输出文字、claim_type、"
+        "程序会为每个输出字段生成一个 claim 和 block；你只输出文字、"
         "一个 source_kind/source_id，以及事实 claim 必需的原文 quote。"
         "所有推论、建议和不确定性必须保留“判断：”“建议：”“不确定性：”前缀。"
         "标题、摘要、主旨、观察清单也必须引用一个输入来源。"
         f"standard 正文长度(不含标题摘要)须为 {minimum}-{maximum} 个字符。"
         "输出必须紧凑；recommended_action 仅在必要时保留；"
-        "事实 claim 的 text 必须与 quote 完全相同。"
+        "confirmed_change 固定是 current_fact，必须引用 current_evidence，"
+        "且 text 必须与 quote 完全相同；其他字段不得当作事实原句输出。"
         "任何 text 和 quote 都不得含“我、我的、本人、我们、咱们”；"
         "confirmed_change 必须从同一分析中选择不含这些词的 current_fact 原句，"
         "不得选择企业以第一人称发布的原文。"
@@ -831,7 +832,7 @@ def _expand_assembly_text(
         claim_id=f"claim-{slug}",
         field_path=field_path,
         text=value.text,
-        claim_type=value.claim_type,
+        claim_type=_assembly_claim_type(field_path),
         quotes=quotes,
         **source_lists,
     )
@@ -842,6 +843,18 @@ def _expand_assembly_text(
         claim_ids=[claim.claim_id],
     )
     return block, claim
+
+
+def _assembly_claim_type(
+    field_path: str,
+) -> Literal["current_fact", "recommendation", "uncertainty", "inference"]:
+    if field_path.endswith("confirmed_change_block"):
+        return "current_fact"
+    if field_path.endswith("recommended_action_block"):
+        return "recommendation"
+    if field_path.endswith("watch_signal_block") or field_path.startswith("watchlist_blocks["):
+        return "uncertainty"
+    return "inference"
 
 
 def _critic_instructions(round_number: int, digest: str) -> str:

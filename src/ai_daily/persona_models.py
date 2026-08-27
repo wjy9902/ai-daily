@@ -257,14 +257,6 @@ class AnalystOutput(StrictModel):
 
 class AssemblyText(StrictModel):
     text: str = Field(min_length=1, max_length=800)
-    claim_type: Literal[
-        "current_fact",
-        "baseline_fact",
-        "experience_fact",
-        "inference",
-        "recommendation",
-        "uncertainty",
-    ]
     source_kind: Literal["current_evidence", "baseline_evidence", "experience_memory"]
     source_id: str = Field(min_length=1)
     quote: str | None = Field(default=None, min_length=12, max_length=1000)
