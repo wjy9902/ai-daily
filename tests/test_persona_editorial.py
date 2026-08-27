@@ -52,7 +52,12 @@ from ai_daily.persona_snapshot import (
     load_upstream_snapshot,
     persist_upstream_snapshot,
 )
-from ai_daily.persona_verifier import VerificationScope, verify_analysis_item, verify_edition
+from ai_daily.persona_verifier import (
+    VerificationScope,
+    normalize_analysis_item,
+    verify_analysis_item,
+    verify_edition,
+)
 from ai_daily.persona_wechat import (
     PublicationSlots,
     WechatAPIError,
@@ -629,6 +634,13 @@ def test_analyst_result_is_evidence_verified_before_editing(tmp_path: Path) -> N
     bad_path = item.model_copy(update={"claims": [wrong_path, *item.claims[1:]]})
     with pytest.raises(ValueError, match="field_path mismatch"):
         verify_analysis_item(bad_path, snapshot, _scope())
+
+    normalized = normalize_analysis_item(
+        bad_path.model_copy(update={"claims": [wrong_path, *bad.claims[1:]]})
+    )
+    verify_analysis_item(normalized, snapshot, _scope())
+    assert normalized.claims[1].text == normalized.claims[1].quotes[0].quote
+    assert normalized.claims[0].field_path == "items[0].headline_block"
 
 
 def test_verifier_rejects_fabricated_fact_labeled_as_inference(tmp_path: Path) -> None:

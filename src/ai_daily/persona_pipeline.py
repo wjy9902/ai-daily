@@ -36,7 +36,12 @@ from ai_daily.persona_models import (
 )
 from ai_daily.persona_render import render_persona
 from ai_daily.persona_snapshot import load_upstream_snapshot
-from ai_daily.persona_verifier import VerificationScope, verify_analysis_item, verify_edition
+from ai_daily.persona_verifier import (
+    VerificationScope,
+    normalize_analysis_item,
+    verify_analysis_item,
+    verify_edition,
+)
 from ai_daily.publication import PublicationLevel
 from ai_daily.site_publisher import SiteLayout, publication_lock
 
@@ -590,8 +595,8 @@ def _validate_analysis(
     selection: PlanSelection,
     snapshot: Any,
     scope: VerificationScope,
-) -> None:
-    item = output.item
+) -> AnalystOutput:
+    item = normalize_analysis_item(output.item)
     if item.event_id != selection.event_id or item.grade != selection.grade:
         raise ValueError("analyst output does not match selection")
     if not set(item.evidence_ids) <= set(selection.evidence_ids):
@@ -599,6 +604,7 @@ def _validate_analysis(
     if not set(item.memory_ids) <= set(selection.memory_ids):
         raise ValueError("analyst output added memory")
     verify_analysis_item(item, snapshot, scope)
+    return output.model_copy(update={"item": item})
 
 
 def _validate_draft_identity(

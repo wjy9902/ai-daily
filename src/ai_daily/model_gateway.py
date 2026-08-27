@@ -91,7 +91,7 @@ class ModelGateway:
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
-        validator: Callable[[OutputT], None] | None = None,
+        validator: Callable[[OutputT], OutputT | None] | None = None,
         stage: BudgetStage = BudgetStage.JUDGE,
     ) -> OutputT:
         role_config = self.config.roles[role]
@@ -122,7 +122,7 @@ class ModelGateway:
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
-        validator: Callable[[OutputT], None] | None,
+        validator: Callable[[OutputT], OutputT | None] | None,
         stage: BudgetStage,
     ) -> OutputT:
         async with self._concurrency:
@@ -141,7 +141,7 @@ class ModelGateway:
         output_type: type[OutputT],
         instructions: str,
         prompt: str,
-        validator: Callable[[OutputT], None] | None,
+        validator: Callable[[OutputT], OutputT | None] | None,
         stage: BudgetStage,
     ) -> OutputT:
         started = self.clock()
@@ -295,17 +295,17 @@ class ModelGateway:
 
     @staticmethod
     def _semantic_validator(
-        validator: Callable[[OutputT], None],
+        validator: Callable[[OutputT], OutputT | None],
         errors: list[str],
     ) -> Callable[[OutputT], OutputT]:
         def validate(output: OutputT) -> OutputT:
             try:
-                validator(output)
+                normalized = validator(output)
             except ValueError as error:
                 message = str(error).replace("\n", " ").strip()[:300]
                 errors.append(message)
                 raise ModelRetry(message) from error
-            return output
+            return normalized if normalized is not None else output
 
         return validate
 

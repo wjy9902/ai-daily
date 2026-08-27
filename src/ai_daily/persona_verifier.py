@@ -27,6 +27,16 @@ INTERPRETIVE_PREFIX = {
     "uncertainty": "不确定性：",
 }
 ANCHOR_RE = re.compile(r"(?<![A-Za-z0-9])(?:[A-Za-z][A-Za-z0-9._-]{2,}|\d[\d.]*%?)")
+ANALYSIS_BLOCK_NAMES = (
+    "headline_block",
+    "confirmed_change_block",
+    "delta_from_before_block",
+    "importance_block",
+    "product_implication_block",
+    "recommended_action_block",
+    "counter_case_block",
+    "watch_signal_block",
+)
 
 
 @dataclass(frozen=True)
@@ -122,18 +132,37 @@ def verify_analysis_item(
             raise ValueError(f"item {item.event_id} delta lacks current or baseline evidence")
 
 
+def normalize_analysis_item(item: AnalysisItem) -> AnalysisItem:
+    """Canonicalize evidence-bound structure without rewriting model judgments."""
+    path_by_claim: dict[str, str] = {}
+    for path, block in _analysis_blocks(item):
+        for claim_id in block.claim_ids:
+            previous = path_by_claim.setdefault(claim_id, path)
+            if previous != path:
+                raise ValueError(f"claim {claim_id} is reused across public blocks")
+
+    claims: list[AnalysisClaim] = []
+    for claim in item.claims:
+        claim_updates: dict[str, str] = {}
+        if claim.claim_id in path_by_claim:
+            claim_updates["field_path"] = path_by_claim[claim.claim_id]
+        if claim.claim_type in {"current_fact", "baseline_fact", "experience_fact"}:
+            claim_updates["text"] = "；".join(quote.quote for quote in claim.quotes)
+        claims.append(claim.model_copy(update=claim_updates))
+
+    claims_by_id = {claim.claim_id: claim for claim in claims}
+    item_updates: dict[str, object] = {"claims": claims}
+    for name in ANALYSIS_BLOCK_NAMES:
+        block = getattr(item, name)
+        if block is None:
+            continue
+        text = "".join(claims_by_id[claim_id].text for claim_id in block.claim_ids)
+        item_updates[name] = block.model_copy(update={"text": text})
+    return item.model_copy(update=item_updates)
+
+
 def _analysis_blocks(item: AnalysisItem) -> Iterable[tuple[str, PublicTextBlock]]:
-    names = (
-        "headline_block",
-        "confirmed_change_block",
-        "delta_from_before_block",
-        "importance_block",
-        "product_implication_block",
-        "recommended_action_block",
-        "counter_case_block",
-        "watch_signal_block",
-    )
-    for name in names:
+    for name in ANALYSIS_BLOCK_NAMES:
         block = getattr(item, name)
         if block is not None:
             yield f"items[0].{name}", block
