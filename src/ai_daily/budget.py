@@ -51,6 +51,12 @@ STAGE_SHARE: dict[BudgetStage, float] = {
     # Persona uses a separate ledger and owns its full configured allowance.
     BudgetStage.PERSONA: 1.0,
 }
+RESERVATION_COST_TOLERANCE = 1e-6
+
+
+def _subtract_reserved_cost(total: float, amount: float) -> float:
+    remainder = total - amount
+    return 0.0 if remainder <= RESERVATION_COST_TOLERANCE else remainder
 
 
 def _empty_stage_ints() -> dict[str, int]:
@@ -124,17 +130,15 @@ class BudgetLedger:
             "requests": self.requests,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
-            "cost_cny": round(self.cost_cny, 6),
+            "cost_cny": self.cost_cny,
             "stage_requests": dict(self.stage_requests),
-            "stage_cost": {key: round(value, 6) for key, value in self.stage_cost.items()},
+            "stage_cost": dict(self.stage_cost),
             "reserved_requests": self.reserved_requests,
             "reserved_input_tokens": self.reserved_input_tokens,
             "reserved_output_tokens": self.reserved_output_tokens,
-            "reserved_cost_cny": round(self.reserved_cost_cny, 6),
+            "reserved_cost_cny": self.reserved_cost_cny,
             "stage_reserved_requests": dict(self.stage_reserved_requests),
-            "stage_reserved_cost": {
-                key: round(value, 6) for key, value in self.stage_reserved_cost.items()
-            },
+            "stage_reserved_cost": dict(self.stage_reserved_cost),
             "runs_today": self.runs_today,
         }
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -281,7 +285,8 @@ class BudgetLedger:
         with self._transaction():
             if (
                 requests > self.stage_reserved_requests[stage.value]
-                or cost_cny > self.stage_reserved_cost[stage.value] + 1e-9
+                or cost_cny
+                > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
                 or input_tokens > self.reserved_input_tokens
                 or output_tokens > self.reserved_output_tokens
             ):
@@ -289,9 +294,13 @@ class BudgetLedger:
             self.reserved_requests -= requests
             self.reserved_input_tokens -= input_tokens
             self.reserved_output_tokens -= output_tokens
-            self.reserved_cost_cny -= cost_cny
+            self.reserved_cost_cny = _subtract_reserved_cost(
+                self.reserved_cost_cny, cost_cny
+            )
             self.stage_reserved_requests[stage.value] -= requests
-            self.stage_reserved_cost[stage.value] -= cost_cny
+            self.stage_reserved_cost[stage.value] = _subtract_reserved_cost(
+                self.stage_reserved_cost[stage.value], cost_cny
+            )
 
     def settle_reservation(
         self,
@@ -306,7 +315,8 @@ class BudgetLedger:
         with self._transaction():
             if (
                 requests > self.stage_reserved_requests[stage.value]
-                or cost_cny > self.stage_reserved_cost[stage.value] + 1e-9
+                or cost_cny
+                > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
                 or input_tokens > self.reserved_input_tokens
                 or output_tokens > self.reserved_output_tokens
             ):
@@ -314,9 +324,13 @@ class BudgetLedger:
             self.reserved_requests -= requests
             self.reserved_input_tokens -= input_tokens
             self.reserved_output_tokens -= output_tokens
-            self.reserved_cost_cny -= cost_cny
+            self.reserved_cost_cny = _subtract_reserved_cost(
+                self.reserved_cost_cny, cost_cny
+            )
             self.stage_reserved_requests[stage.value] -= requests
-            self.stage_reserved_cost[stage.value] -= cost_cny
+            self.stage_reserved_cost[stage.value] = _subtract_reserved_cost(
+                self.stage_reserved_cost[stage.value], cost_cny
+            )
             self.requests += actual_requests
             self.input_tokens += run.input_tokens
             self.output_tokens += run.output_tokens

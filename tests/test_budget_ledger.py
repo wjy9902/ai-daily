@@ -206,6 +206,46 @@ def test_stale_ledger_instances_cannot_overwrite_each_others_reservations(
     assert persisted.reserved_output_tokens == 50
 
 
+def test_persisted_fractional_reservations_settle_without_rounding_drift(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    config = factories.budget_config(request_limit=20, cost_cny_limit=5)
+    ledger = _ledger(store, config)
+    first_cost = 0.6272326
+    second_cost = 0.6206486
+    for cost in (first_cost, second_cost):
+        ledger.reserve(
+            BudgetStage.PERSONA,
+            2,
+            cost,
+            input_tokens=100,
+            output_tokens=50,
+        )
+
+    ledger.settle_reservation(
+        BudgetStage.PERSONA,
+        2,
+        first_cost,
+        100,
+        50,
+        _run(0.1),
+    )
+    ledger.settle_reservation(
+        BudgetStage.PERSONA,
+        2,
+        second_cost,
+        100,
+        50,
+        _run(0.1),
+    )
+
+    persisted = _ledger(store, config)
+    assert persisted.reserved_requests == 0
+    assert persisted.reserved_cost_cny == 0
+    assert persisted.stage_reserved_cost[BudgetStage.PERSONA.value] == 0
+
+
 def test_next_run_conservatively_charges_orphaned_reservations(
     tmp_path: Path,
 ) -> None:
