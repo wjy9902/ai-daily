@@ -757,7 +757,7 @@ def test_editor_normalization_adds_missing_interpretive_label(
     assert normalized.claims[0].text == expected
 
 
-@pytest.mark.parametrize("voice", ["我的判断", "本人建议", "我亲自测试过"])
+@pytest.mark.parametrize("voice", ["我亲自测试过", "我用过这个产品", "本人亲测有效"])
 def test_editor_does_not_rewrite_unsupported_personal_experience(
     voice: str,
     tmp_path: Path,
@@ -783,6 +783,30 @@ def test_editor_does_not_rewrite_unsupported_personal_experience(
         verify_edition(normalized, snapshot, _scope(), config)
 
 
+@pytest.mark.parametrize(
+    ("voice", "neutral"),
+    [
+        ("在我看来，需要继续验证", "需要继续验证"),
+        ("我认为需要继续验证", "需要继续验证"),
+        ("这项工具帮助我更快完成工作", "这项工具帮助用户更快完成工作"),
+        ("这项工具有利于我完成工作", "这项工具有利于用户完成工作"),
+    ],
+)
+def test_editor_neutralizes_generic_reader_voice(voice: str, neutral: str) -> None:
+    draft = _edition_draft("a" * 64)
+    claim = draft.claims[0].model_copy(update={"text": f"判断：{voice}。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [claim, *draft.claims[1:]],
+            "title_block": draft.title_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    assert normalized.title_block.text == f"判断：{neutral}。"
+
+
 @pytest.mark.parametrize("voice", ["帮助我更快完成工作", "有利于我判断", "助我验证"])
 def test_verifier_rejects_first_person_after_common_prefixes(
     voice: str,
@@ -802,10 +826,13 @@ def test_verifier_rejects_first_person_after_common_prefixes(
         }
     )
 
+    with pytest.raises(ValueError, match="first-person"):
+        verify_edition(candidate, snapshot, _scope(), config)
+
     normalized = normalize_edition_draft(candidate, _scope())
 
-    with pytest.raises(ValueError, match="first-person"):
-        verify_edition(normalized, snapshot, _scope(), config)
+    assert "我" not in normalized.title_block.text
+    verify_edition(normalized, snapshot, _scope(), config)
 
 
 @pytest.mark.parametrize("phrase", ["忘我投入", "无我协作", "自我检查"])
