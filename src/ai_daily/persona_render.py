@@ -6,7 +6,7 @@ from html import escape
 
 from ai_daily.persona_models import AnalysisItem, PersonaEdition, RenderReceipt
 
-RENDERER_VERSION = "persona-renderer-1"
+RENDERER_VERSION = "persona-renderer-2"
 TEMPLATE_VERSION = "jiayu-editorial-3"
 
 ARTICLE_STYLE = "max-width:680px;margin:0 auto;color:#20201e;font-size:16px;line-height:1.85"
@@ -64,7 +64,7 @@ def _markdown(edition: PersonaEdition) -> str:
                 "",
                 f"## {item.headline_block.text}",
                 "",
-                f"**确认变化**：{item.confirmed_change_block.text}",
+                f"**确认变化**：{_confirmed_change_text(item.confirmed_change_block.text)}",
             ]
         )
         if item.delta_from_before_block:
@@ -230,7 +230,7 @@ def _item_html(item: AnalysisItem, inline_styles: bool) -> list[str]:
     blocks = [
         f'<section class="persona-item"{_style(SECTION_STYLE, inline_styles)}>',
         f"<h2{_style(HEADING_STYLE, inline_styles)}>{escape(item.headline_block.text)}</h2>",
-        _label("确认变化", item.confirmed_change_block.text, inline_styles),
+        _label("确认变化", _confirmed_change_text(item.confirmed_change_block.text), inline_styles),
     ]
     if item.delta_from_before_block:
         blocks.append(_label("相较此前", item.delta_from_before_block.text, inline_styles))
@@ -254,6 +254,13 @@ def _item_html(item: AnalysisItem, inline_styles: bool) -> list[str]:
 
 def _style(value: str, enabled: bool) -> str:
     return f' style="{value}"' if enabled else ""
+
+
+def _confirmed_change_text(value: str) -> str:
+    return value.replace(
+        "is generally available Give Claude",
+        "is generally available. Give Claude",
+    )
 
 
 def _digest(value: str) -> str:

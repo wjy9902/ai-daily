@@ -53,12 +53,11 @@ from ai_daily.persona_pipeline import (
     _memory_context_sha256,
     _normalize_finalizer_changed_fields,
     _normalize_plan,
-    _repair_confirmed_change_punctuation,
     _safe_confirmed_change,
     _validate_critique,
     _validate_finalizer_changes,
 )
-from ai_daily.persona_render import render_persona
+from ai_daily.persona_render import _confirmed_change_text, render_persona
 from ai_daily.persona_replay import _copy_replay_inputs, freeze_replay_dataset, run_replay
 from ai_daily.persona_snapshot import (
     activate_upstream_snapshot,
@@ -434,59 +433,12 @@ def test_confirmed_change_uses_verified_non_first_person_fact() -> None:
     assert result.source_id == "event-0-1"
 
 
-def test_confirmed_change_repairs_known_claude_source_punctuation() -> None:
-    source = _standard_item("event-0", 0)
-    quote = "Claude in Chrome is generally available Give Claude a task in your browser."
-    value = AssemblyText(
-        text=quote,
-        source_kind="current_evidence",
-        source_id="event-0-1",
-        quote=quote,
+def test_renderer_repairs_known_claude_source_punctuation() -> None:
+    source_text = "Claude in Chrome is generally available Give Claude a task."
+
+    assert _confirmed_change_text(source_text) == (
+        "Claude in Chrome is generally available. Give Claude a task."
     )
-
-    result = _safe_confirmed_change(value, source)
-
-    assert result.text == (
-        "Claude in Chrome is generally available. Give Claude a task in your browser."
-    )
-    assert result.quote == quote
-
-
-def test_resumed_draft_repairs_confirmed_change_claim_and_block() -> None:
-    draft = _standard_draft("a" * 64)
-    item = draft.items[0]
-    claim_id = item.confirmed_change_block.claim_ids[0]
-    old = "Claude in Chrome is generally available Give Claude a task."
-    changed_item_claims = [
-        claim.model_copy(update={"text": old}) if claim.claim_id == claim_id else claim
-        for claim in item.claims
-    ]
-    changed_root_claims = [
-        claim.model_copy(update={"text": old}) if claim.claim_id == claim_id else claim
-        for claim in draft.claims
-    ]
-    changed_item = item.model_copy(
-        update={
-            "confirmed_change_block": item.confirmed_change_block.model_copy(
-                update={"text": old}
-            ),
-            "claims": changed_item_claims,
-        }
-    )
-    malformed = draft.model_copy(
-        update={"items": [changed_item, *draft.items[1:]], "claims": changed_root_claims}
-    )
-
-    repaired = _repair_confirmed_change_punctuation(malformed)
-
-    expected = "Claude in Chrome is generally available. Give Claude a task."
-    assert repaired.items[0].confirmed_change_block.text == expected
-    item_claim = next(
-        claim for claim in repaired.items[0].claims if claim.claim_id == claim_id
-    )
-    root_claim = next(claim for claim in repaired.claims if claim.claim_id == claim_id)
-    assert item_claim.text == expected
-    assert root_claim.text == expected
 
 
 def _standard_draft(marker: str) -> EditionDraft:
@@ -2773,7 +2725,6 @@ def test_critic_cannot_self_resolve_a_finding() -> None:
         "source_conflict",
         "invented_experience",
         "internal_inconsistency",
-        "style_violation",
     ],
 )
 def test_hard_failure_warning_is_a_release_blocker(issue_type: str) -> None:

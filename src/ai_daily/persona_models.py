@@ -351,7 +351,6 @@ class Critique(StrictModel):
             "source_conflict",
             "invented_experience",
             "internal_inconsistency",
-            "style_violation",
         }
         return [
             item

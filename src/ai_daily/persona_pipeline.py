@@ -184,9 +184,7 @@ class PersonaPipeline:
         draft = EditionDraft.model_validate_json(
             (source_run_dir / "draft.json").read_text(encoding="utf-8")
         )
-        normalized = _repair_confirmed_change_punctuation(
-            normalize_edition_draft(draft, scope)
-        )
+        normalized = normalize_edition_draft(draft, scope)
         _validate_draft_identity(
             normalized,
             snapshot,
@@ -951,14 +949,6 @@ def _compact_text(text: str, limit: int) -> str:
 
 
 def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
-    value = value.model_copy(
-        update={
-            "text": value.text.replace(
-                "is generally available Give Claude",
-                "is generally available. Give Claude",
-            )
-        }
-    )
     if not contains_first_person(value.text) and not (
         value.quote and contains_first_person(value.quote)
     ):
@@ -981,42 +971,6 @@ def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> Assembl
         source_id=claim.current_evidence_ids[0],
         quote=claim.quotes[0].quote,
     )
-
-
-def _repair_confirmed_change_punctuation(draft: EditionDraft) -> EditionDraft:
-    old = "is generally available Give Claude"
-    new = "is generally available. Give Claude"
-    changed_ids: set[str] = set()
-    items = []
-    for item in draft.items:
-        text = item.confirmed_change_block.text.replace(old, new)
-        if text == item.confirmed_change_block.text:
-            items.append(item)
-            continue
-        changed_ids.update(item.confirmed_change_block.claim_ids)
-        claims = [
-            claim.model_copy(update={"text": claim.text.replace(old, new)})
-            if claim.claim_id in changed_ids
-            else claim
-            for claim in item.claims
-        ]
-        items.append(
-            item.model_copy(
-                update={
-                    "confirmed_change_block": item.confirmed_change_block.model_copy(
-                        update={"text": text}
-                    ),
-                    "claims": claims,
-                }
-            )
-        )
-    claims = [
-        claim.model_copy(update={"text": claim.text.replace(old, new)})
-        if claim.claim_id in changed_ids
-        else claim
-        for claim in draft.claims
-    ]
-    return draft.model_copy(update={"items": items, "claims": claims})
 
 
 def _required_block(
