@@ -190,7 +190,11 @@ class ModelGateway:
             async with agent:
                 result = await agent.run(
                     prompt,
-                    model_settings=self._model_settings(invocation.endpoint, output_token_limit),
+                    model_settings=self._model_settings(
+                        invocation.endpoint,
+                        output_token_limit,
+                        invocation.role,
+                    ),
                     usage_limits=UsageLimits(
                         request_limit=request_limit,
                         input_tokens_limit=input_token_limit,
@@ -312,9 +316,15 @@ class ModelGateway:
 
     @staticmethod
     def _model_settings(
-        endpoint: ModelEndpoint, output_token_limit: int | None = None
+        endpoint: ModelEndpoint,
+        output_token_limit: int | None = None,
+        role: ModelRole | None = None,
     ) -> ModelSettings:
-        extra_body = {"enable_thinking": False} if endpoint.provider == "alibaba" else None
+        extra_body: dict[str, object] | None = None
+        if endpoint.provider == "alibaba":
+            extra_body = {"enable_thinking": False}
+        elif endpoint.provider == "deepseek" and role == "persona_edition_editor":
+            extra_body = {"thinking": {"type": "disabled"}}
         return ModelSettings(
             temperature=endpoint.temperature,
             max_tokens=min(

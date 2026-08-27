@@ -100,6 +100,17 @@ def test_only_alibaba_gets_the_thinking_mode_override() -> None:
             assert gateway._model_settings(endpoint)["extra_body"] is None
 
 
+def test_persona_edition_editor_disables_deepseek_thinking() -> None:
+    gateway = ModelGateway(load_config().models, Secrets())
+    endpoint = gateway.config.roles["persona_edition_editor"].primary
+
+    assert endpoint.provider == "deepseek"
+    assert gateway._model_settings(endpoint, role="persona_edition_editor")["extra_body"] == {
+        "thinking": {"type": "disabled"}
+    }
+    assert gateway._model_settings(endpoint, role="persona_critic")["extra_body"] is None
+
+
 async def test_provider_sdk_retries_are_disabled() -> None:
     secrets = Secrets(
         dashscope_api_key="test-key",
