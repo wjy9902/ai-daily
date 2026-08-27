@@ -198,6 +198,62 @@ def test_analyst_prompt_drops_nested_raw_items_and_stays_bounded() -> None:
     assert len(prompt) <= 10_000
 
 
+@pytest.mark.asyncio
+async def test_analysts_run_in_settled_batches(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = object.__new__(PersonaPipeline)
+    cast(Any, pipeline).persona = SimpleNamespace(analyst_concurrency=2)
+    selections = [
+        PlanSelection(
+            event_id=f"event-{index}",
+            grade="S" if index == 0 else "A",
+            importance_reason="important",
+            evidence_ids=[f"event-{index}-1"],
+        )
+        for index in range(5)
+    ]
+    plan = PersonaPlan(
+        edition_type="standard",
+        today_thesis="important changes",
+        selections=selections,
+        watchlist_event_ids=[],
+        omitted=[],
+    )
+    entered = {selection.event_id: asyncio.Event() for selection in selections}
+    releases = {selection.event_id: asyncio.Event() for selection in selections}
+
+    async def analyze_one(
+        snapshot: object,
+        selection: PlanSelection,
+        memories: dict[str, Any],
+        baseline: object,
+        scope: VerificationScope,
+    ) -> AnalysisItem:
+        entered[selection.event_id].set()
+        await releases[selection.event_id].wait()
+        return _standard_item(selection.event_id, 0)
+
+    monkeypatch.setattr(pipeline, "_analyze_one", analyze_one)
+    running = asyncio.create_task(
+        pipeline._analyze(None, plan, {}, {}, cast(VerificationScope, None))
+    )
+
+    await asyncio.gather(entered["event-0"].wait(), entered["event-1"].wait())
+    releases["event-0"].set()
+    await asyncio.sleep(0)
+    assert not entered["event-2"].is_set()
+    releases["event-1"].set()
+    await asyncio.gather(entered["event-2"].wait(), entered["event-3"].wait())
+    releases["event-2"].set()
+    await asyncio.sleep(0)
+    assert not entered["event-4"].is_set()
+    releases["event-3"].set()
+    await entered["event-4"].wait()
+    releases["event-4"].set()
+
+    results = await running
+    assert [item.event_id for item in results] == [selection.event_id for selection in selections]
+
+
 def _claim(claim_id: str, path: str, text: str) -> AnalysisClaim:
     return AnalysisClaim(
         claim_id=claim_id,

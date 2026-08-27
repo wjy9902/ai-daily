@@ -191,6 +191,20 @@ class PersonaPipeline:
         scope: VerificationScope,
     ) -> list[AnalysisItem]:
         selections = [item for item in plan.selections if item.grade in {"S", "A"}]
+        analyses: list[AnalysisItem] = []
+        for offset in range(0, len(selections), self.persona.analyst_concurrency):
+            batch = selections[offset : offset + self.persona.analyst_concurrency]
+            analyses.extend(await self._analyze_batch(snapshot, batch, memories, baselines, scope))
+        return analyses
+
+    async def _analyze_batch(
+        self,
+        snapshot: Any,
+        selections: list[PlanSelection],
+        memories: dict[str, Any],
+        baselines: dict[str, Any],
+        scope: VerificationScope,
+    ) -> list[AnalysisItem]:
         tasks = [
             asyncio.create_task(
                 self._analyze_one(
@@ -203,8 +217,6 @@ class PersonaPipeline:
             )
             for selection in selections
         ]
-        if not tasks:
-            return []
         try:
             return list(await asyncio.gather(*tasks))
         except BaseException:
