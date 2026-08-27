@@ -21,10 +21,13 @@ from ai_daily.persona_memory import (
     retrieve_memories,
 )
 from ai_daily.persona_models import (
+    AnalysisClaim,
     AnalysisItem,
     AnalystOutput,
     BaselineMatch,
     Critique,
+    EditionAssembly,
+    EditionAssemblyItem,
     EditionDraft,
     FinalizerOutput,
     OmittedEvent,
@@ -398,20 +401,33 @@ class PersonaPipeline:
             sources=_edition_source_rows(snapshot, plan),
         )
 
-        def validate(value: EditionDraft) -> EditionDraft:
-            normalized = normalize_edition_draft(value, scope)
+        def prepare(value: EditionAssembly) -> EditionDraft:
+            draft = _expand_edition_assembly(
+                value,
+                snapshot,
+                plan,
+                analyses,
+                self.persona.column_id,
+                self.persona.ai_disclosure,
+            )
+            normalized = normalize_edition_draft(draft, scope)
             _validate_draft_identity(normalized, snapshot, plan, analyses, self.persona.column_id)
             verify_edition(normalized, snapshot, scope, self.persona)
             return normalized
 
-        return await self.gateway.generate(
+        def validate(value: EditionAssembly) -> EditionAssembly:
+            prepare(value)
+            return value
+
+        assembly = await self.gateway.generate(
             "persona_edition_editor",
-            EditionDraft,
+            EditionAssembly,
             _edition_instructions(self.persona.standard_min_chars, self.persona.standard_max_chars),
             prompt,
             validator=validate,
             stage=BudgetStage.PERSONA,
         )
+        return prepare(assembly)
 
     async def _review(
         self,
@@ -662,14 +678,105 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
         "你是版面编辑，只可重组输入分析，不得增加外部事实。"
         "输入分析已逐条通过证据校验。可删减或压缩判断，但事实 claim 若保留，"
         "text 必须原样等于 quote，不得改写事实原文。把 items 路径按最终顺序重写；"
-        "draft.claims 必须完整包含所有公开块使用的 claim，"
-        "item.claims 必须恰好包含该 item 的 claims。"
+        "claims 必须完整且仅包含所有公开块使用的 claim。"
         "每个 block.text 必须严格等于其 claims.text 顺序拼接。"
         "所有推论、建议和不确定性必须保留“判断：”“建议：”“不确定性：”前缀。"
-        "标题、摘要、主旨、观察清单也必须创建可追溯 claims。source_links 只取输入证据 URL。"
+        "标题、摘要、主旨、观察清单也必须创建可追溯 claims。"
         f"standard 正文长度(不含标题摘要)须为 {minimum}-{maximum} 个字符。"
+        "输出必须紧凑：每个必填 block 和观察项只用一个简洁 claim；"
+        "省略 delta_from_before_block，recommended_action_block 仅在必要时保留；"
+        "事实 claim 只保留一条必要 quote 和最少来源 ID。"
         "no_major_update 也要说明今天为什么没有足够大的变化以及继续观察什么。"
         "禁止第一人称和夸张宣传语。"
+    )
+
+
+def _expand_edition_assembly(
+    assembly: EditionAssembly,
+    snapshot: Any,
+    plan: PersonaPlan,
+    analyses: list[AnalysisItem],
+    column_id: str,
+    ai_disclosure: str,
+) -> EditionDraft:
+    if [item.event_id for item in assembly.items] != [item.event_id for item in analyses]:
+        raise ValueError("edition changed analyzed event order")
+    claim_by_id = {claim.claim_id: claim for claim in assembly.claims}
+    source_by_event = {item.event_id: item for item in analyses}
+    items = [
+        _expand_edition_item(item, source_by_event[item.event_id], claim_by_id)
+        for item in assembly.items
+    ]
+    used_evidence = {
+        evidence_id for claim in assembly.claims for evidence_id in claim.current_evidence_ids
+    }
+    source_links = [
+        evidence.url
+        for bundle in snapshot.evidence_bundles
+        for evidence in bundle.evidence
+        if evidence.evidence_id in used_evidence
+    ]
+    return EditionDraft(
+        column_id=column_id,
+        target_date=snapshot.target_date,
+        edition_type=plan.edition_type,
+        title_block=assembly.title_block,
+        digest_block=assembly.digest_block,
+        thesis_block=assembly.thesis_block,
+        items=items,
+        watchlist_blocks=assembly.watchlist_blocks,
+        source_links=source_links,
+        ai_disclosure=ai_disclosure,
+        input_marker=snapshot.publication_marker,
+        claims=assembly.claims,
+    )
+
+
+def _expand_edition_item(
+    item: EditionAssemblyItem,
+    source: AnalysisItem,
+    claims: dict[str, AnalysisClaim],
+) -> AnalysisItem:
+    blocks = (
+        item.headline_block,
+        item.confirmed_change_block,
+        item.delta_from_before_block,
+        item.importance_block,
+        item.product_implication_block,
+        item.recommended_action_block,
+        item.counter_case_block,
+        item.watch_signal_block,
+    )
+    claim_ids = list(
+        dict.fromkeys(
+            claim_id for block in blocks if block is not None for claim_id in block.claim_ids
+        )
+    )
+    try:
+        item_claims = [claims[claim_id] for claim_id in claim_ids]
+    except KeyError as error:
+        raise ValueError(f"edition block referenced unknown claim {error.args[0]}") from error
+    used_evidence = {
+        evidence_id for claim in item_claims for evidence_id in claim.current_evidence_ids
+    }
+    used_memories = {
+        memory_id for claim in item_claims for memory_id in claim.experience_memory_ids
+    }
+    return AnalysisItem(
+        event_id=item.event_id,
+        grade=source.grade,
+        headline_block=item.headline_block,
+        confirmed_change_block=item.confirmed_change_block,
+        delta_from_before_block=item.delta_from_before_block,
+        importance_block=item.importance_block,
+        product_implication_block=item.product_implication_block,
+        recommended_action_block=item.recommended_action_block,
+        counter_case_block=item.counter_case_block,
+        watch_signal_block=item.watch_signal_block,
+        claims=item_claims,
+        evidence_ids=[item for item in source.evidence_ids if item in used_evidence],
+        memory_ids=[item for item in source.memory_ids if item in used_memories],
+        analysis_confidence=source.analysis_confidence,
     )
 
 

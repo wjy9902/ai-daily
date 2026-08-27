@@ -255,6 +255,30 @@ class AnalystOutput(StrictModel):
     item: AnalysisItem
 
 
+class EditionAssemblyItem(StrictModel):
+    event_id: str
+    headline_block: PublicTextBlock
+    confirmed_change_block: PublicTextBlock
+    delta_from_before_block: PublicTextBlock | None = None
+    importance_block: PublicTextBlock
+    product_implication_block: PublicTextBlock
+    recommended_action_block: PublicTextBlock | None = None
+    counter_case_block: PublicTextBlock
+    watch_signal_block: PublicTextBlock
+
+
+class EditionAssembly(StrictModel):
+    """Compact model output expanded into an EditionDraft at the trust boundary."""
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    title_block: PublicTextBlock
+    digest_block: PublicTextBlock
+    thesis_block: PublicTextBlock
+    items: list[EditionAssemblyItem] = Field(max_length=5)
+    watchlist_blocks: list[PublicTextBlock] = Field(max_length=2)
+    claims: list[AnalysisClaim] = Field(min_length=1)
+
+
 class EditionDraft(StrictModel):
     schema_version: Literal[1] = SCHEMA_VERSION
     column_id: str = Field(pattern=r"^[a-z0-9-]+$")
