@@ -27,7 +27,7 @@ budget:
   # The persona gateway reserves the worst case before a call. Three concurrent
   # 48k-output calls with one schema retry can reserve 288k even though actual
   # usage is much lower. Keep tokens non-binding and let the ¥12 ceiling stop spend.
-  output_token_limit: 1200000
+  output_token_limit: 1500000
   # Fresh successful editions are expected to stay around ¥1-2. The higher hard
   # stop preserves same-day recovery after charged provider or validation failures.
   cost_cny_limit: 12.0
