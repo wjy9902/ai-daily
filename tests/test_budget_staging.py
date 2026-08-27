@@ -125,7 +125,7 @@ def test_a_full_issue_fits_inside_each_stage_allowance() -> None:
         )
 
 
-def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -> None:
+def test_persona_budget_can_retry_configured_analysts_after_charged_failures() -> None:
     config = load_config(Path("config"))
     assert config.persona is not None
     ledger = BudgetLedger(config.persona.budget)
@@ -138,12 +138,12 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
         attempt=1,
         status="failed",
         latency_ms=1,
-        input_tokens=64_326,
-        output_tokens=61_410,
-        cost_cny=0.585767,
+        input_tokens=217_846,
+        output_tokens=220_304,
+        cost_cny=2.06096,
         error_type="SchemaError",
     )
-    ledger.record_requests(7, BudgetStage.PERSONA)
+    ledger.record_requests(15, BudgetStage.PERSONA)
     ledger.record(failed_attempt, BudgetStage.PERSONA)
     planner = ModelRun(
         role="persona_planner",
@@ -155,8 +155,8 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
         status="ok",
         latency_ms=1,
         input_tokens=12_305,
-        output_tokens=23_663,
-        cost_cny=0.25,
+        output_tokens=12_836,
+        cost_cny=0.12,
     )
     ledger.record_requests(1, BudgetStage.PERSONA)
     ledger.record(planner, BudgetStage.PERSONA)
@@ -170,9 +170,9 @@ def test_persona_budget_can_reserve_three_concurrent_analysts_after_planning() -
             output_tokens=96_000,
         )
 
-    assert ledger.reserved_requests == 6
-    assert ledger.reserved_output_tokens == 288_000
-    assert ledger.remaining_cost() == pytest.approx(1.164233)
+    assert ledger.reserved_requests == 4
+    assert ledger.reserved_output_tokens == 192_000
+    assert ledger.remaining_cost() == pytest.approx(0.81904)
 
 
 def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:

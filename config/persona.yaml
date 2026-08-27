@@ -5,7 +5,9 @@ memories_path: config/persona/memories.yaml
 constitution_path: config/persona/source-artifacts/editorial-constitution-v1.md
 candidate_limit: 30
 memory_limit: 16
-analyst_concurrency: 3
+# Two-way concurrency leaves token and cost reservation headroom for a same-day
+# retry while preserving every selected analysis.
+analyst_concurrency: 2
 # Minimum per-call reservation. The gateway raises this to the endpoint's
 # prompt/token price ceiling when that is higher, while the daily ¥5 cap remains
 # absolute. ¥1 leaves room for three analysts after a charged failed attempt.
