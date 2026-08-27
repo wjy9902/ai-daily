@@ -474,6 +474,75 @@ sources:
     channel: official
     limit: 15
 
+  # Individual staff and leak accounts — where the mis-routing apologies,
+  # gray-release sightings and "shipping Thursday" teasers actually break.
+  # Tier B / news on purpose: a personal post is not an official statement,
+  # so it can feed 前瞻与传闻 and corroborate, but never lead on its own.
+
+  - name: x-sama
+    display_name: Sam Altman @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/sama
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-gdb
+    display_name: Greg Brockman @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/gdb
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-adamhfry
+    display_name: Adam Fry @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/adamhfry
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-logank
+    display_name: Logan Kilpatrick @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/OfficialLoganK
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-alexalbert
+    display_name: Alex Albert @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/alexalbert__
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-elonmusk
+    display_name: Elon Musk @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/elonmusk
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-btibor
+    display_name: Tibor Blaho @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/btibor91
+    tier: B
+    channel: news
+    limit: 10
+
+  - name: x-legit-api
+    display_name: Legit @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/legit_api
+    tier: B
+    channel: news
+    limit: 10
+
   # WeChat official accounts via the self-hosted we-mp-rss at
   # werss.jiayutool.cn (ops/FEED-INFRA.md) — deployed 2026-08-27, collection
   # runs through WeChat Reading every 20 minutes. Caveat: that channel only
@@ -533,5 +602,45 @@ sources:
     url: https://werss.jiayutool.cn/feed/MP_WXS_3271041950.rss
     tier: B
     channel: news
+    region: china
+    limit: 10
+  - name: wechat-deepseek
+    display_name: DeepSeek 公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3949607775.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-seed
+    display_name: 字节跳动 Seed 公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3930693616.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-hunyuan
+    display_name: 腾讯混元公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3908569425.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-stepfun
+    display_name: 阶跃星辰公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3925617892.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-wenxin
+    display_name: 百度文心公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3297523352.rss
+    tier: A
+    channel: official
     region: china
     limit: 10
