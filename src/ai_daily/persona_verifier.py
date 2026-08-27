@@ -201,6 +201,7 @@ def normalize_analysis_item(
             quote_updates = {"quotes": quotes}
             claim_updates["text"] = "；".join(quote.quote for quote in quotes)
         elif (prefix := INTERPRETIVE_PREFIX.get(claim.claim_type)) is not None:
+            quote_updates = {"quotes": []}
             evidence = _claim_evidence_text(claim, source_maps)
             text = claim.text
             for token in sorted(_ungrounded_anchors(text, prefix, evidence), key=len, reverse=True):

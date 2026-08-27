@@ -138,12 +138,12 @@ def test_persona_budget_can_retry_configured_analysts_after_charged_failures() -
         attempt=1,
         status="failed",
         latency_ms=1,
-        input_tokens=533_324,
-        output_tokens=674_073,
-        cost_cny=5.888997,
+        input_tokens=610_253,
+        output_tokens=756_461,
+        cost_cny=6.645534,
         error_type="SchemaError",
     )
-    ledger.record_requests(50, BudgetStage.PERSONA)
+    ledger.record_requests(58, BudgetStage.PERSONA)
     ledger.record(failed_attempt, BudgetStage.PERSONA)
     planner = ModelRun(
         role="persona_planner",
@@ -172,7 +172,7 @@ def test_persona_budget_can_retry_configured_analysts_after_charged_failures() -
 
     assert ledger.reserved_requests == 4
     assert ledger.reserved_output_tokens == 192_000
-    assert ledger.remaining_cost() == pytest.approx(0.621003)
+    assert ledger.remaining_cost() == pytest.approx(1.864466)
 
 
 def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:
