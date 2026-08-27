@@ -22,6 +22,7 @@ from ai_daily.persona_models import (
     AnalysisClaim,
     AnalysisItem,
     AnalystOutput,
+    AssemblyInterpretiveText,
     AssemblyText,
     ClaimQuote,
     Critique,
@@ -2114,12 +2115,17 @@ def _assembly_from_draft(draft: EditionDraft) -> EditionAssembly:
             ("experience_memory", claim.experience_memory_ids),
         )
         source_kind, source_ids = next((kind, ids) for kind, ids in sources if ids)
-        return AssemblyText(
-            text=claim.text,
-            source_kind=cast(Any, source_kind),
-            source_id=source_ids[0],
-            quote=claim.quotes[0].quote if claim.quotes else None,
-        )
+        payload = {
+            "text": claim.text,
+            "source_kind": cast(Any, source_kind),
+            "source_id": source_ids[0],
+        }
+        if claim.claim_type == "current_fact":
+            return AssemblyText(
+                **payload,
+                quote=claim.quotes[0].quote if claim.quotes else None,
+            )
+        return AssemblyInterpretiveText.model_construct(**payload, quote=None)
 
     return EditionAssembly(
         title=compact(draft.title_block),
