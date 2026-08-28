@@ -13,11 +13,13 @@ sources:
   # benchmark digest opened with three of them (Codex quota reset, Luna
   # Reserve, temporary-chat controls) that this feed carries and news does not.
   # help.openai.com hosts the same notes but answers 403 to non-browser
-  # clients, so the developers.openai.com feed is the programmable inlet.
+  # clients, so this feed is the programmable inlet. The URL is the redirect
+  # *target*: developers.openai.com/codex/changelog/rss.xml answers 308 here,
+  # and the collector does not follow redirects, so probing it there failed.
   - name: openai-changelog
     display_name: ChatGPT & Codex Changelog
     kind: rss
-    url: https://developers.openai.com/codex/changelog/rss.xml
+    url: https://learn.chatgpt.com/docs/changelog/rss.xml
     tier: A
     channel: official
     limit: 25
@@ -541,10 +543,15 @@ sources:
     channel: official
     limit: 15
 
-  - name: x-antling
-    display_name: 蚂蚁百灵 @ X
+  # The Ling releases are announced by @AntLingAGI, but RSSHub's timeline
+  # route returns an empty feed for that account on every attempt (its media
+  # route works, which is a partial view and misses text-only posts). This is
+  # the parent org account it posts under: the standard route works, and its
+  # timeline carries the same releases including retweets of @AntLingAGI.
+  - name: x-inclusionai
+    display_name: InclusionAI @ X
     kind: rss
-    url: https://rsshub.jiayutool.cn/twitter/user/AntLingAGI
+    url: https://rsshub.jiayutool.cn/twitter/user/TheInclusionAI
     tier: A
     channel: official
     region: china
