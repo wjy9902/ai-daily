@@ -125,6 +125,37 @@ def test_a_full_issue_fits_inside_each_stage_allowance() -> None:
         )
 
 
+def test_every_publication_window_can_judge_a_full_pool() -> None:
+    """The day's budget is shared by every timer window, not per run.
+
+    ``test_a_full_issue_fits_inside_each_stage_allowance`` only proves one
+    issue fits, and that is what let the real failure through: at
+    ``request_limit: 100`` the judge share was ``int(100 * 0.30) = 30``, which
+    is exactly three windows of ten batches. On 2026-08-28 the third window
+    consumed the last of it and the 07:00 window died on StageBudgetExceeded
+    with 45/100 requests and ¥2.48/¥5 unspent.
+
+    The window count is read from the timer rather than hard-coded so that
+    adding a publication window fails here instead of in production.
+    """
+
+    config = load_config(Path("config"))
+    ledger = BudgetLedger(config.models.budget)
+    timer = Path("ops/systemd/ai-daily.timer").read_text(encoding="utf-8")
+    windows = sum(1 for line in timer.splitlines() if line.startswith("OnCalendar="))
+    assert windows, "the timer declares no publication windows"
+
+    judge_calls = -(-config.pipeline.candidate_limit // 10)
+    needed = windows * judge_calls
+    available = ledger.stage_remaining_requests(BudgetStage.JUDGE)
+
+    assert available >= needed, (
+        f"{windows} windows each judging {judge_calls} batches need {needed} "
+        f"judge requests but the share allows {available}; the last window of "
+        "the day would degrade on budget alone"
+    )
+
+
 def test_persona_budget_can_retry_configured_analysts_after_charged_failures() -> None:
     config = load_config(Path("config"))
     assert config.persona is not None

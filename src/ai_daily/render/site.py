@@ -42,9 +42,22 @@ LEAD_TITLE = "今日重点"
 FOLLOW_TITLE = "值得关注"
 BRIEF_TITLE = "快讯"
 VIEWPOINT_TITLE = "编辑观点"
+OVERVIEW_TITLE = "概览"
 ARCHIVE_TITLE = "往期归档"
 RECENT_TITLE = "近期刊期"
 MISSING_LABEL = "未出刊"
+
+#: Overview grouping order. Categories are listed in the order a reader scans
+#: for them rather than alphabetically, and any category not named here is
+#: appended in first-appearance order so a new one cannot vanish from the list.
+OVERVIEW_CATEGORY_ORDER = (
+    "模型与平台",
+    "国内 AI",
+    "值得试的项目",
+    "前沿研究",
+    "行业动态",
+    "前瞻与传闻",
+)
 
 PUBLISHED_TIME_LABEL = "来源发布"
 UPDATED_TIME_LABEL = "来源更新"
@@ -318,6 +331,44 @@ def _viewpoint_item(viewpoint: Viewpoint) -> list[str]:
     return lines
 
 
+def _overview_section(publication: DailyPublication) -> list[str]:
+    """A grouped index of every headline in the issue, linked to its story.
+
+    The issue is organised by importance, which answers "what matters most"
+    but not "did today have anything about X". The benchmark digest opens with
+    exactly this list and it is the fastest way to see the shape of a day, so
+    it is built here from the cards themselves rather than asked of the model.
+    """
+
+    entries: list[tuple[str, str, str]] = [
+        (card.category, card.event_id, card.headline) for card in publication.details
+    ]
+    entries.extend(
+        (str(card.category), card.event_id, card.headline) for card in publication.briefs
+    )
+    if not entries:
+        return []
+
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for category, event_id, headline in entries:
+        grouped.setdefault(category, []).append((event_id, headline))
+
+    ordered = [name for name in OVERVIEW_CATEGORY_ORDER if name in grouped]
+    ordered.extend(name for name in grouped if name not in ordered)
+
+    body: list[str] = []
+    for category in ordered:
+        body.append('<div class="overview-group">')
+        body.append(f'<p class="overview-category">{_t(category)}</p>')
+        body.append('<ul class="overview-list">')
+        for event_id, headline in grouped[category]:
+            anchor = _t(f"story-{event_id}")
+            body.append(f'<li class="overview-item"><a href="#{anchor}">{_t(headline)}</a></li>')
+        body.append("</ul>")
+        body.append("</div>")
+    return _section(OVERVIEW_TITLE, "overview", body)
+
+
 def _section(title: str, modifier: str, body: Iterable[str]) -> list[str]:
     return [
         f'<section class="section section--{modifier}">',
@@ -358,6 +409,7 @@ def _issue(publication: DailyPublication, *, prefix: str, permalink: bool) -> li
         lines.append(
             f'<p class="issue-highlight"><strong>今日亮点：</strong>{_t(publication.highlight)}</p>'
         )
+    lines.extend(_overview_section(publication))
     if level in BRIEF_ONLY_LEVELS:
         lines.extend(_brief_section(publication.briefs))
     else:

@@ -264,26 +264,53 @@ def test_local_index_reads_titles_and_source_urls_from_published_records(
     }
 
 
-def test_local_index_covers_every_day_inside_the_window(tmp_path: Path) -> None:
-    published = tmp_path / "published"
-    for day in (date(2026, 7, 1), date(2026, 8, 1), date(2026, 8, 12)):
+def _publish_days(published: Path, days: tuple[date, ...]) -> None:
+    # The index is the position, not the day of month: two days in different
+    # months can share a day number and would then share a source URL.
+    for index, day in enumerate(days):
         _publish(
             published,
             day,
             factories.publication(
                 target_date=day,
                 details=[],
-                briefs=[factories.brief_card(day.day, headline=f"{day.isoformat()} 的头条")],
+                briefs=[factories.brief_card(index, headline=f"{day.isoformat()} 的头条")],
             ),
         )
 
+
+def test_local_index_covers_every_url_inside_the_window(tmp_path: Path) -> None:
+    published = tmp_path / "published"
+    _publish_days(published, (date(2026, 7, 1), date(2026, 8, 1), date(2026, 8, 12)))
+
     index = local_historical_index(published, 45, date(2026, 8, 13))
 
-    assert index.titles == {
-        "2026-07-01 的头条",
-        "2026-08-01 的头条",
-        "2026-08-12 的头条",
-    }
+    assert len(index.urls) == 3, "URL dedupe must span the whole history window"
+
+
+def test_headlines_stop_blocking_after_the_title_window(tmp_path: Path) -> None:
+    """A running story must be publishable again once it develops.
+
+    Headline dedupe used to share the 45-day URL window, which made every
+    follow-up to a running story — a second quota reset, a rollout reaching a
+    new tier — indistinguishable from a duplicate and silently unpublishable.
+    """
+
+    published = tmp_path / "published"
+    _publish_days(published, (date(2026, 7, 1), date(2026, 8, 1), date(2026, 8, 12)))
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == {"2026-08-12 的头条"}
+
+
+def test_the_title_window_is_never_wider_than_the_history_window(tmp_path: Path) -> None:
+    published = tmp_path / "published"
+    _publish_days(published, (date(2026, 8, 10), date(2026, 8, 12)))
+
+    index = local_historical_index(published, 1, date(2026, 8, 13), title_days=45)
+
+    assert index.titles == {"2026-08-12 的头条"}
 
 
 @pytest.mark.parametrize(

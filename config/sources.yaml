@@ -7,6 +7,20 @@ sources:
     tier: A
     channel: official
     limit: 20
+  # openai.com/news carries announcements, not shipped changes. Quota resets,
+  # reserve allowances, model routing fixes and feature toggles land only in
+  # the changelog, and those are the items readers act on: the 2026-08-28
+  # benchmark digest opened with three of them (Codex quota reset, Luna
+  # Reserve, temporary-chat controls) that this feed carries and news does not.
+  # help.openai.com hosts the same notes but answers 403 to non-browser
+  # clients, so the developers.openai.com feed is the programmable inlet.
+  - name: openai-changelog
+    display_name: ChatGPT & Codex Changelog
+    kind: rss
+    url: https://developers.openai.com/codex/changelog/rss.xml
+    tier: A
+    channel: official
+    limit: 25
   - name: anthropic-news
     display_name: Anthropic
     kind: html_index
@@ -188,6 +202,43 @@ sources:
     url: https://ollama.com/blog/rss.xml
     tier: B
     channel: official
+    limit: 15
+
+  # Vendors whose releases the 2026-08-28 coverage audit found us blind to.
+  # Each ships product news on its own surface and nowhere else we read.
+  - name: midjourney-updates
+    display_name: Midjourney
+    kind: rss
+    url: https://updates.midjourney.com/rss/
+    tier: A
+    channel: official
+    limit: 15
+  - name: cohere-blog
+    display_name: Cohere
+    kind: html_index
+    url: https://cohere.com/blog
+    link_pattern: '^https://cohere\.com/blog/[^/]+$'
+    tier: A
+    channel: official
+    limit: 15
+  # Inference platforms increasingly post-train and serve their own variants,
+  # which is a model release even though the lab did not announce it.
+  - name: fal-blog
+    display_name: fal
+    kind: rss
+    url: https://blog.fal.ai/rss/
+    tier: B
+    channel: official
+    limit: 15
+  # The UK AI Security Institute publishes evaluation tooling and findings that
+  # neither the lab feeds nor arXiv carry.
+  - name: aisi-blog
+    display_name: AI Security Institute
+    kind: html_index
+    url: https://www.aisi.gov.uk/blog
+    link_pattern: '^https://www\.aisi\.gov\.uk/blog/[^/]+$'
+    tier: B
+    channel: research
     limit: 15
 
   # Broad discovery and independent reporting — used for recall and corroboration.
@@ -474,6 +525,31 @@ sources:
     channel: official
     limit: 15
 
+  - name: x-chatgpt
+    display_name: ChatGPT @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/ChatGPT
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-fal
+    display_name: fal @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/fal
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-antling
+    display_name: 蚂蚁百灵 @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/AntLingAGI
+    tier: A
+    channel: official
+    region: china
+    limit: 15
+
   # Individual staff and leak accounts — where the mis-routing apologies,
   # gray-release sightings and "shipping Thursday" teasers actually break.
   # Tier B / news on purpose: a personal post is not an official statement,
@@ -531,6 +607,17 @@ sources:
     display_name: Tibor Blaho @ X
     kind: rss
     url: https://rsshub.jiayutool.cn/twitter/user/btibor91
+    tier: B
+    channel: news
+    limit: 10
+
+  # The Codex lead announces quota resets, rate-limit changes and consumption
+  # fixes here before they reach any changelog. Six of the benchmark digest's
+  # August headlines traced back to this one account.
+  - name: x-tibo
+    display_name: Tibo Sottiaux @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/thsottiaux
     tier: B
     channel: news
     limit: 10

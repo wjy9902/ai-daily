@@ -108,12 +108,19 @@ class StoryCard(StrictModel):
 
 
 class BriefCard(StrictModel):
-    """A one-line item in the 快讯 list."""
+    """An item in the 快讯 list.
+
+    The 240-character ceiling was sized for one sentence. It is 320 now
+    because a brief that omits the parameter count, the price or the effective
+    date is not shorter, it is less useful: the 2026-08-28 audit found the
+    benchmark digest packing those numbers into every brief while ours stopped
+    at the conclusion.
+    """
 
     event_id: str
     category: EditorialCategory | Literal["快讯"]
     headline: str = Field(min_length=1, max_length=100)
-    brief: str = Field(min_length=1, max_length=240)
+    brief: str = Field(min_length=1, max_length=320)
     sources: list[SourceRef] = Field(min_length=1)
     published_at: datetime
 

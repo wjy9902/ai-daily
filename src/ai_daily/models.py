@@ -168,7 +168,10 @@ class EditorialChoice(StrictModel):
     event_id: str
     category: EditorialCategory
     headline: str = Field(min_length=1, max_length=100)
-    brief: str = Field(min_length=1, max_length=240)
+    # Kept equal to publication.BriefCard.brief: the planner writes this field
+    # and the published card carries it through unchanged, so a tighter limit
+    # here would be the one that actually binds.
+    brief: str = Field(min_length=1, max_length=320)
     importance: int = Field(ge=0, le=100)
     confidence: float = Field(ge=0, le=1)
     reason: str = Field(min_length=1, max_length=500)

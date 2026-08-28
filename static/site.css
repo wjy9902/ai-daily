@@ -399,9 +399,66 @@ time {
 
 .section--follow .section-title,
 .section--brief .section-title,
+.section--overview .section-title,
 .section--viewpoint .section-title,
 .section--recent .section-title {
   color: var(--muted);
+}
+
+/* ---------- overview ---------- */
+
+.section--overview {
+  margin-top: 1.8rem;
+}
+
+.overview-group {
+  border-top: 1px solid var(--rule-soft);
+  display: grid;
+  gap: 0.2rem 1.1rem;
+  grid-template-columns: 6.5rem 1fr;
+  padding: 0.7rem 0;
+}
+
+.overview-group:first-of-type {
+  border-top: none;
+}
+
+.overview-category {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.85;
+}
+
+.overview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.overview-item {
+  font-size: 0.94rem;
+  line-height: 1.85;
+}
+
+.overview-item a {
+  color: var(--ink-soft);
+  text-decoration: none;
+}
+
+.overview-item a:hover,
+.overview-item a:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+@media (max-width: 640px) {
+  .overview-group {
+    gap: 0.15rem;
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ---------- story cards ---------- */

@@ -4,14 +4,17 @@ budget:
   # Sized from the pipeline's actual shape rather than a round number: one
   # judge call per batch of ten candidates (10), one planning call, one draft
   # per detailed story (13), and any of them able to spend a second request on
-  # its retry — 48 for a single issue at worst. 100 (the schema ceiling) keeps
-  # room for a second full attempt from a later window; the 2026-08-27 manual
-  # fourth run showed 90 does not. tests/test_budget_staging.py asserts the
-  # arithmetic so a config change cannot quietly starve a stage.
+  # its retry — 48 for a single issue at worst. tests/test_budget_staging.py
+  # asserts the arithmetic so a config change cannot quietly starve a stage.
   #
-  # Money, not request count, is still the real ceiling: a full issue costs
-  # about ¥0.75, so ¥5 stops a runaway long before this does.
-  request_limit: 100
+  # The limit is per day and shared by every window, and each stage may only
+  # use its STAGE_SHARE slice of it. That slice is what actually binds: at 100
+  # the judge share was int(100 * 0.30) = 30, exactly three runs of ten
+  # batches, so the 2026-08-28 07:00 window died on StageBudgetExceeded with
+  # 45/100 requests and ¥2.48/¥5 still unspent. Four windows now need 40 judge
+  # requests before retries; 180 gives the judge 54 and leaves the money limit
+  # to be the thing that stops a runaway.
+  request_limit: 180
   # Token ceilings are a backstop against a runaway loop, not the spending
   # control. Cost is. The old 30k output ceiling was the binding constraint and
   # aborted a real run at nine requests, which is the budget stopping work that
@@ -19,7 +22,12 @@ budget:
   # reached first at current DeepSeek prices.
   input_token_limit: 2000000
   output_token_limit: 500000
-  cost_cny_limit: 5.0
+  # Raised with the fourth window. The binding slice here is the planner's:
+  # ¥5 gave it 5.0 * 0.25 = ¥1.25, and the 2026-08-28 runs spent ¥1.79 on plan
+  # alone, so the next window's plan stage would refuse before spending
+  # anything. A full issue costs about ¥1.0-1.4, so ¥8 covers four windows in
+  # the worst case where every one of them re-plans.
+  cost_cny_limit: 8.0
 
 roles:
   judge:

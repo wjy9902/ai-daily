@@ -5,8 +5,9 @@ from dataclasses import dataclass
 from html import escape
 
 from ai_daily.persona_models import AnalysisItem, PersonaEdition, RenderReceipt
+from ai_daily.persona_verifier import INTERPRETIVE_PREFIX
 
-RENDERER_VERSION = "persona-renderer-2"
+RENDERER_VERSION = "persona-renderer-3"
 TEMPLATE_VERSION = "jiayu-editorial-3"
 
 ARTICLE_STYLE = "max-width:680px;margin:0 auto;color:#20201e;font-size:16px;line-height:1.85"
@@ -52,44 +53,44 @@ def render_persona(edition: PersonaEdition, site_base_url: str) -> RenderedPerso
 
 def _markdown(edition: PersonaEdition) -> str:
     lines = [
-        f"# {edition.title_block.text}",
+        f"# {_body(edition.title_block.text)}",
         "",
-        f"> {edition.digest_block.text}",
+        f"> {_body(edition.digest_block.text)}",
         "",
-        edition.thesis_block.text,
+        _body(edition.thesis_block.text),
     ]
     for item in edition.items:
         lines.extend(
             [
                 "",
-                f"## {item.headline_block.text}",
+                f"## {_body(item.headline_block.text)}",
                 "",
                 f"**确认变化**：{_confirmed_change_text(item.confirmed_change_block.text)}",
             ]
         )
         if item.delta_from_before_block:
-            lines.extend(["", f"**相较此前**：{item.delta_from_before_block.text}"])
+            lines.extend(["", f"**相较此前**：{_body(item.delta_from_before_block.text)}"])
         lines.extend(
             [
                 "",
-                f"**为什么重要**：{item.importance_block.text}",
+                f"**为什么重要**：{_body(item.importance_block.text)}",
                 "",
-                f"**对 AI 产品的影响**：{item.product_implication_block.text}",
+                f"**对 AI 产品的影响**：{_body(item.product_implication_block.text)}",
             ]
         )
         if item.recommended_action_block:
-            lines.extend(["", f"**可以怎么做**：{item.recommended_action_block.text}"])
+            lines.extend(["", f"**可以怎么做**：{_body(item.recommended_action_block.text)}"])
         lines.extend(
             [
                 "",
-                f"**反面条件**：{item.counter_case_block.text}",
+                f"**反面条件**：{_body(item.counter_case_block.text)}",
                 "",
-                f"**继续观察**：{item.watch_signal_block.text}",
+                f"**继续观察**：{_body(item.watch_signal_block.text)}",
             ]
         )
     if edition.watchlist_blocks:
         lines.extend(["", "## 观察清单", ""])
-        lines.extend(f"- {block.text}" for block in edition.watchlist_blocks)
+        lines.extend(f"- {_body(block.text)}" for block in edition.watchlist_blocks)
     lines.extend(["", "## 来源", ""])
     lines.extend(f"- <{url}>" for url in edition.source_links)
     lines.extend(["", f"_{edition.ai_disclosure}_", ""])
@@ -97,7 +98,7 @@ def _markdown(edition: PersonaEdition) -> str:
 
 
 def _article_html(edition: PersonaEdition, *, inline_styles: bool) -> str:
-    title = escape(edition.title_block.text)
+    title = escape(_body(edition.title_block.text))
     body = [
         f'<article class="persona-edition"{_style(ARTICLE_STYLE, inline_styles)}>',
         f'<p class="persona-kicker"{_style(KICKER_STYLE, inline_styles)}>'
@@ -106,9 +107,9 @@ def _article_html(edition: PersonaEdition, *, inline_styles: bool) -> str:
         f"{edition.target_date.isoformat()}</time></p>",
         f"<h1{_style(TITLE_STYLE, inline_styles)}>{title}</h1>",
         f'<p class="persona-digest"{_style(DIGEST_STYLE, inline_styles)}>'
-        f"{escape(edition.digest_block.text)}</p>",
+        f"{escape(_body(edition.digest_block.text))}</p>",
         f'<p class="persona-thesis"{_style(THESIS_STYLE, inline_styles)}>'
-        f"{escape(edition.thesis_block.text)}</p>",
+        f"{escape(_body(edition.thesis_block.text))}</p>",
     ]
     for item in edition.items:
         body.extend(_item_html(item, inline_styles))
@@ -120,7 +121,7 @@ def _article_html(edition: PersonaEdition, *, inline_styles: bool) -> str:
                 f"<ul{_style('margin:0;padding-left:1.4em', inline_styles)}>",
             ]
         )
-        body.extend(f"<li>{escape(block.text)}</li>" for block in edition.watchlist_blocks)
+        body.extend(f"<li>{escape(_body(block.text))}</li>" for block in edition.watchlist_blocks)
         body.extend(["</ul></section>"])
     body.extend(
         [
@@ -147,7 +148,7 @@ def _article_html(edition: PersonaEdition, *, inline_styles: bool) -> str:
 
 
 def _web_html(edition: PersonaEdition, site_base_url: str) -> str:
-    title = escape(edition.title_block.text)
+    title = escape(_body(edition.title_block.text))
     base = site_base_url.rstrip("/")
     canonical = f"{base}/jiayu/{edition.target_date.isoformat()}.html"
     article = _article_html(edition, inline_styles=False)
@@ -166,7 +167,7 @@ def render_persona_index(
     archive.extend(
         f'<li><a href="{item.target_date.isoformat()}.html">'
         f'<time datetime="{item.target_date.isoformat()}">{item.target_date.isoformat()}</time>'
-        f" · {escape(item.title_block.text)}</a></li>"
+        f" · {escape(_body(item.title_block.text))}</a></li>"
         for item in editions
     )
     archive.append("</ol></section>")
@@ -229,23 +230,25 @@ def _label(label: str, text: str, inline_styles: bool) -> str:
 def _item_html(item: AnalysisItem, inline_styles: bool) -> list[str]:
     blocks = [
         f'<section class="persona-item"{_style(SECTION_STYLE, inline_styles)}>',
-        f"<h2{_style(HEADING_STYLE, inline_styles)}>{escape(item.headline_block.text)}</h2>",
+        f"<h2{_style(HEADING_STYLE, inline_styles)}>{escape(_body(item.headline_block.text))}</h2>",
         _label("确认变化", _confirmed_change_text(item.confirmed_change_block.text), inline_styles),
     ]
     if item.delta_from_before_block:
-        blocks.append(_label("相较此前", item.delta_from_before_block.text, inline_styles))
+        blocks.append(_label("相较此前", _body(item.delta_from_before_block.text), inline_styles))
     blocks.extend(
         [
-            _label("为什么重要", item.importance_block.text, inline_styles),
-            _label("对 AI 产品的影响", item.product_implication_block.text, inline_styles),
+            _label("为什么重要", _body(item.importance_block.text), inline_styles),
+            _label("对 AI 产品的影响", _body(item.product_implication_block.text), inline_styles),
         ]
     )
     if item.recommended_action_block:
-        blocks.append(_label("可以怎么做", item.recommended_action_block.text, inline_styles))
+        blocks.append(
+            _label("可以怎么做", _body(item.recommended_action_block.text), inline_styles)
+        )
     blocks.extend(
         [
-            _label("反面条件", item.counter_case_block.text, inline_styles),
-            _label("继续观察", item.watch_signal_block.text, inline_styles),
+            _label("反面条件", _body(item.counter_case_block.text), inline_styles),
+            _label("继续观察", _body(item.watch_signal_block.text), inline_styles),
             "</section>",
         ]
     )
@@ -261,6 +264,32 @@ def _confirmed_change_text(value: str) -> str:
         "is generally available Give Claude",
         "is generally available. Give Claude",
     )
+
+
+def _body(value: str) -> str:
+    """Drop the interpretive markers before the text reaches a reader.
+
+    ``判断：``/``建议：``/``不确定性：`` are how the pipeline proves a sentence
+    was declared as interpretation rather than fact: the analyst must write
+    them, ``normalize_edition_draft`` re-adds any that are missing, and
+    ``_verify_interpretive_text`` rejects a claim without one. None of that is
+    for the reader, who already sees a section label saying the same thing —
+    and printing both produced 「为什么重要：判断：…」 on the live site.
+
+    They also stack. A block is the concatenation of its claims, and the
+    normalizer prepends the claim's own prefix even when the model already
+    wrote a different one, which is how 「反面条件：判断：不确定性：…」 shipped.
+    So this strips a leading *run* of markers, not just one.
+    """
+
+    text = value.lstrip()
+    while True:
+        for prefix in INTERPRETIVE_PREFIX.values():
+            if text.startswith(prefix):
+                text = text[len(prefix) :].lstrip()
+                break
+        else:
+            return text
 
 
 def _digest(value: str) -> str:

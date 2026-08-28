@@ -360,6 +360,68 @@ def _connected_groups(groups: list[list[RawItem]], window: timedelta) -> list[li
     return list(components.values())
 
 
+#: Terms that mark an event as something a reader can act on today.
+#:
+#: The original list only recognised launches and price cuts, which scored a
+#: model release highly but left the changes readers of an AI daily actually
+#: react to — a quota reset, a free window opening, a feature flag flipping —
+#: on the same footing as a conference recap. The 2026-08-28 coverage audit
+#: against the benchmark digest turned on exactly this vocabulary: quota
+#: resets, reserve allowances, limited-time free access and gray releases were
+#: its most frequent story shape and our lowest-scoring one.
+ACTION_TERMS = (
+    # shipping and availability
+    "api",
+    "available",
+    "general availability",
+    "launch",
+    "model",
+    "open source",
+    "release",
+    "rollout",
+    "发布",
+    "上线",
+    "开源",
+    "模型",
+    "推出",
+    # quota, rate limits and usage
+    "credits",
+    "quota",
+    "rate limit",
+    "reset",
+    "usage limit",
+    "额度",
+    "用量",
+    "限额",
+    "限流",
+    "重置",
+    "配额",
+    # price and access changes
+    "discount",
+    "free",
+    "pricing",
+    "price",
+    "涨价",
+    "降价",
+    "调价",
+    "限免",
+    "免费",
+    "折扣",
+    "优惠",
+    # gradual and ending availability
+    "beta",
+    "deprecat",
+    "preview",
+    "sunset",
+    "waitlist",
+    "内测",
+    "公测",
+    "灰度",
+    "下线",
+    "停用",
+)
+
+
 def score_events(events: list[Event], now: datetime) -> list[Event]:
     scored = []
     for event in events:
@@ -371,21 +433,7 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
         recency = max(0, 20 - age.total_seconds() / 3600 / 2)
         corroboration = min(18, (len({item.source for item in event.items}) - 1) * 7)
         text = f"{event.title} {event.summary}".lower()
-        action_terms = (
-            "api",
-            "available",
-            "launch",
-            "model",
-            "open source",
-            "pricing",
-            "release",
-            "发布",
-            "上线",
-            "开源",
-            "模型",
-            "降价",
-        )
-        actionability = 12 if any(term in text for term in action_terms) else 4
+        actionability = 12 if any(term in text for term in ACTION_TERMS) else 4
         popularity = min(6, math.log1p(_numeric_metrics(event)) / 1.2)
         research_penalty = 10 if channels == {SourceChannel.RESEARCH} else 0
         release_penalty = 4 if channels == {SourceChannel.RELEASE} else 0

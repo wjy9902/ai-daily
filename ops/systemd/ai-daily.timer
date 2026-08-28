@@ -7,9 +7,16 @@ Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/SELF-HOST-MIGRATION.md
 # 04:20 is the main run. The later windows verify first and cost nothing when
 # the issue is already live at full quality; they only spend model budget when
 # there is something to upgrade.
+#
+# 08:30 exists because the US afternoon lands after 04:20: the 2026-08-28
+# benchmark digest led with a Codex quota reset announced around 05:00 Beijing
+# time, which no earlier window could have seen. Adding a window costs judge
+# requests from the shared daily budget — tests/test_budget_staging.py reads
+# the OnCalendar count here and fails if request_limit no longer covers it.
 OnCalendar=*-*-* 04:20:00
 OnCalendar=*-*-* 05:05:00
 OnCalendar=*-*-* 07:00:00
+OnCalendar=*-*-* 08:30:00
 Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=60s

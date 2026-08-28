@@ -57,7 +57,7 @@ from ai_daily.persona_pipeline import (
     _validate_critique,
     _validate_finalizer_changes,
 )
-from ai_daily.persona_render import _confirmed_change_text, render_persona
+from ai_daily.persona_render import _body, _confirmed_change_text, render_persona
 from ai_daily.persona_replay import _copy_replay_inputs, freeze_replay_dataset, run_replay
 from ai_daily.persona_snapshot import (
     activate_upstream_snapshot,
@@ -440,6 +440,35 @@ def test_renderer_repairs_known_claude_source_punctuation() -> None:
     assert _confirmed_change_text(source_text) == (
         "Claude in Chrome is generally available. Give Claude a task."
     )
+
+
+def test_interpretive_markers_are_internal_and_never_reach_the_page() -> None:
+    """The markers are for the verifier, not the reader.
+
+    They shipped to the live site as 「为什么重要：判断：…」 and, where the
+    model wrote one marker and the normalizer prepended another, as
+    「反面条件：判断：不确定性：…」. Stripping happens at render so the
+    verification contract upstream is untouched.
+    """
+
+    edition = _edition("a" * 64)
+    assert edition.title_block.text.startswith("判断："), "fixture no longer covers the bug"
+
+    rendered = render_persona(edition, factories.SITE)
+
+    for page in (rendered.markdown, rendered.html, rendered.web_html):
+        assert "判断：" not in page
+        assert "建议：" not in page
+        assert "不确定性：" not in page
+    assert "今天没有必须追的大更新" in rendered.markdown
+
+
+def test_stacked_interpretive_markers_are_all_removed() -> None:
+    assert _body("判断：不确定性：训练开销下降不等同于推理成本同降") == (
+        "训练开销下降不等同于推理成本同降"
+    )
+    assert _body("建议：观察 API 定价") == "观察 API 定价"
+    assert _body("没有前缀的正文") == "没有前缀的正文"
 
 
 def _standard_draft(marker: str) -> EditionDraft:

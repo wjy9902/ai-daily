@@ -34,6 +34,19 @@ NON_STORY_HEADINGS = {
 }
 
 
+#: How far back a *headline* blocks a story, as opposed to a URL.
+#:
+#: URL dedupe can safely span the whole history window: the same article is
+#: the same article a month later. Headline dedupe cannot, because running
+#: stories legitimately recur under near-identical headlines — a quota reset,
+#: a staged rollout reaching a new tier, a price changing again. The benchmark
+#: digest follows those threads for days and that is much of why it reads as
+#: current; a 45-day headline block silently made every follow-up
+#: unpublishable. Three days still catches the real duplicate: the same story
+#: re-reported by a slower outlet a day or two behind.
+TITLE_WINDOW_DAYS = 3
+
+
 @dataclass(frozen=True)
 class HistoricalIndex:
     urls: set[str]
@@ -58,15 +71,20 @@ def local_historical_index(
     published_dir: Path,
     days: int,
     before_date: date,
+    title_days: int = TITLE_WINDOW_DAYS,
 ) -> HistoricalIndex:
     """Build the dedupe index from locally published issues.
 
     This replaces the GitHub API lookup. Reading our own records removes a
     network dependency from the critical path: an API hiccup used to mean the
     index came back empty, which silently let yesterday's stories run again.
+
+    ``days`` bounds the URL index and ``title_days`` the headline index; see
+    :data:`TITLE_WINDOW_DAYS` for why the two differ.
     """
 
     first_date = before_date - timedelta(days=days)
+    first_title_date = before_date - timedelta(days=min(title_days, days))
     urls: set[str] = set()
     titles: set[str] = set()
     if not published_dir.exists():
@@ -83,10 +101,11 @@ def local_historical_index(
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
+        index_titles = first_title_date <= issue_date
         for group in ("details", "briefs"):
             for entry in payload.get(group, []):
                 headline = entry.get("headline")
-                if isinstance(headline, str):
+                if index_titles and isinstance(headline, str):
                     titles.add(headline)
                 for source in entry.get("sources", []):
                     url = source.get("url")

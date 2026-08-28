@@ -1,6 +1,33 @@
 from pathlib import Path
 
 
+def _windows(timer: str) -> list[str]:
+    return [
+        line.removeprefix("OnCalendar=*-*-* ").strip()
+        for line in Path(f"ops/systemd/{timer}").read_text(encoding="utf-8").splitlines()
+        if line.startswith("OnCalendar=")
+    ]
+
+
+def test_persona_windows_all_follow_the_last_base_window() -> None:
+    """A persona edition freezes the day's upstream marker.
+
+    ``_persona_date_is_frozen`` refuses a base publication whose date already
+    has a matching persona edition, so a persona run scheduled before a base
+    window silently makes that window's upgrade unpublishable. The two timers
+    have no other coupling, which is exactly why this needs asserting.
+    """
+
+    base = _windows("ai-daily.timer")
+    persona = _windows("ai-daily-persona.timer")
+    assert base and persona
+
+    assert min(persona) > max(base), (
+        f"persona runs at {min(persona)} but the last base window is "
+        f"{max(base)}; that base window could never publish an upgrade"
+    )
+
+
 def test_daily_workflow_no_longer_publishes_on_a_schedule() -> None:
     """Publication moved to the self-hosted timer; two schedules would collide.
 

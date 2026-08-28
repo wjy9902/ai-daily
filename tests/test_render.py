@@ -125,6 +125,62 @@ def test_full_issue_carries_every_section() -> None:
     assert "来源发布：2026-08-13 02:33 北京时间" in page
 
 
+def test_overview_indexes_every_item_grouped_by_category() -> None:
+    """The overview is the reader's map of the day, so nothing may be missing."""
+
+    publication = _publication(PublicationLevel.L0)
+    page = render_daily(publication, SITE)
+
+    overview = page[page.index('class="section section--overview"') : page.index("今日重点")]
+    for card in publication.details:
+        assert f'href="#story-{card.event_id}"' in overview
+        assert card.headline in overview
+    for card in publication.briefs:
+        assert f'href="#story-{card.event_id}"' in overview
+        assert card.headline in overview
+    assert "模型与平台" in overview
+    assert "行业动态" in overview
+
+
+def test_overview_orders_categories_and_appends_unknown_ones() -> None:
+    publication = _publication(
+        PublicationLevel.L0,
+        details=[_story()],
+        briefs=[_brief(), _brief("rumor-1", "消息称某厂商洽谈收购")],
+    )
+    object.__setattr__(publication.briefs[1], "category", "前瞻与传闻")
+    page = render_daily(publication.signed(), SITE)
+
+    overview = page[page.index('class="section section--overview"') : page.index("今日重点")]
+    assert overview.index("模型与平台") < overview.index("行业动态")
+    assert overview.index("行业动态") < overview.index("前瞻与传闻")
+
+
+def test_brief_only_issue_still_gets_an_overview() -> None:
+    """A degraded issue is the one a reader most needs a map of."""
+
+    page = render_daily(_publication(PublicationLevel.L2B), SITE)
+
+    assert "概览" in page
+    assert 'href="#story-manus"' in page
+
+
+def test_overview_headlines_never_become_live_markup() -> None:
+    """The overview repeats every headline, so it repeats every attack too."""
+
+    publication = _publication(
+        PublicationLevel.L0,
+        details=[_story()],
+        briefs=[_brief("evil", XSS_TAG)],
+    )
+    page = render_daily(publication.signed(), SITE)
+
+    overview = page[page.index('class="section section--overview"') : page.index("今日重点")]
+    assert "<script>" not in overview
+    assert XSS_ATTR not in overview
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in overview
+
+
 def test_reduced_issue_shows_the_notice_banner() -> None:
     page = render_daily(_publication(PublicationLevel.L1), SITE)
 
