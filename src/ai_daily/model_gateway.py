@@ -27,6 +27,17 @@ from ai_daily.models import ModelEndpoint, ModelRole, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
 OUTPUT_RETRIES = 1
+# The outer loop in generate() only retries transport failures, so a schema or
+# validator rejection gets exactly 1 + OUTPUT_RETRIES provider requests. That is
+# enough for roles whose output is a handful of fields. The edition editor is not
+# one of them: a standard edition is about thirty independent text fields that
+# must simultaneously stay inside their own length cap, keep their 判断/建议/不确定性
+# prefix, avoid first person, and add up to a bounded body. One over-long field
+# anywhere kills the run - and it kills it after every analyst has already been
+# paid for, which is why 2026-08-27 and 2026-08-28 held at about ¥1.1 a window.
+# Each extra retry sends the validation error back to the model and costs one
+# editor call (~¥0.05), against a whole run's spend.
+ROLE_OUTPUT_RETRIES: dict[ModelRole, int] = {"persona_edition_editor": 3}
 # The daily pipeline defaults to one provider call at a time. The persona pipeline
 # explicitly opts into at most three concurrent analysts and reserves request/cost
 # allowance before each call so their combined in-flight spend cannot exceed budget.
@@ -52,6 +63,10 @@ class ModelInvocationFailed(RuntimeError):
 
 class ModelOutputValidationFailed(RuntimeError):
     pass
+
+
+def output_retries(role: ModelRole) -> int:
+    return ROLE_OUTPUT_RETRIES.get(role, OUTPUT_RETRIES)
 
 
 def is_recoverable(error: Exception) -> bool:
@@ -147,8 +162,9 @@ class ModelGateway:
     ) -> OutputT:
         started = self.clock()
         input_token_limit, output_token_limit = self._remaining_token_budget()
+        retries = output_retries(invocation.role)
         # Decided up front: pydantic-ai fixes its request limit when the run starts.
-        request_limit = self.ledger.request_allowance(stage, 1 + OUTPUT_RETRIES)
+        request_limit = self.ledger.request_allowance(stage, 1 + retries)
         reservation_cost = self._reservation_cost_cny
         reservation: tuple[int, float, int, int] | None = None
         if reservation_cost is not None:
@@ -183,7 +199,7 @@ class ModelGateway:
                 self._build_model(invocation.endpoint),
                 output_type=output_type,
                 instructions=instructions,
-                retries=OUTPUT_RETRIES,
+                retries=retries,
             )
             if validator is not None:
                 agent.output_validator(self._semantic_validator(validator, validation_errors))

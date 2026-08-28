@@ -49,10 +49,12 @@ from ai_daily.persona_pipeline import (
     PersonaPipeline,
     _analyst_event_row,
     _compact_edition_assembly,
+    _compact_text,
     _json_prompt,
     _memory_context_sha256,
     _normalize_finalizer_changed_fields,
     _normalize_plan,
+    _planner_event_rows,
     _safe_confirmed_change,
     _validate_critique,
     _validate_finalizer_changes,
@@ -2226,6 +2228,182 @@ def test_compact_edition_preserves_facts_and_enforces_body_budget() -> None:
         *compact.watchlist,
     ]
     assert sum(len(value.text) for value in body) <= 900
+
+
+def test_planner_sees_every_evidence_id_its_plan_may_cite() -> None:
+    """The 2026-08-28 08:10 window held on "persona plan referenced unknown evidence".
+
+    Bundles carry up to three snippets and _validate_plan accepts up to three,
+    but the planner's own rows stopped at two, so the third was real, mattered -
+    the best-corroborated events are exactly the ones with three sources - and
+    was fatal to cite.
+    """
+
+    event = factories.event(0)
+    bundle = evidence_bundle(event)
+    evidence = bundle.evidence[0]
+    bundle = bundle.model_copy(
+        update={
+            "evidence": [
+                evidence.model_copy(update={"evidence_id": f"event-0-{index}"})
+                for index in range(1, 4)
+            ]
+        }
+    )
+    snapshot = UpstreamSnapshot(
+        target_date=TARGET,
+        publication_level=PublicationLevel.L0,
+        publication_marker="a" * 64,
+        events=[event],
+        evidence_bundles=[bundle],
+        decisions=[factories.judge_decision(0)],
+        editorial_plan=None,
+        snapshot_sha256="0" * 64,
+    )
+    rows = _planner_event_rows(snapshot, ["event-0"])
+
+    assert [item["evidence_id"] for item in rows[0]["evidence"]["evidence"]] == [
+        "event-0-1",
+        "event-0-2",
+        "event-0-3",
+    ]
+
+    context = PersonaContext(
+        target_date=TARGET,
+        upstream_marker="a" * 64,
+        constitution_sha256="b" * 64,
+        memory_context_sha256="c" * 64,
+        candidate_event_ids=["event-0"],
+        retrieved_memories=[],
+        has_conflicts=False,
+    )
+    plan = PersonaPlan(
+        edition_type="standard",
+        today_thesis="今天有一项值得展开的变化。",
+        selections=[
+            PlanSelection(
+                event_id="event-0",
+                grade="S",
+                importance_reason="这项变化影响 AI 产品决策。",
+                evidence_ids=["event-0-1", "event-0-2", "event-0-3"],
+            )
+        ],
+        watchlist_event_ids=[],
+        omitted=[],
+    )
+
+    assert _normalize_plan(plan, context, rows).selections[0].evidence_ids == [
+        "event-0-1",
+        "event-0-2",
+        "event-0-3",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "limit"),
+    [
+        ("Nvidia agreed to buy the platform for $12.9 billion, sources said.", 20),
+        ("Revenue rose to 1,250,000 units, the company said, citing filings.", 20),
+    ],
+)
+def test_compaction_shortens_without_splitting_a_number(text: str, limit: int) -> None:
+    compacted = _compact_text(text, limit)
+
+    assert len(compacted) < len(text)
+    assert compacted in text
+    for number in ("12.9", "1,250,000"):
+        if number in compacted or number.split(".")[0] in compacted.split()[-1:]:
+            assert number in text
+    assert not compacted.rstrip().endswith((".", ","))
+
+
+def test_compaction_leaves_text_whole_when_no_clause_boundary_is_safe() -> None:
+    text = "判断：短句无标点无法安全截断"
+
+    assert _compact_text(text, 5) == text
+
+
+def test_compaction_trades_a_long_quote_for_a_shorter_verified_one() -> None:
+    """confirmed_change is the body term the editor may not rewrite.
+
+    It has to stay verbatim equal to its verified quote, and on 2026-08-28 the
+    five quotes were 991 of a 1600-character budget. Swapping in a shorter quote
+    for the same confirmed change buys room without touching accuracy, so it
+    happens before any of the persona's own prose is cut.
+    """
+
+    draft = _standard_draft("a" * 64)
+    assembly = _assembly_from_draft(draft)
+    source = draft.items[0]
+    short_claim = source.claims[1]
+    assert short_claim.claim_type == "current_fact"
+
+    # The same confirmed change, quoted at length from a second source. Both are
+    # verified, so the editor may legitimately pick either.
+    long_text = "The vendor said the change is now live for every account, " * 4
+    long_claim = short_claim.model_copy(
+        update={
+            "claim_id": "claim-event-0-long",
+            "text": long_text,
+            "quotes": [
+                ClaimQuote(source_kind="current_evidence", source_id="event-0-1", quote=long_text)
+            ],
+        }
+    )
+    analyses = [
+        source.model_copy(update={"claims": [*source.claims, long_claim]}),
+        *draft.items[1:],
+    ]
+    items = [
+        assembly.items[0].model_copy(
+            update={
+                "confirmed_change": AssemblyText(
+                    text=long_text,
+                    source_kind="current_evidence",
+                    source_id="event-0-1",
+                    quote=long_text,
+                )
+            }
+        ),
+        *assembly.items[1:],
+    ]
+    assembly = assembly.model_copy(update={"items": items})
+
+    compact = _compact_edition_assembly(assembly, analyses, 200)
+
+    assert compact.items[0].confirmed_change.text == short_claim.text
+    assert compact.items[0].confirmed_change.quote == short_claim.quotes[0].quote
+
+
+def test_persona_length_bounds_stay_reachable_by_the_assembly_schema() -> None:
+    """The bounds have to be satisfiable by output the schema can actually emit.
+
+    Every body text except confirmed_change is an AssemblyInterpretiveText, so
+    the persona's own prose has a hard ceiling. A no_major edition is nothing but
+    those texts, and a standard body is those texts plus verbatim quotes the
+    editor is forbidden to shorten. Both bounds were set against a body shape
+    that no longer holds: 1600 could not fit the 2026-08-28 quotes, and 300 was
+    more than a no_major edition can physically contain.
+    """
+
+    config = load_config(Path("config")).persona
+    assert config is not None
+    cap = next(
+        item.max_length
+        for item in AssemblyInterpretiveText.model_fields["text"].metadata
+        if hasattr(item, "max_length")
+    )
+
+    # thesis plus at most two watchlist entries, and nothing else.
+    no_major_ceiling = cap * 3
+    assert config.no_major_min_chars <= no_major_ceiling
+
+    # thesis, five items of six texts each, two watchlist entries.
+    standard_prose_ceiling = cap * (1 + 5 * 6 + 2)
+    # The widest confirmed_change total observed in production, 2026-08-28.
+    observed_quote_total = 991
+    assert config.standard_max_chars >= standard_prose_ceiling
+    assert config.standard_max_chars >= observed_quote_total + cap * (1 + 5 * 5)
 
 
 class _FakeGateway:

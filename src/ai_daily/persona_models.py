@@ -36,8 +36,12 @@ class PersonaRuntimeConfig(StrictModel):
     baseline_window_days: int = Field(default=90, ge=1, le=90)
     evidence_retention_days: int = Field(default=120, ge=120)
     standard_min_chars: int = Field(default=700, ge=100)
-    standard_max_chars: int = Field(default=1600, ge=300)
-    no_major_min_chars: int = Field(default=300, ge=100)
+    standard_max_chars: int = Field(default=2000, ge=300)
+    # Floor is 40, not 100, and the default is 50, not 300: a no_major body is
+    # the thesis plus at most two watchlist entries, and AssemblyInterpretiveText
+    # caps each of those at 30 characters, so 90 is the most such an edition can
+    # physically contain. See config/persona.yaml for the full arithmetic.
+    no_major_min_chars: int = Field(default=50, ge=40)
     no_major_max_chars: int = Field(default=600, ge=200)
     publish_mode: Literal["disabled", "draft_only"] = "draft_only"
     ai_disclosure: str = "本文由 AI 参与资料整理和初稿生成，并经过证据约束与自动审稿。"
