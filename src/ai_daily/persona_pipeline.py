@@ -47,6 +47,7 @@ from ai_daily.persona_render import render_persona
 from ai_daily.persona_snapshot import load_upstream_snapshot
 from ai_daily.persona_verifier import (
     VerificationScope,
+    body_text_chars,
     contains_first_person,
     normalize_analysis_item,
     normalize_edition_draft,
@@ -595,7 +596,15 @@ def _planner_event_rows(snapshot: Any, event_ids: list[str]) -> list[dict[str, A
                             "source": item["source"],
                             "excerpt": _bounded_text(str(item["excerpt"]), 220),
                         }
-                        for item in evidence["evidence"][:2]
+                        # Every id the planner may legally cite has to be visible
+                        # here. Bundles carry up to three snippets and
+                        # _validate_plan accepts up to three, but this row used
+                        # to stop at two, so the third existed, mattered (the
+                        # best-corroborated events are exactly the ones with
+                        # three sources) and was unciteable. Citing it held the
+                        # 2026-08-28 08:10 window on "referenced unknown
+                        # evidence".
+                        for item in evidence["evidence"][:3]
                     ],
                 },
                 "judge": row["judge"],
@@ -880,7 +889,7 @@ def _compact_edition_assembly(
         *(value for item in items for value in _assembly_item_body_values(item)),
         *assembly.watchlist,
     ]
-    if sum(len(value.text) for value in body_values) <= maximum:
+    if _body_length(body_values) <= maximum:
         return assembly.model_copy(update={"items": items})
     items = [item.model_copy(update={"recommended_action": None}) for item in items]
     assembly = assembly.model_copy(update={"items": items, "watchlist": []})
@@ -888,9 +897,29 @@ def _compact_edition_assembly(
         assembly.thesis,
         *(value for item in items for value in _assembly_item_body_values(item)),
     ]
-    if sum(len(value.text) for value in body_values) <= maximum:
+    if _body_length(body_values) <= maximum:
         return assembly
-    fixed = sum(len(item.confirmed_change.text) for item in items)
+    # confirmed_change is the only body text the editor may not rewrite - it has
+    # to stay verbatim equal to its verified quote - and it is also the largest
+    # single term. On 2026-08-28 the five quotes alone were 991 of a 1600-char
+    # budget. So before shortening any of the persona's own prose, swap each one
+    # for the shortest quote in the same analysis that establishes the same
+    # confirmed change. Every candidate is already verified, so this trades no
+    # accuracy for room.
+    items = [
+        item.model_copy(
+            update={"confirmed_change": _shortest_confirmed_change(item, sources[item.event_id])}
+        )
+        for item in items
+    ]
+    assembly = assembly.model_copy(update={"items": items})
+    body_values = [
+        assembly.thesis,
+        *(value for item in items for value in _assembly_item_body_values(item)),
+    ]
+    if _body_length(body_values) <= maximum:
+        return assembly
+    fixed = sum(_body_length([item.confirmed_change]) for item in items)
     editable = [
         assembly.thesis,
         *(
@@ -942,23 +971,73 @@ def _assembly_item_body_values(item: EditionAssemblyItem) -> list[AssemblyText]:
     ]
 
 
+def _body_length(values: list[AssemblyText]) -> int:
+    return sum(body_text_chars(value.text) for value in values)
+
+
+SENTENCE_MARKS = ("\u3002", "\uff01", "\uff1f", ".", "!", "?")
+CLAUSE_MARKS = ("\uff1b", "\uff0c", ";", ",")
+
+
+def _inside_number(text: str, index: int) -> bool:
+    """Is this mark a decimal or thousands separator rather than a clause end?
+
+    Cutting at the dot in "$12.9 billion" leaves "$12." and reports a number the
+    evidence never gave.
+    """
+
+    return 0 < index < len(text) - 1 and text[index - 1].isdigit() and text[index + 1].isdigit()
+
+
+def _clause_cuts(text: str, marks: tuple[str, ...], limit: int) -> list[int]:
+    """Where a clause ends, as an end offset, ignoring stubs and number separators."""
+
+    return sorted(
+        index + 1
+        for index, character in enumerate(text)
+        if character in marks and index >= limit // 2 and not _inside_number(text, index)
+    )
+
+
 def _compact_text(text: str, limit: int) -> str:
+    """Cut to ``limit`` if a clause ends there, else at the first clause past it.
+
+    Only sentence marks inside the first ``limit`` characters used to count, and
+    an analytical Chinese sentence rarely carries one that early, so at the small
+    caps this is called with, the text came back untouched and the body stayed
+    over budget - which is how the 2026-08-28 07:40 window reached 1738 with a
+    compaction pass already in front of it. Clause marks now count too, and a
+    text with no boundary inside the cap gives up its later clauses rather than
+    nothing at all. Nothing is ever cut mid-clause: that splits an entity or a
+    number and states something the evidence does not, which is worse than the
+    held run an over-long body earns.
+    """
+
     if len(text) <= limit:
         return text
-    prefix = text[:limit]
-    boundaries = [prefix.rfind(mark) for mark in ("。", "\uff01", "\uff1f", ".", "!", "?")]
-    boundary = max(boundaries)
-    if boundary >= limit // 2:
-        return prefix[: boundary + 1].rstrip()
+    for marks in (SENTENCE_MARKS, CLAUSE_MARKS):
+        fitting = [cut for cut in _clause_cuts(text, marks, limit) if cut <= limit]
+        if fitting:
+            return _trim_clause_end(text[: fitting[-1]])
+    overflowing = sorted(
+        _clause_cuts(text, SENTENCE_MARKS, limit) + _clause_cuts(text, CLAUSE_MARKS, limit)
+    )
+    for cut in overflowing:
+        if cut < len(text):
+            return _trim_clause_end(text[:cut])
     return text
 
 
-def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
-    if not contains_first_person(value.text) and not (
-        value.quote and contains_first_person(value.quote)
-    ):
-        return value
-    candidates = [
+def _trim_clause_end(text: str) -> str:
+    """Drop the clause mark a cut leaves dangling, so the block reads as finished."""
+
+    return text.rstrip().rstrip("".join(CLAUSE_MARKS)).rstrip()
+
+
+def _confirmed_change_candidates(source: AnalysisItem) -> list[AnalysisClaim]:
+    """Verified current_fact claims usable verbatim as a confirmed_change."""
+
+    return [
         claim
         for claim in source.claims
         if claim.claim_type == "current_fact"
@@ -967,15 +1046,35 @@ def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> Assembl
         and claim.text == claim.quotes[0].quote
         and not contains_first_person(claim.text)
     ]
-    if not candidates:
-        return value
-    claim = min(candidates, key=lambda candidate: len(candidate.text))
+
+
+def _as_confirmed_change(claim: AnalysisClaim) -> AssemblyText:
     return AssemblyText(
         text=claim.text,
         source_kind="current_evidence",
         source_id=claim.current_evidence_ids[0],
         quote=claim.quotes[0].quote,
     )
+
+
+def _safe_confirmed_change(value: AssemblyText, source: AnalysisItem) -> AssemblyText:
+    if not contains_first_person(value.text) and not (
+        value.quote and contains_first_person(value.quote)
+    ):
+        return value
+    candidates = _confirmed_change_candidates(source)
+    if not candidates:
+        return value
+    return _as_confirmed_change(min(candidates, key=lambda candidate: len(candidate.text)))
+
+
+def _shortest_confirmed_change(item: EditionAssemblyItem, source: AnalysisItem) -> AssemblyText:
+    candidates = _confirmed_change_candidates(source)
+    if not candidates:
+        return item.confirmed_change
+    shortest = _as_confirmed_change(min(candidates, key=lambda candidate: len(candidate.text)))
+    current = item.confirmed_change
+    return shortest if body_text_chars(shortest.text) < body_text_chars(current.text) else current
 
 
 def _required_block(

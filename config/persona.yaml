@@ -14,8 +14,25 @@ max_call_cost_cny: 0.25
 baseline_window_days: 90
 evidence_retention_days: 120
 standard_min_chars: 700
-standard_max_chars: 1600
-no_major_min_chars: 300
+# The editor cannot make this bound whatever it likes. A standard body is the
+# thesis, up to five items and the watchlist; every text except confirmed_change
+# is capped at 30 characters by AssemblyInterpretiveText, so the persona's own
+# prose tops out near 990. confirmed_change is the rest, and it is not the
+# editor's to shorten - it has to stay verbatim equal to its verified quote, so
+# its length is set by whoever wrote the source. That term measured 574 on
+# 2026-08-27 and 991 on 2026-08-28, when three of the five quotes were long
+# English sentences. 1600 could not hold 991 plus a written-out body, which is
+# why the 07:40 window died at 1738 rather than because the model rambled.
+# 2000 covers the schema's own ceiling plus the widest quote total seen.
+standard_max_chars: 2000
+# Floor lowered from 300. A no_major edition has no items, so its whole body is
+# the thesis plus at most two watchlist entries - three 30-character texts, 90
+# at the absolute most. 300 could never be reached, so a genuinely quiet day was
+# guaranteed to hold. 50 asks for two of the three texts to be used properly.
+# This is the arithmetic being made consistent, not an editorial decision that a
+# quiet day deserves 50 characters: if it deserves more, the 30-character cap on
+# thesis and watchlist is what has to move.
+no_major_min_chars: 50
 no_major_max_chars: 600
 publish_mode: draft_only
 ai_disclosure: 本文由 AI 参与资料整理和初稿生成，并经过证据约束与自动审稿。

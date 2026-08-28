@@ -14,6 +14,7 @@ from ai_daily.model_gateway import (
     ModelGateway,
     ModelInvocationFailed,
     is_recoverable,
+    output_retries,
 )
 from ai_daily.models import BudgetConfig, JudgeDecision, ModelEndpoint
 
@@ -568,3 +569,38 @@ async def test_cancelled_persona_call_releases_budget_reservation(
     assert ledger.reserved_input_tokens == 0
     assert ledger.reserved_output_tokens == 0
     assert ledger.reserved_cost_cny == pytest.approx(0)
+
+
+def test_the_edition_editor_is_the_only_role_with_extra_output_retries() -> None:
+    """One retry is enough for a handful of fields; an edition is about thirty.
+
+    Every one of them has to clear its own length cap, keep its prefix, avoid
+    first person and add up to a bounded body at the same time, and a single
+    miss anywhere throws away a run that has already paid for every analyst -
+    which is what "Exceeded maximum output retries (1)" cost on 2026-08-27 and
+    2026-08-28.
+    """
+
+    assert output_retries("persona_edition_editor") == 3
+    for role in ("judge", "editor", "persona_planner", "persona_analyst", "persona_critic"):
+        assert output_retries(role) == 1
+
+
+def test_the_persona_budget_covers_the_editors_worst_case_reservation() -> None:
+    config = load_config()
+    persona = config.persona
+    assert persona is not None
+    endpoint = config.models.roles["persona_edition_editor"].primary
+    requests = 1 + output_retries("persona_edition_editor")
+    # The editor's prompt cap, as bytes, which is how the ceiling counts them.
+    prompt = "\u7248" * 90_000
+    reserved_input, reserved_output = ModelGateway._call_token_ceiling(
+        endpoint, "", prompt, requests, persona.budget.output_token_limit
+    )
+    reserved_cost = ModelGateway._token_cost_ceiling(endpoint, reserved_input, reserved_output)
+
+    ledger = BudgetLedger(persona.budget)
+    assert requests <= ledger.stage_remaining_requests(BudgetStage.PERSONA)
+    assert reserved_cost <= ledger.stage_remaining_cost(BudgetStage.PERSONA)
+    assert reserved_input <= ledger.remaining_input_tokens()
+    assert reserved_output <= ledger.remaining_output_tokens()

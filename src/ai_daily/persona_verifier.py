@@ -687,13 +687,25 @@ def _verify_source_links(
         raise ValueError("edition source links do not match used current evidence URLs")
 
 
+def body_text_chars(text: str) -> int:
+    """The character count the published body is measured in.
+
+    Shared with the pipeline's pre-validation compaction so the budget it plans
+    against is the one this check applies. Counting ``len(text)`` instead
+    overstates English quotes by their spaces, which made compaction reserve
+    room it did not need.
+    """
+
+    return sum(1 for character in unicodedata.normalize("NFC", text) if not character.isspace())
+
+
 def _verify_length(
     draft: EditionDraft,
     blocks: list[tuple[str, PublicTextBlock]],
     config: PersonaRuntimeConfig,
 ) -> None:
     body_chars = sum(
-        sum(1 for character in unicodedata.normalize("NFC", block.text) if not character.isspace())
+        body_text_chars(block.text)
         for path, block in blocks
         if path not in {"title_block", "digest_block"}
     )
