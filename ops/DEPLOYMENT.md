@@ -12,7 +12,8 @@
 | DNS | 阿里云 A 记录 `daily → 101.32.114.8`，TTL 600 秒 |
 | 站点根 | `/www/wwwroot/ai-daily` |
 | 运行用户 | `ai-daily`（system 用户，nologin，无 sudo） |
-| 定时 | `ai-daily.timer` → 04:20 / 05:05 / 07:00 CST |
+| 定时 | `ai-daily.timer` → 04:20 / 05:05 / 07:00 / 08:30 CST |
+| 定时（主编版） | `ai-daily-persona.timer` → 08:50 / 09:20 / 09:50 CST |
 | 反代 | Caddy，与 `zb.jiayutool.cn` 同实例，互不影响 |
 
 ## 目录
@@ -40,6 +41,24 @@
 同机还存着别的服务的凭证，没有任何理由看到 home 目录。把 uv、Python、cache 和 SSH 身份
 都放到站点根下，`ReadWritePaths` 就只剩一条。启动报 `203/EXEC` 通常意味着有东西被挪回
 了 `/home`。
+
+**主编版窗口必须全部晚于基础日报的最后一个窗口。** 主编版一旦出刊就冻结当天的上游
+marker（`_persona_date_is_frozen`），排在基础窗口之前会让那个窗口的升级永远发不出去。
+`tests/test_workflows.py` 断言了这个顺序。
+
+## 已验证（2026-08-28 实测）
+
+- **源连通性**：84 个源，83 个启用，82 个可达。新增的 9 个（openai-changelog、
+  midjourney-updates、cohere-blog、fal-blog、aisi-blog、x-chatgpt、x-fal、
+  x-inclusionai、x-tibo）全部 `ok`。仅存的失败仍是 xAI（`xai-news` 已禁用、
+  `x-xai` 失败）。
+- **两个只在生产暴露的坑**：采集器不跟 HTTP 跳转，`developers.openai.com` 的
+  changelog 308 跳到 `learn.chatgpt.com`，配置必须写终点；RSSHub 对 `AntLingAGI`
+  连续返回合法但零条目的 feed，改用母账号 `TheInclusionAI`。
+  本机 curl 通不代表生产能采，加源后一律以服务器 probe 为准。
+- **验证办法（不必部署）**：`scp config/*.yaml root@…:/tmp/probe-cfg/` 后跑
+  `ai-daily --config-dir /tmp/probe-cfg probe-sources`；`--config-dir` 是全局参数，
+  必须放在子命令**前面**。
 
 ## 已验证（2026-08-13 实测）
 
@@ -85,8 +104,13 @@ DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产
    （GLM-5.3-Flash、Kimi K3 等）跨媒体、跨语言合并，带年份/榜单/同语言重叠三道
    护栏。当天实测 681 条原始条目下，跨域佐证事件从 1 个升至 7 个，
    「两个独立域佐证」首次实际可达。
-4. **甲鱼主编版尚未部署**：代码与 systemd unit 已在隔离分支完成验证；合并和部署前不得把
-   `ai-daily-persona.timer` 标记为已上线。真实账号只读探测确认草稿可用、freepublish 无权限。
+4. ~~甲鱼主编版尚未部署~~：已上线，`ai-daily-persona.timer` 与 service 均 enabled。
+   微信仍是 `draft_only`，freepublish 无权限。
+5. **主编版每天出刊失败**：2026-08-28 三个窗口全部 `held`，三次原因各不相同，都出在
+   模型输出校验——`Exceeded maximum output retries`、
+   `edition body length 1738 outside 700-1600`、`persona plan referenced unknown evidence`。
+   fail-fast 生效（宁可不发也不发废稿），但每次仍花掉约 ¥1.1，且 `/jiayu/` 停在 08-27。
+   正文长度上限 1600 被模型反复越过，是最容易先修的一条。
 
 ## 常用命令
 
