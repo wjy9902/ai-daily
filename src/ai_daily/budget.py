@@ -285,8 +285,7 @@ class BudgetLedger:
         with self._transaction():
             if (
                 requests > self.stage_reserved_requests[stage.value]
-                or cost_cny
-                > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
+                or cost_cny > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
                 or input_tokens > self.reserved_input_tokens
                 or output_tokens > self.reserved_output_tokens
             ):
@@ -294,9 +293,7 @@ class BudgetLedger:
             self.reserved_requests -= requests
             self.reserved_input_tokens -= input_tokens
             self.reserved_output_tokens -= output_tokens
-            self.reserved_cost_cny = _subtract_reserved_cost(
-                self.reserved_cost_cny, cost_cny
-            )
+            self.reserved_cost_cny = _subtract_reserved_cost(self.reserved_cost_cny, cost_cny)
             self.stage_reserved_requests[stage.value] -= requests
             self.stage_reserved_cost[stage.value] = _subtract_reserved_cost(
                 self.stage_reserved_cost[stage.value], cost_cny
@@ -315,8 +312,7 @@ class BudgetLedger:
         with self._transaction():
             if (
                 requests > self.stage_reserved_requests[stage.value]
-                or cost_cny
-                > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
+                or cost_cny > self.stage_reserved_cost[stage.value] + RESERVATION_COST_TOLERANCE
                 or input_tokens > self.reserved_input_tokens
                 or output_tokens > self.reserved_output_tokens
             ):
@@ -324,9 +320,7 @@ class BudgetLedger:
             self.reserved_requests -= requests
             self.reserved_input_tokens -= input_tokens
             self.reserved_output_tokens -= output_tokens
-            self.reserved_cost_cny = _subtract_reserved_cost(
-                self.reserved_cost_cny, cost_cny
-            )
+            self.reserved_cost_cny = _subtract_reserved_cost(self.reserved_cost_cny, cost_cny)
             self.stage_reserved_requests[stage.value] -= requests
             self.stage_reserved_cost[stage.value] = _subtract_reserved_cost(
                 self.stage_reserved_cost[stage.value], cost_cny

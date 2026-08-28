@@ -36,9 +36,7 @@ class WechatHTTPError(WechatPublicationError):
 
 
 class WechatAPIError(WechatPublicationError):
-    RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset(
-        {-1, 40001, 40014, 42001, 45009}
-    )
+    RETRYABLE_CODES: ClassVar[frozenset[int]] = frozenset({-1, 40001, 40014, 42001, 45009})
 
     def __init__(self, errcode: int) -> None:
         super().__init__(f"WeChat API error {errcode}")
@@ -179,9 +177,7 @@ class PublicationSlots:
                 "SELECT state, retryable FROM slots WHERE publication_slot = ?",
                 (publication_slot,),
             ).fetchone()
-            reclaimable = row and (
-                (row[0] == "failed" and row[1] == 1) or row[0] == "prepared"
-            )
+            reclaimable = row and ((row[0] == "failed" and row[1] == 1) or row[0] == "prepared")
             if row and not reclaimable:
                 raise WechatPublicationError(
                     f"publication slot already claimed with state={row[0]}"

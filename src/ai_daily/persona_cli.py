@@ -138,8 +138,10 @@ async def _execute_target(layout: SiteLayout, target: WechatTarget) -> Operation
             "author": target.author,
         }
         current = slots.get(target.attestation.publication_slot)
-        retryable = current is None or current["state"] == "prepared" or (
-            current["state"] == "failed" and current["retryable"]
+        retryable = (
+            current is None
+            or current["state"] == "prepared"
+            or (current["state"] == "failed" and current["retryable"])
         )
         if not retryable:
             return await reconcile_draft(**arguments)
@@ -253,9 +255,7 @@ def persist_wechat_target(layout: SiteLayout, target: WechatTarget) -> Path:
     return path
 
 
-def _persist_render_receipt(
-    layout: SiteLayout, target_date: date, receipt: RenderReceipt
-) -> Path:
+def _persist_render_receipt(layout: SiteLayout, target_date: date, receipt: RenderReceipt) -> Path:
     path = layout.persona_render_receipt_path(target_date)
     if path.exists():
         existing = RenderReceipt.model_validate_json(path.read_text(encoding="utf-8"))
