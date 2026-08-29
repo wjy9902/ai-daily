@@ -227,3 +227,35 @@ def test_stage_totals_are_reported_separately(tmp_path: Path) -> None:
 
     stored = json.loads((tmp_path / "budget.json").read_text(encoding="utf-8"))
     assert stored["stage_requests"]["judge"] == 3
+
+
+def test_a_days_observed_spend_fits_every_stage_cost_allowance() -> None:
+    """The money slice has to fit what the stage actually spends.
+
+    2026-08-29 is the case that made this a split: the day spent ¥3.13 of ¥8,
+    yet the plan stage hit ¥2.008 against a ¥2.00 slice and the last window
+    degraded to L2A with ¥4.87 unspent. The judge is the opposite shape - 40 of
+    its 54 requests, ¥0.45 of its money - so one share could not size both.
+    """
+
+    config = load_config(Path("config"))
+    ledger = BudgetLedger(config.models.budget)
+    observed_cost = {
+        BudgetStage.JUDGE: 0.450372,
+        BudgetStage.PLAN: 2.008411,
+        BudgetStage.DRAFT: 0.666518,
+    }
+    observed_requests = {
+        BudgetStage.JUDGE: 40,
+        BudgetStage.PLAN: 5,
+        BudgetStage.DRAFT: 21,
+    }
+
+    for stage, spent in observed_cost.items():
+        available = ledger.stage_remaining_cost(stage)
+        assert available >= spent * 1.5, (
+            f"{stage.value} allows ¥{available:.2f} but spent ¥{spent:.2f} on "
+            "2026-08-29; a repeat day would degrade on its own slice"
+        )
+    for stage, used in observed_requests.items():
+        assert ledger.stage_remaining_requests(stage) >= used * 1.3

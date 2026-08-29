@@ -37,18 +37,36 @@ class BudgetStage(StrEnum):
     PERSONA = "persona"
 
 
-#: How the day's budget is divided. Sized against observed spend, not call
-#: counts: planning is one call per run but the most expensive kind of call
-#: (full candidate payload in, whole plan out, validator retries billed), and
-#: the day holds up to three timer windows that may each need to replan. On
-#: 2026-08-27 planning alone cost ¥0.75 while its slice at 10% was ¥0.50,
-#: which left the later windows unable to replan at all. Judging is the cheap
-#: stage in practice (¥0.26 that same day), so its share shrinks instead.
-STAGE_SHARE: dict[BudgetStage, float] = {
+#: How the day's budget is divided. Requests and money are split deliberately,
+#: because the stages want opposite things and one number could not serve both.
+#: Judging is many cheap calls: on 2026-08-29 it used 40 of its 54 requests but
+#: only ¥0.45 of its ¥2.40. Planning is the reverse - 5 requests, but the most
+#: expensive kind of call (full candidate payload in, whole plan out, validator
+#: retries billed), and up to four windows may each replan. A single share had
+#: to be big enough for the judge's request count, which made the planner's
+#: money slice a fraction of that same number, and the planner kept hitting it:
+#: 10% was too small on 2026-08-27, 25% of a raised ¥8 ceiling was still exactly
+#: exhausted on 2026-08-29 (¥2.008 of ¥2.00) while the day as a whole had spent
+#: only ¥3.13 of ¥8 - the last window degraded to L2A with ¥4.87 unspent.
+#: Splitting the two fixes the allocation without loosening the money ceiling,
+#: which stays the real safety control.
+STAGE_REQUEST_SHARE: dict[BudgetStage, float] = {
+    # 54 requests; four windows need 40 before retries.
     BudgetStage.JUDGE: 0.30,
-    BudgetStage.PLAN: 0.25,
-    BudgetStage.DRAFT: 0.45,
+    # 27 requests against 5 observed.
+    BudgetStage.PLAN: 0.15,
+    # 99 requests against 21 observed.
+    BudgetStage.DRAFT: 0.55,
     # Persona uses a separate ledger and owns its full configured allowance.
+    BudgetStage.PERSONA: 1.0,
+}
+STAGE_COST_SHARE: dict[BudgetStage, float] = {
+    # ¥1.20 against ¥0.45 observed.
+    BudgetStage.JUDGE: 0.15,
+    # ¥4.00 against ¥2.01 observed - the stage that actually spends.
+    BudgetStage.PLAN: 0.50,
+    # ¥2.80 against ¥0.67 observed.
+    BudgetStage.DRAFT: 0.35,
     BudgetStage.PERSONA: 1.0,
 }
 RESERVATION_COST_TOLERANCE = 1e-6
@@ -212,12 +230,12 @@ class BudgetLedger:
         )
 
     def stage_remaining_requests(self, stage: BudgetStage) -> int:
-        allowance = int(self.config.request_limit * STAGE_SHARE[stage])
+        allowance = int(self.config.request_limit * STAGE_REQUEST_SHARE[stage])
         used = self.stage_requests[stage.value] + self.stage_reserved_requests[stage.value]
         return max(0, min(allowance - used, self.remaining_requests()))
 
     def stage_remaining_cost(self, stage: BudgetStage) -> float:
-        allowance = self.config.cost_cny_limit * STAGE_SHARE[stage]
+        allowance = self.config.cost_cny_limit * STAGE_COST_SHARE[stage]
         used = self.stage_cost[stage.value] + self.stage_reserved_cost[stage.value]
         return max(0.0, min(allowance - used, self.remaining_cost()))
 

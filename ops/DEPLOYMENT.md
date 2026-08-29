@@ -130,6 +130,26 @@ DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产
    这是把算术改成一致，不是「平静的一天值 50 个字」的编辑判断；要说更多，得先动
    thesis 与 watchlist 的 30 字符上限。
 
+   **2026-08-29 续**：上述三条一条都没再复发，版面编辑的 `request_count: 4` 证明
+   按角色重试已生效。但三个窗口仍全 `held`，露出下一层的两条，均已修复：
+   - `item ... delta lacks current or baseline evidence`（分析师）：`delta_from_before`
+     按指令和 schema 都是可选块，分析师被要求「没有可信 baseline 就省略」。它照写不误
+     却只给了一侧出处，整轮就废掉。改为在 `normalize_analysis_item` 里丢弃这个块，
+     而不是让一段可选的分析毁掉已经付过钱的整轮。
+   - `claim ... contains ungrounded entity/version/number anchors`（版面编辑）：
+     `normalize_analysis_item` 早就会把分析师无法落地的 anchor 换成
+     「相关指标 / 相关版本」，但 `normalize_edition_draft` 从来没有同样处理，而版面
+     编辑是要自己写短句的。同一条规则，一边有安全网一边没有。现在两边一致，且只擦掉
+     证据里查不到的 anchor——「Qwen3.8-Flash」这种有据可查的照常保留。
+
+6. **基础日报 plan 阶段份额撞墙**：2026-08-29 全天只花 ¥3.13/¥8，但 plan 阶段
+   ¥2.008 撞满自己的 ¥2.00，最后一个窗口降级成 L2A（0 详报 / 12 快讯），
+   还剩 ¥4.87 没花。升级守卫保住了当期的 L1，属于运气。
+   根因是一个 `STAGE_SHARE` 同时管请求数和钱，而两个阶段要的东西相反：判定用掉
+   54 个请求里的 40 个却只花 ¥0.45，规划只用 5 个请求却是最贵的调用。份额得大到
+   够判定用请求，规划的钱就只能是同一个比例的零头。已拆成 `STAGE_REQUEST_SHARE`
+   与 `STAGE_COST_SHARE` 两张表，**没有抬高 ¥8 上限**——钱仍然是真正的安全阀。
+
 ## 常用命令
 
 ```bash
