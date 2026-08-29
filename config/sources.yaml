@@ -435,10 +435,18 @@ sources:
     channel: official
     limit: 15
 
+  # Same empty-timeline failure as @AntLingAGI below: RSSHub answers 200 with a
+  # well-formed, zero-item feed for @AnthropicAI, so probe-sources reported it
+  # failed on 2026-08-29 while @claudeai and @ClaudeDevs were fine. Unlike
+  # AntLingAGI there is no parent account to switch to, so this takes the media
+  # route — 20 items against 0, and it does carry the announcements that matter
+  # (Model Hardware Standard, the automated-alignment research). It is a partial
+  # view that misses text-only posts; @claudeai, @ClaudeDevs and claude.com/blog
+  # cover much of that gap. Move back to the timeline route once it returns items.
   - name: x-anthropic
     display_name: Anthropic @ X
     kind: rss
-    url: https://rsshub.jiayutool.cn/twitter/user/AnthropicAI
+    url: https://rsshub.jiayutool.cn/twitter/media/AnthropicAI
     tier: A
     channel: official
     limit: 15
