@@ -1,0 +1,42 @@
+[Unit]
+Description=Repair we-mp-rss WeChat short links (upstream ~ vs _ bug)
+After=docker.service
+
+[Service]
+Type=oneshot
+# The sqlite file is the we-mp-rss container's bind-mounted data volume, owned
+# by root on the host. Nothing here touches the ai-daily site root.
+ExecStart=/usr/bin/python3 /www/wwwroot/ai-daily/app/ops/feed-infra/normalize-weread-urls.py
+TimeoutStartSec=120
+Nice=15
+IOWeight=20
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+ReadWritePaths=/www/wwwroot/ai-daily/feed-infra/data/we-mp-rss
+ReadOnlyPaths=/www/wwwroot/ai-daily/app
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=weread-url-normalize
+
+[Install]
+WantedBy=multi-user.target

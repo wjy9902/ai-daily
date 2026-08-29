@@ -122,7 +122,14 @@ curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
   `_` 版本返回真正的 3.2MB 正文（302 到 `?nwr_flag=1#wechat_redirect`）。
   受影响的号当天是 Kimi、新智元、百度文心。已一次性把库里 `articles.url` 的 `~` 改写成 `_`
   并重置 `fix_fail_count`/`status` 让补抓重试，六篇全部拿到正文。
-  **这是上游 bug，新文章仍会带 `~` 进来**——要么定期跑一次同样的改写，要么打补丁/盯上游。
+  **这是上游 bug，新文章仍会带 `~` 进来**——2026-08-29 实测，清空后几分钟内又冒出 5 条。
+  已用 `weread-url-normalize.timer`（每 10 分钟，与采集同频）常态化改写，脚本是
+  `ops/feed-infra/normalize-weread-urls.py`：只重写 URL，并且**只把 `has_content=0`
+  的那些解锁重试**——全量重置会让真正抓不到的文章无限重排，架空
+  `gather.content_max_failures`。这是给上游 bug 打的补丁，不是修好了；上游停止产出
+  `~` 之后应当连同 timer 一起删掉。
+  **切勿运行容器里的 `scripts/fix_weread_mp_urls.py`**，它做的是反向改写（`_` → `~`），
+  会把好数据改坏。
 - 判断正文链路是否健康：`select sum(has_content), count(*) from articles`。
 
 ## 接入管线
