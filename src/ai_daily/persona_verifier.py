@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ai_daily.content import QUOTE_MIN_CHARS, normalize_quote_text, quote_supports
@@ -91,6 +91,10 @@ class VerificationScope:
     current_ids_by_event: dict[str, set[str]]
     baseline_ids_by_event: dict[str, set[str]]
     memory_ids_by_event: dict[str, set[str]]
+    #: Current evidence excerpts by id. normalize_edition_draft needs the same
+    #: text _verify_interpretive_text grounds against; without it an anchor can
+    #: only be judged ungrounded.
+    current_evidence: dict[str, str] = field(default_factory=dict)
 
 
 def verify_edition(
@@ -186,6 +190,7 @@ def normalize_edition_draft(
 ) -> EditionDraft:
     """Normalize mechanical labels and collective voice, then rebuild blocks."""
     claims = _claim_map(draft.claims)
+    maps = _source_maps(scope)
     normalized: dict[str, AnalysisClaim] = {}
     block_updates: dict[str, PublicTextBlock] = {}
     dropped_claim_ids: set[str] = set()
@@ -213,6 +218,11 @@ def normalize_edition_draft(
                 prefix = INTERPRETIVE_PREFIX[claim.claim_type]
                 if not text.startswith(prefix):
                     text = prefix + text
+                # The analyst's interpretive text is scrubbed of anchors it cannot
+                # ground; the editor writes its own short sentences and was never
+                # given the same treatment, so one unsupported version string in a
+                # headline killed the 2026-08-29 09:50 window outright.
+                text = _scrub_ungrounded_anchors(text, prefix, _claim_evidence_text(claim, maps))
             normalized[claim_id] = claim.model_copy(update={"text": text})
         block_updates[path] = block.model_copy(
             update={
@@ -397,7 +407,23 @@ def normalize_analysis_item(
         claims.append(claim.model_copy(update={**claim_updates, **quote_updates}))
 
     claims_by_id = {claim.claim_id: claim for claim in claims}
-    item_updates: dict[str, object] = {"claims": claims, **block_updates}
+    delta_block = block_updates.get("delta_from_before_block")
+    delta_update: dict[str, object] = {}
+    if delta_block is not None and not all(
+        claims_by_id[claim_id].current_evidence_ids and claims_by_id[claim_id].baseline_evidence_ids
+        for claim_id in delta_block.claim_ids
+    ):
+        # The analyst is told to omit this block unless a baseline it trusts
+        # exists, and every reader of it downstream already treats it as
+        # optional. An under-sourced delta is that instruction being missed, so
+        # drop the block instead of losing a run that has paid for every other
+        # analyst - which is what the 2026-08-29 08:50 and 09:20 windows did.
+        dropped = set(delta_block.claim_ids)
+        del block_updates["delta_from_before_block"]
+        claims = [claim for claim in claims if claim.claim_id not in dropped]
+        claims_by_id = {claim.claim_id: claim for claim in claims}
+        delta_update = {"delta_from_before_block": None}
+    item_updates: dict[str, object] = {"claims": claims, **block_updates, **delta_update}
     for name in ANALYSIS_BLOCK_NAMES:
         block = block_updates.get(name)
         if block is None:
@@ -543,6 +569,14 @@ def _verify_interpretive_text(
         )
 
 
+def _source_maps(scope: VerificationScope) -> dict[str, dict[str, str]]:
+    return {
+        "current_evidence": scope.current_evidence,
+        "baseline_evidence": scope.baseline_evidence,
+        "experience_memory": {key: value.source_excerpt for key, value in scope.memories.items()},
+    }
+
+
 def _claim_evidence_text(
     claim: AnalysisClaim,
     source_maps: dict[str, dict[str, str]],
@@ -558,6 +592,29 @@ def _claim_evidence_text(
         for source_id in source_ids
         if source_id in source_maps[kind]
     ).lower()
+
+
+def _scrub_ungrounded_anchors(text: str, prefix: str, evidence: str) -> str:
+    """Replace only the anchors the evidence does not carry.
+
+    An entity, version or number the evidence does not contain is something the
+    edition would be stating on its own authority, which _verify_interpretive_text
+    rejects outright. Replacing it here turns a held run into a slightly vaguer
+    sentence. Grounded anchors are left alone: "Qwen3.8-Flash" is what makes the
+    line worth reading, and the evidence supports it.
+    """
+
+    body = text.removeprefix(prefix)
+
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token.lower() in evidence:
+            return token
+        return "相关指标" if token[0].isdigit() else "相关版本"
+
+    while (scrubbed := ANCHOR_RE.sub(replace, body)) != body:
+        body = scrubbed
+    return prefix + body
 
 
 def _ungrounded_anchors(text: str, prefix: str, evidence: str) -> set[str]:

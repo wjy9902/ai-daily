@@ -9,7 +9,8 @@ import factories
 import pytest
 
 from ai_daily.budget import (
-    STAGE_SHARE,
+    STAGE_COST_SHARE,
+    STAGE_REQUEST_SHARE,
     BudgetExceeded,
     BudgetLedger,
     BudgetStage,
@@ -96,13 +97,13 @@ def test_an_exhausted_stage_stops_only_that_stage(tmp_path: Path) -> None:
     config = factories.budget_config(request_limit=10, cost_cny_limit=5)
     ledger = _ledger(store, config)
 
-    ledger.record_requests(int(10 * STAGE_SHARE[BudgetStage.JUDGE]), BudgetStage.JUDGE)
+    ledger.record_requests(int(10 * STAGE_REQUEST_SHARE[BudgetStage.JUDGE]), BudgetStage.JUDGE)
 
     with pytest.raises(StageBudgetExceeded, match="judge"):
         ledger.check_stage(BudgetStage.JUDGE)
     ledger.check_stage(BudgetStage.PLAN)
     ledger.check_stage(BudgetStage.DRAFT)
-    assert ledger.remaining_requests() == 10 - int(10 * STAGE_SHARE[BudgetStage.JUDGE])
+    assert ledger.remaining_requests() == 10 - int(10 * STAGE_REQUEST_SHARE[BudgetStage.JUDGE])
 
 
 def test_stage_exhaustion_by_cost_also_spares_the_other_stages(tmp_path: Path) -> None:
@@ -110,13 +111,13 @@ def test_stage_exhaustion_by_cost_also_spares_the_other_stages(tmp_path: Path) -
     config = factories.budget_config(request_limit=30, cost_cny_limit=5)
     ledger = _ledger(store, config)
 
-    ledger.record(_run(5 * STAGE_SHARE[BudgetStage.PLAN]), BudgetStage.PLAN)
+    ledger.record(_run(5 * STAGE_COST_SHARE[BudgetStage.PLAN]), BudgetStage.PLAN)
 
     with pytest.raises(StageBudgetExceeded, match="plan"):
         ledger.check_stage(BudgetStage.PLAN)
     ledger.check_stage(BudgetStage.DRAFT)
     assert ledger.stage_remaining_cost(BudgetStage.DRAFT) == pytest.approx(
-        5 * STAGE_SHARE[BudgetStage.DRAFT]
+        5 * STAGE_COST_SHARE[BudgetStage.DRAFT]
     )
 
 
@@ -142,7 +143,7 @@ def test_request_allowance_never_exceeds_the_stage_or_the_day(
 
     allowance = ledger.request_allowance(stage, 999)
 
-    assert allowance == int(20 * STAGE_SHARE[stage])
+    assert allowance == int(20 * STAGE_REQUEST_SHARE[stage])
     assert allowance <= ledger.remaining_requests()
     assert ledger.request_allowance(stage, 1) == 1
 
