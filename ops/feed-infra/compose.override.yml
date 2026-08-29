@@ -1,0 +1,24 @@
+services:
+  rsshub:
+    mem_limit: 450m
+  we-mp-rss:
+    mem_limit: 450m
+    environment:
+      USERNAME: admin
+      PASSWORD: ${WERSS_ADMIN_PASSWORD}
+      GATHER.MODEL: weread_mp
+      GATHER.CONTENT: "True"
+      # 补抓正文的调度。上游默认 59，而代码写的是 cron "*/{interval} * * * *"——
+      # "*/59" 在 cron 里只在第 0 分和第 59 分触发，等于每小时跑两次、间隔 1 分钟，
+      # 然后空 58 分钟。采集每 10 分钟一轮，正文却要等到 :59/:00，04:20 那个窗口
+      # 拿到的新文章几乎必然只有标题。改成和采集同频。
+      GATHER.CONTENT_AUTO_INTERVAL: "10"
+      # 微信公众号正文页普遍 3MB 以上（实测腾讯混元 3.5MB、Kimi 3.2MB），
+      # 抓取+解析在 60s 子进程硬超时内跑不完，日志里就是
+      # "process exceeded wall-clock timeout of 60.0s"。
+      GATHER.CONTENT_FETCH_TIMEOUT: "180"
+      # 默认 web 模式走 Playwright 渲染整页，微信正文页 3MB+ 时连 180s 都跑不完
+      # （腾讯混元、百度文心实测双双 wall-clock timeout），而 180s 的子进程硬超时
+      # 会在 web 失败前就把整个进程杀掉，代码里 web->api 的回退根本轮不到。
+      # api 模式是纯 HTTP + BeautifulSoup 取 #js_content，同样的 URL 几秒就回来。
+      GATHER.CONTENT_MODE: "api"

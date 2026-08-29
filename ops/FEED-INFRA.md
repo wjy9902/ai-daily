@@ -57,6 +57,8 @@ docker compose up -d
    授权，然后添加公众号。**注意**：管理界面的"搜索公众号"走公众号平台接口，
    需要另一个扫码；没有平台登录时，用 API `POST /api/v1/wx/mps` 直接添加，
    `mp_id` 传公众号的 biz（base64 串），Feed id 即 `MP_WXS_<biz解码后的数字>`。
+   环境变量见仓库里的 `ops/feed-infra/compose.override.yml`（密码走 `.env` 插值，
+   文件本身不含明文）。
    biz 可从该公众号任一文章页的 `var biz = "..."` 提取；账号迁移过的（如
    月之暗面 Kimi）要用迁移公告里新账号的 biz。
    采集模式必须用环境变量 `GATHER.MODEL=weread_mp` 设置（配置 API 写库无效，
@@ -99,6 +101,29 @@ curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
   改完 DB 也照旧报错，`docker compose restart we-mp-rss` 之后才生效。
 - **例行检查**：`select mp_id, max(publish_time) from articles group by mp_id`。
   只要最新时间集体停在同一天，就是采集链路断了，不是"当天没人发文"。
+- **正文补抓是独立于采集的第二条链路，三个默认值都不能用**（2026-08-29 实测，
+  `compose.override.yml` 已固化）。采集只写标题和链接，`content` 一律留空，正文靠
+  `jobs/fetch_no_article.py` 的补抓任务回填。这条链路坏了不会报"采集失败"，只会让
+  RSS 的 `<description>` 等于标题、`<content:encoded>` 为空，管线拿到手就是十几个字，
+  详报被降级成快讯、主编版连 `QUOTE_MIN_CHARS` 都过不了。
+  - `GATHER.CONTENT_AUTO_INTERVAL` 默认 **59**，而代码是 `cron = f"*/{interval} * * * *"`。
+    cron 的 `*/59` 只在第 0 分和第 59 分触发——每小时两次、隔 1 分钟，然后空 58 分钟。
+    采集每 10 分钟一轮，正文却只在 :59/:00 落地，04:20 那个窗口拿到的新文章必然只有标题。
+    改成 `10`，与采集同频。
+  - `GATHER.CONTENT_MODE` 默认 **web**，走 Playwright 渲染整页。微信正文页普遍 3MB+
+    （实测腾讯混元 3.5MB、Kimi 3.2MB），60s 和 180s 的子进程 wall-clock 硬超时都跑不完，
+    而超时是把**整个子进程**杀掉，代码里 `web -> api` 的回退根本轮不到执行。
+    改成 `api`：纯 HTTP + BeautifulSoup 取 `#js_content`，同样的 URL 几秒返回。
+  - `GATHER.CONTENT_FETCH_TIMEOUT` 一并抬到 `180` 兜底。
+  - 顺带：我们原来写的 `WEREAD_CONTENT_INTERVAL` **代码里一处都没引用**，是个死设置，已删。
+- **`build_mp_url` 生成的 `~` 短链现在是坏的**（2026-08-29 从生产出口实测）。
+  `core/wx/model/weread_mp.py` 里有注释说 token 中的 `~` 必须保留、换成 `_` 会被微信
+  302 跳走——**现在反过来了**：`~` 版本稳定返回一个 31612 字节的错误页（无 `#js_content`），
+  `_` 版本返回真正的 3.2MB 正文（302 到 `?nwr_flag=1#wechat_redirect`）。
+  受影响的号当天是 Kimi、新智元、百度文心。已一次性把库里 `articles.url` 的 `~` 改写成 `_`
+  并重置 `fix_fail_count`/`status` 让补抓重试，六篇全部拿到正文。
+  **这是上游 bug，新文章仍会带 `~` 进来**——要么定期跑一次同样的改写，要么打补丁/盯上游。
+- 判断正文链路是否健康：`select sum(has_content), count(*) from articles`。
 
 ## 接入管线
 
