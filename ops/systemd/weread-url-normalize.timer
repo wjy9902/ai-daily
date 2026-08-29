@@ -1,0 +1,15 @@
+[Unit]
+Description=Repair we-mp-rss WeChat short links (upstream ~ vs _ bug)
+
+[Timer]
+# Matched to the we-mp-rss gather cadence (GATHER.CONTENT_AUTO_INTERVAL=10), so
+# a freshly gathered article is repaired before the content backfill gives up
+# on it: gather.content_max_failures is 3, and each failed attempt is charged.
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=15s
+Unit=weread-url-normalize.service
+
+[Install]
+WantedBy=timers.target
