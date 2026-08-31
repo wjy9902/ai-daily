@@ -36,7 +36,7 @@ class PersonaRuntimeConfig(StrictModel):
     baseline_window_days: int = Field(default=90, ge=1, le=90)
     evidence_retention_days: int = Field(default=120, ge=120)
     standard_min_chars: int = Field(default=700, ge=100)
-    standard_max_chars: int = Field(default=2000, ge=300)
+    standard_max_chars: int = Field(default=2400, ge=300)
     # Floor is 40, not 100, and the default is 50, not 300: a no_major body is
     # the thesis plus at most two watchlist entries, and AssemblyInterpretiveText
     # caps each of those at 30 characters, so 90 is the most such an edition can
@@ -267,7 +267,24 @@ class AssemblyText(StrictModel):
 
 
 class AssemblyInterpretiveText(AssemblyText):
-    text: str = Field(min_length=1, max_length=30)
+    """A short interpretive line: the editor is told 30 characters, allowed 45.
+
+    Instruct tight, enforce loose. This is a schema constraint, so a single
+    over-long field is not a validation error the model can be told about and
+    correct - it is a rejected tool call, repeated until the retries run out,
+    with nothing recorded about which field was long. A standard edition has 36
+    of these fields and every one must pass at once: at 99% compliance per field
+    that is a 70% chance of an edition, at 95% it is 16%. Six 2026-08-31 windows
+    died this way, the last of them on "Exceeded maximum output retries (3)"
+    with no validation errors collected at all, which is the signature of a
+    schema rejection rather than a semantic one.
+
+    The instruction still asks for 30, so 30 is still the house style. The
+    headroom exists so that a 33-character line is a slightly long line instead
+    of a lost run.
+    """
+
+    text: str = Field(min_length=1, max_length=45)
 
 
 class EditionAssemblyItem(StrictModel):
