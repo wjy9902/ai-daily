@@ -246,19 +246,12 @@ def read_publication(layout: SiteLayout, target_date: date) -> DailyPublication 
     return load_publication(path.read_text(encoding="utf-8"))
 
 
-def active_release_contains_publication(
-    layout: SiteLayout, publication: DailyPublication
-) -> bool:
+def active_release_contains_publication(layout: SiteLayout, publication: DailyPublication) -> bool:
     """Return whether the active site serves this exact immutable publication."""
 
     if not layout.current.exists():
         return False
-    daily = (
-        layout.current.resolve()
-        / "daily"
-        / publication.target_date.isoformat()
-        / "index.html"
-    )
+    daily = layout.current.resolve() / "daily" / publication.target_date.isoformat() / "index.html"
     return daily.exists() and publication.marker in daily.read_text(encoding="utf-8")
 
 

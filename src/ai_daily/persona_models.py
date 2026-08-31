@@ -562,10 +562,7 @@ class DailyWechatEdition(StrictModel):
 
     @property
     def source_url(self) -> str:
-        return (
-            f"{str(self.site_base_url).rstrip('/')}"
-            f"/daily/{self.target_date.isoformat()}/"
-        )
+        return f"{str(self.site_base_url).rstrip('/')}/daily/{self.target_date.isoformat()}/"
 
 
 WechatEdition = PersonaEdition | DailyWechatEdition

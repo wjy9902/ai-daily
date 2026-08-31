@@ -1473,10 +1473,7 @@ def test_draft_html_canonicalization_rejects_changed_link_text() -> None:
         '<p>来源：<a href="https://phishing.example/source">Example</a></p>',
         '<p><a href="https://example.com/source">来源：</a>Example</p>',
         '<p>来源：<a href="https://example.com/source"></a>Example</p>',
-        (
-            '<p>来源：<a href="https://example.com/source" '
-            'onclick="alert(1)">Example</a></p>'
-        ),
+        ('<p>来源：<a href="https://example.com/source" onclick="alert(1)">Example</a></p>'),
     ],
 )
 async def test_draft_readback_rejects_changed_or_unsafe_link(
@@ -1587,9 +1584,7 @@ def test_wechat_source_url_must_be_strictly_below_one_kilobyte() -> None:
                 site_base_url=HttpUrl(f"https://example.com/{'a' * padding}"),
                 payload_sha256="0" * 64,
             ).signed()
-            actual = len(
-                f"{edition.source_url}#daily-{edition.payload_sha256}".encode()
-            )
+            actual = len(f"{edition.source_url}#daily-{edition.payload_sha256}".encode())
             if actual == size:
                 return edition
             padding += size - actual
@@ -1600,9 +1595,7 @@ def test_wechat_source_url_must_be_strictly_below_one_kilobyte() -> None:
     )
     assert len(accepted["content_source_url"].encode("utf-8")) == 1_023
     with pytest.raises(WechatPublicationError, match="content_source_url"):
-        persona_cli.draft_article_payload(
-            edition_for_size(1_024), "<p>原文</p>", "cover-1", "甲鱼"
-        )
+        persona_cli.draft_article_payload(edition_for_size(1_024), "<p>原文</p>", "cover-1", "甲鱼")
 
 
 def test_daily_wechat_compacts_a_full_issue_below_platform_limit() -> None:
@@ -1668,7 +1661,7 @@ def test_daily_wechat_compactor_rejects_unexpected_or_unsafe_markup(
 
 def test_daily_wechat_compactor_preserves_spaces_between_inline_tags() -> None:
     original = (
-        '<article><p><strong>模型 A</strong> '
+        "<article><p><strong>模型 A</strong> "
         '<a href="https://example.com/source">已经发布</a></p></article>'
     )
 
@@ -2301,10 +2294,7 @@ async def test_persona_draft_writes_prepared_and_verified_manifests(
     args = SimpleNamespace(authorization=authorization_path, execute=False)
 
     assert (
-        await persona_cli.persona_draft(
-            args, load_config(Path("config")), layout, publication
-        )
-        == 0
+        await persona_cli.persona_draft(args, load_config(Path("config")), layout, publication) == 0
     )
     manifest_path = layout.persona_manifest_path(TARGET)
     prepared = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -2338,10 +2328,7 @@ async def test_persona_draft_writes_prepared_and_verified_manifests(
     monkeypatch.setattr(persona_cli, "_execute_target", verified)
     args.execute = True
     assert (
-        await persona_cli.persona_draft(
-            args, load_config(Path("config")), layout, publication
-        )
-        == 0
+        await persona_cli.persona_draft(args, load_config(Path("config")), layout, publication) == 0
     )
     completed = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert completed["wechat_state"] == "draft_verified"
@@ -2394,10 +2381,7 @@ async def test_persona_draft_persists_unknown_receipt_and_manifest(
     args = SimpleNamespace(authorization=authorization_path, execute=True)
 
     assert (
-        await persona_cli.persona_draft(
-            args, load_config(Path("config")), layout, publication
-        )
-        == 2
+        await persona_cli.persona_draft(args, load_config(Path("config")), layout, publication) == 2
     )
     manifest = json.loads(layout.persona_manifest_path(TARGET).read_text(encoding="utf-8"))
     assert manifest["wechat_state"] == "unknown"
@@ -2485,9 +2469,10 @@ async def test_receipt_conflict_is_rejected_before_daily_target_is_installed(
 
     assert not layout.wechat_target_path(TARGET).exists()
     publish_site(layout, upgraded, factories.SITE)
-    assert json.loads(layout.publication_path(TARGET).read_text(encoding="utf-8"))[
-        "marker"
-    ] == upgraded.marker
+    assert (
+        json.loads(layout.publication_path(TARGET).read_text(encoding="utf-8"))["marker"]
+        == upgraded.marker
+    )
 
 
 @pytest.mark.asyncio
