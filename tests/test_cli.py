@@ -12,7 +12,14 @@ import pytest
 
 from ai_daily import cli
 from ai_daily.persona_snapshot import persist_upstream_snapshot
-from ai_daily.site_publisher import SiteLayout, build_archive, publish_site, recent_publications
+from ai_daily.site_publisher import (
+    SiteLayout,
+    build_archive,
+    persona_run_lock,
+    publish_site,
+    recent_publications,
+    wechat_run_lock,
+)
 
 #: 2026-08-13 00:30 in Beijing is still 2026-08-12 in UTC.
 JUST_AFTER_BEIJING_MIDNIGHT = datetime(2026, 8, 12, 16, 30, tzinfo=UTC)
@@ -140,6 +147,137 @@ async def test_fallback_contains_the_persona_route(tmp_path: Path) -> None:
     persona = layout.fallback / "jiayu" / "index.html"
     assert persona.exists()
     assert "甲鱼" in persona.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_draft_mode_uses_published_daily_without_persona_pipeline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    publication = factories.publication(target_date=date(2026, 8, 27))
+    publish_site(layout, publication, factories.SITE)
+    captured: list[Any] = []
+
+    async def draft(*args: Any) -> int:
+        captured.append(args[-1])
+        return 0
+
+    class ForbiddenPersonaPipeline:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise AssertionError("draft mode must not enter the persona model pipeline")
+
+    monkeypatch.setattr(cli, "_persona_draft", draft)
+    monkeypatch.setattr(cli, "PersonaPipeline", ForbiddenPersonaPipeline)
+
+    result = await cli._persona_run_unlocked(
+        SimpleNamespace(
+            config_dir="config",
+            site_root=str(layout.root),
+            date="2026-08-27",
+            mode="draft",
+        )
+    )
+
+    assert result == 0
+    assert captured == [publication]
+
+
+@pytest.mark.asyncio
+async def test_draft_mode_holds_without_a_published_daily(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+
+    async def forbidden_draft(*args: Any) -> int:
+        raise AssertionError("missing daily must not enter draft execution")
+
+    class ForbiddenPersonaPipeline:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise AssertionError("draft mode must not enter the persona model pipeline")
+
+    monkeypatch.setattr(cli, "_persona_draft", forbidden_draft)
+    monkeypatch.setattr(cli, "PersonaPipeline", ForbiddenPersonaPipeline)
+
+    result = await cli._persona_run_unlocked(
+        SimpleNamespace(
+            config_dir="config",
+            site_root=str(layout.root),
+            date="2026-08-27",
+            mode="draft",
+        )
+    )
+
+    assert result == 1
+    assert "published daily is missing" in capsys.readouterr().out
+    assert layout.wechat_status_file.exists()
+    assert not layout.persona_status_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_draft_mode_is_independent_from_the_persona_run_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+
+    async def completed(*args: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(cli, "_persona_run_unlocked", completed)
+
+    with persona_run_lock(layout):
+        result = await cli._persona_run(
+            SimpleNamespace(
+                site_root=str(layout.root),
+                date="2026-08-27",
+                mode="draft",
+            )
+        )
+
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_draft_run_is_reported_without_overwriting_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    args = SimpleNamespace(
+        site_root=str(layout.root),
+        date="2026-08-27",
+        mode="draft",
+    )
+
+    with wechat_run_lock(layout):
+        result = await cli._persona_run(args)
+
+    assert result == 1
+    assert "another WeChat draft run holds the lock" in capsys.readouterr().out
+    assert not layout.wechat_status_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_reconcile_is_reported_without_entering_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    args = SimpleNamespace(
+        site_root=str(layout.root),
+        date="2026-08-27",
+    )
+
+    async def must_not_reconcile(*args: Any, **kwargs: Any) -> int:
+        raise AssertionError("contended reconciliation must not run")
+
+    monkeypatch.setattr(cli, "_wechat_reconcile_unlocked", must_not_reconcile)
+
+    with wechat_run_lock(layout):
+        result = await cli._wechat_reconcile(args)
+
+    assert result == 1
+    assert "another WeChat draft run holds the lock" in capsys.readouterr().out
+    assert not layout.wechat_status_file.exists()
 
 
 @pytest.mark.asyncio

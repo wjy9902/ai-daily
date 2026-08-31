@@ -11,19 +11,19 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 import httpx
+from pydantic import HttpUrl
 
 from ai_daily.artifacts import write_artifact
 from ai_daily.config import AppConfig, Secrets
 from ai_daily.persona_models import (
     AuthorizationRecord,
     DailyAutoManifest,
+    DailyWechatEdition,
     OperationReceipt,
-    PersonaEdition,
     RenderReceipt,
     WechatTarget,
     canonical_json,
 )
-from ai_daily.persona_render import render_persona
 from ai_daily.persona_wechat import (
     PublicationSlots,
     WechatClient,
@@ -37,7 +37,16 @@ from ai_daily.persona_wechat import (
     reconcile_draft,
     sign_authorization,
 )
-from ai_daily.site_publisher import SiteLayout, write_persona_status
+from ai_daily.publication import DailyPublication
+from ai_daily.site_publisher import (
+    PublicationRefused,
+    SiteLayout,
+    active_release_contains_publication,
+    publication_lock,
+    read_publication,
+    write_wechat_status,
+)
+from ai_daily.wechat_render import render_daily_wechat
 
 BEIJING = ZoneInfo("Asia/Shanghai")
 
@@ -46,10 +55,27 @@ async def persona_draft(
     args: argparse.Namespace,
     config: AppConfig,
     layout: SiteLayout,
-    edition: PersonaEdition,
+    publication: DailyPublication,
 ) -> int:
-    target, target_path = _build_target(args, config, layout, edition)
-    attestation_path = _attestation_path(layout, edition.target_date)
+    try:
+        with publication_lock(layout):
+            committed = read_publication(layout, publication.target_date)
+            if committed is None or committed.marker != publication.marker:
+                return hold_daily_draft(
+                    layout,
+                    publication.target_date,
+                    "published daily changed before the WeChat target was frozen",
+                )
+            if not active_release_contains_publication(layout, committed):
+                return hold_daily_draft(
+                    layout,
+                    publication.target_date,
+                    "published daily is not in the active site",
+                )
+            target, target_path = _build_target(args, config, layout, committed)
+    except PublicationRefused as error:
+        return hold_daily_draft(layout, publication.target_date, str(error))
+    attestation_path = _attestation_path(layout, publication.target_date)
     write_artifact(attestation_path, target.attestation)
     if not args.execute:
         _write_prepared_status(layout, target, target_path)
@@ -73,15 +99,21 @@ def _build_target(
     args: argparse.Namespace,
     config: AppConfig,
     layout: SiteLayout,
-    edition: PersonaEdition,
+    publication: DailyPublication,
 ) -> tuple[WechatTarget, Path]:
     persona = config.persona
     if persona is None or persona.publish_mode != "draft_only":
         raise ValueError("persona WeChat publishing is disabled")
     if args.authorization is None:
         raise ValueError("--authorization is required for draft mode")
-    rendered = render_persona(edition, _site_base_url(config))
-    _persist_render_receipt(layout, edition.target_date, rendered.receipt)
+    edition = DailyWechatEdition(
+        column_id=persona.column_id,
+        target_date=publication.target_date,
+        publication=publication,
+        site_base_url=HttpUrl(_site_base_url(config)),
+        payload_sha256="0" * 64,
+    ).signed()
+    rendered = render_daily_wechat(edition)
     authorization = AuthorizationRecord.model_validate_json(
         args.authorization.read_text(encoding="utf-8")
     )
@@ -112,7 +144,10 @@ def _build_target(
         author=author,
         request_sha256=hashlib.sha256(canonical_json(request)).hexdigest(),
     )
-    return target, persist_wechat_target(layout, target)
+    _verify_render_receipt_compatible(layout, publication.target_date, rendered.receipt)
+    target_path = persist_wechat_target(layout, target)
+    _persist_render_receipt(layout, publication.target_date, rendered.receipt)
+    return target, target_path
 
 
 async def _execute_target(layout: SiteLayout, target: WechatTarget) -> OperationReceipt:
@@ -258,12 +293,21 @@ def persist_wechat_target(layout: SiteLayout, target: WechatTarget) -> Path:
 def _persist_render_receipt(layout: SiteLayout, target_date: date, receipt: RenderReceipt) -> Path:
     path = layout.persona_render_receipt_path(target_date)
     if path.exists():
-        existing = RenderReceipt.model_validate_json(path.read_text(encoding="utf-8"))
-        if existing != receipt:
-            raise ValueError("immutable render receipt already exists for this publication slot")
+        _verify_render_receipt_compatible(layout, target_date, receipt)
         return path
     write_artifact(path, receipt)
     return path
+
+
+def _verify_render_receipt_compatible(
+    layout: SiteLayout, target_date: date, receipt: RenderReceipt
+) -> None:
+    path = layout.persona_render_receipt_path(target_date)
+    if not path.exists():
+        return
+    existing = RenderReceipt.model_validate_json(path.read_text(encoding="utf-8"))
+    if existing != receipt:
+        raise ValueError("immutable render receipt already exists for this publication slot")
 
 
 def _verify_same_target(path: Path, target: WechatTarget) -> None:
@@ -276,10 +320,23 @@ def _attestation_path(layout: SiteLayout, target_date: date) -> Path:
     return layout.persona_runs / target_date.isoformat() / "attestation.json"
 
 
+def hold_daily_draft(layout: SiteLayout, target_date: date, reason: str) -> int:
+    payload = {
+        "target_date": target_date.isoformat(),
+        "wechat_state": "held",
+        "aggregate_state": "held",
+        "action": "draft_held",
+        "reason": reason,
+    }
+    write_wechat_status(layout, payload)
+    _emit(payload)
+    return 1
+
+
 def _write_prepared_status(layout: SiteLayout, target: WechatTarget, target_path: Path) -> None:
     edition = target.edition
     _write_manifest(layout, target, "not_attempted", None)
-    write_persona_status(
+    write_wechat_status(
         layout,
         {
             "target_date": edition.target_date.isoformat(),
@@ -307,7 +364,7 @@ def _write_unknown_status(
         receipt_path = attestation_path.with_name("wechat-receipt.json")
         write_artifact(receipt_path, error.receipt)
     _write_manifest(layout, target, "unknown", receipt_path)
-    write_persona_status(
+    write_wechat_status(
         layout,
         {
             "target_date": edition.target_date.isoformat(),
@@ -331,7 +388,7 @@ def _write_verified_status(
 ) -> None:
     target_date = target.edition.target_date
     _write_manifest(layout, target, "draft_verified", receipt_path)
-    write_persona_status(
+    write_wechat_status(
         layout,
         {
             "target_date": target_date.isoformat(),
@@ -354,7 +411,7 @@ def _write_failed_status(
 ) -> None:
     error_code = type(error).__name__
     _write_manifest(layout, target, "failed", None)
-    write_persona_status(
+    write_wechat_status(
         layout,
         {
             "target_date": target.edition.target_date.isoformat(),

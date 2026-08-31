@@ -86,6 +86,10 @@ class SiteLayout:
         return self.status_dir / "persona.json"
 
     @property
+    def wechat_status_file(self) -> Path:
+        return self.status_dir / "wechat.json"
+
+    @property
     def fallback(self) -> Path:
         return self.root / "fallback"
 
@@ -128,6 +132,10 @@ class SiteLayout:
     @property
     def persona_lock_file(self) -> Path:
         return self.root / ".persona-run.lock"
+
+    @property
+    def wechat_lock_file(self) -> Path:
+        return self.root / ".wechat-run.lock"
 
     def ensure(self) -> None:
         for path in (
@@ -174,37 +182,56 @@ class SiteLayout:
 
 
 @contextmanager
-def publication_lock(layout: SiteLayout) -> Iterator[None]:
-    """Serialise publishing against a concurrent timer run or a manual run."""
+def _exclusive_lock(path: Path, refusal_message: str) -> Iterator[None]:
+    """Acquire one non-blocking advisory lock and release it reliably."""
 
-    layout.root.mkdir(parents=True, exist_ok=True)
-    handle = layout.lock_file.open("w")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("w")
+    acquired = False
     try:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
-            raise PublicationRefused("another publication run holds the lock") from error
+            raise PublicationRefused(refusal_message) from error
+        acquired = True
         yield
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        if acquired:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()
+
+
+@contextmanager
+def publication_lock(layout: SiteLayout) -> Iterator[None]:
+    """Serialise publishing against a concurrent timer run or a manual run."""
+
+    with _exclusive_lock(
+        layout.lock_file,
+        "another publication run holds the lock",
+    ):
+        yield
 
 
 @contextmanager
 def persona_run_lock(layout: SiteLayout) -> Iterator[None]:
     """Allow only one persona/model run against a site's daily ledger."""
 
-    layout.root.mkdir(parents=True, exist_ok=True)
-    handle = layout.persona_lock_file.open("w")
-    try:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            raise PublicationRefused("another persona run holds the lock") from error
+    with _exclusive_lock(
+        layout.persona_lock_file,
+        "another persona run holds the lock",
+    ):
         yield
-    finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
+
+
+@contextmanager
+def wechat_run_lock(layout: SiteLayout) -> Iterator[None]:
+    """Allow only one WeChat draft workflow to update its slot and status."""
+
+    with _exclusive_lock(
+        layout.wechat_lock_file,
+        "another WeChat draft run holds the lock",
+    ):
+        yield
 
 
 # --------------------------------------------------------------------- reading
@@ -217,6 +244,22 @@ def read_publication(layout: SiteLayout, target_date: date) -> DailyPublication 
     if not path.exists():
         return None
     return load_publication(path.read_text(encoding="utf-8"))
+
+
+def active_release_contains_publication(
+    layout: SiteLayout, publication: DailyPublication
+) -> bool:
+    """Return whether the active site serves this exact immutable publication."""
+
+    if not layout.current.exists():
+        return False
+    daily = (
+        layout.current.resolve()
+        / "daily"
+        / publication.target_date.isoformat()
+        / "index.html"
+    )
+    return daily.exists() and publication.marker in daily.read_text(encoding="utf-8")
 
 
 def published_dates(layout: SiteLayout) -> list[date]:
@@ -530,15 +573,25 @@ def write_status(layout: SiteLayout, status: dict[str, Any]) -> None:
 
 
 def write_persona_status(layout: SiteLayout, status: dict[str, Any]) -> None:
-    """Persist the independent persona/WeChat state without clobbering daily status."""
+    """Persist persona pipeline state without clobbering daily or WeChat status."""
 
-    layout.status_dir.mkdir(parents=True, exist_ok=True)
+    _write_checked_status(layout.persona_status_file, status)
+
+
+def write_wechat_status(layout: SiteLayout, status: dict[str, Any]) -> None:
+    """Persist WeChat draft state without overwriting the persona pipeline state."""
+
+    _write_checked_status(layout.wechat_status_file, status)
+
+
+def _write_checked_status(destination: Path, status: dict[str, Any]) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "checked_at": datetime.now(UTC).isoformat(),
         **status,
     }
     _write_atomic(
-        layout.persona_status_file,
+        destination,
         json.dumps(payload, ensure_ascii=False, indent=2),
     )
 
