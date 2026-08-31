@@ -525,6 +525,25 @@ def remove_historical(events: list[Event], history: HistoricalIndex) -> list[Eve
 
 
 def _title_match(left: str, right: str) -> bool:
+    """Does ``left`` (a candidate's raw title) repeat ``right`` (a published headline)?
+
+    The two sides are different kinds of string. ``right`` is our own headline -
+    long, Chinese, and carrying the specs we put in it. ``left`` is whatever the
+    outlet called it, often short and in English. Symmetric overlap is calibrated
+    for comparing like with like and fails here: "Introducing Hy4 Preview" scored
+    jaccard 0.12 against "腾讯发布开源旗舰 Hy4 preview：总参数 770B、激活 49B、
+    上下文 1M" and ran again on 2026-08-31 as that day's lead detail, a day after
+    the same release led 2026-08-30.
+
+    So there is a second path for the case that actually matters: the candidate
+    names the same product and says nothing the published headline did not
+    already say. That is measured in one direction - how much of ``left`` the
+    headline already covers - because ``min()`` measures the shorter title, and
+    a follow-up ("OpenAI 调整 GPT-5 API 定价" against "OpenAI 发布 GPT-5") scores
+    a perfect symmetric containment while plainly being new. Directed, the
+    duplicate scores 1.00 and that follow-up 0.40.
+    """
+
     left_product_ids = _product_identifiers(left)
     right_product_ids = _product_identifiers(right)
     if (left_product_ids or right_product_ids) and left_product_ids != right_product_ids:
@@ -536,13 +555,25 @@ def _title_match(left: str, right: str) -> bool:
     intersection = len(left_tokens & right_tokens)
     containment = intersection / min(len(left_tokens), len(right_tokens))
     jaccard = intersection / len(left_tokens | right_tokens)
-    return containment >= 0.65 and jaccard >= 0.5
+    if containment >= 0.65 and jaccard >= 0.5:
+        return True
+    same_product = bool(left_product_ids) and left_product_ids == right_product_ids
+    return same_product and intersection / len(left_tokens) >= 0.65
 
 
 def _product_identifiers(value: str) -> set[str]:
+    """Versioned product names in a title: "Hy4", "GLM-5.3", "K3".
+
+    A magnitude is not a product. "770B", "49B", "1M" and "4K" all mix letters
+    and digits, so counting them here made a headline that quotes specs look
+    like a different product from the same announcement without them - which is
+    why {hy4} never equalled {hy4, 770b, 49b, 1m} and the release published
+    twice. A product name leads with its letters; a magnitude leads with its
+    number.
+    """
+
     return {
         token.lower()
         for token in LATIN_TOKEN_RE.findall(value)
-        if any(character.isalpha() for character in token)
-        and any(character.isdigit() for character in token)
+        if token[:1].isalpha() and any(character.isdigit() for character in token)
     }
