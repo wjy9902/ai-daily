@@ -23,8 +23,10 @@ standard_min_chars: 700
 # 2026-08-27 and 991 on 2026-08-28, when three of the five quotes were long
 # English sentences. 1600 could not hold 991 plus a written-out body, which is
 # why the 07:40 window died at 1738 rather than because the model rambled.
-# 2000 covers the schema's own ceiling plus the widest quote total seen.
-standard_max_chars: 2000
+# The interpretive cap moved from 30 to 45 characters on 2026-08-31 (see
+# AssemblyInterpretiveText), so the prose ceiling moved with it: 991 of quotes
+# plus 26 fields at 45 is 2161, and this leaves margin above that.
+standard_max_chars: 2400
 # Floor lowered from 300. A no_major edition has no items, so its whole body is
 # the thesis plus at most two watchlist entries - three 30-character texts, 90
 # at the absolute most. 300 could never be reached, so a genuinely quiet day was
