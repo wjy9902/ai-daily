@@ -174,15 +174,15 @@ class ModelGateway:
         retries = output_retries(invocation.role)
         # Decided up front: pydantic-ai fixes its request limit when the run starts.
         #
-        # One spare above 1 + retries, so the retry counter is what stops a run
-        # and not this limit. Sized exactly, the two race: the 2026-08-31 11:23
-        # persona run burned the edition editor's four requests and surfaced
-        # "UsageLimitExceeded: The next request would exceed the request_limit
-        # of 4", which says nothing about what the editor got wrong. Letting the
-        # agent hit its own ceiling instead raises UnexpectedModelBehavior with
-        # the validation errors attached, which _invoke_endpoint_bounded turns
-        # into the real ModelOutputValidationFailed message.
-        request_limit = self.ledger.request_allowance(stage, 2 + retries)
+        # Generous on purpose. A retry in pydantic-ai does not cost exactly one
+        # request - a tool-call round trip and an output-validator ModelRetry are
+        # counted separately - so deriving this from `retries` is guesswork, and
+        # twice on 2026-08-31 the guess was low and the run died on the usage
+        # limit instead of the retry ceiling. Double the nominal attempts lets
+        # the agent's own counter be the thing that stops it; the money ceiling
+        # is the control that matters, and a call that really does loop is
+        # bounded by that.
+        request_limit = self.ledger.request_allowance(stage, 2 * (1 + retries))
         reservation_cost = self._reservation_cost_cny
         reservation: tuple[int, float, int, int] | None = None
         if reservation_cost is not None:
@@ -241,7 +241,16 @@ class ModelGateway:
             raise
         except Exception as error:
             recorded_error: Exception = error
-            if isinstance(error, UnexpectedModelBehavior) and validation_errors:
+            # Whichever ceiling stops the run, report what the model actually got
+            # wrong. Sizing request_limit against pydantic-ai's retry accounting
+            # was guesswork twice over - 1 + retries and then 2 + retries both
+            # tripped, on 2026-08-31 at 12:29 and 12:52 - and each time the
+            # persona held on "The next request would exceed the request_limit",
+            # which says nothing about the edition. The validation errors are
+            # right here either way.
+            if isinstance(error, (UnexpectedModelBehavior, UsageLimitExceeded)) and (
+                validation_errors
+            ):
                 recorded_error = ModelOutputValidationFailed(validation_errors[-1])
             self._record_failed_run(invocation, started, recorded_error, usage, stage, reservation)
             if recorded_error is not error:
