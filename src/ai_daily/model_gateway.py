@@ -173,7 +173,16 @@ class ModelGateway:
         input_token_limit, output_token_limit = self._remaining_token_budget()
         retries = output_retries(invocation.role)
         # Decided up front: pydantic-ai fixes its request limit when the run starts.
-        request_limit = self.ledger.request_allowance(stage, 1 + retries)
+        #
+        # One spare above 1 + retries, so the retry counter is what stops a run
+        # and not this limit. Sized exactly, the two race: the 2026-08-31 11:23
+        # persona run burned the edition editor's four requests and surfaced
+        # "UsageLimitExceeded: The next request would exceed the request_limit
+        # of 4", which says nothing about what the editor got wrong. Letting the
+        # agent hit its own ceiling instead raises UnexpectedModelBehavior with
+        # the validation errors attached, which _invoke_endpoint_bounded turns
+        # into the real ModelOutputValidationFailed message.
+        request_limit = self.ledger.request_allowance(stage, 2 + retries)
         reservation_cost = self._reservation_cost_cny
         reservation: tuple[int, float, int, int] | None = None
         if reservation_cost is not None:
