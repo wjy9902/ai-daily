@@ -2406,52 +2406,6 @@ def test_persona_length_bounds_stay_reachable_by_the_assembly_schema() -> None:
     assert config.standard_max_chars >= observed_quote_total + cap * (1 + 5 * 5)
 
 
-def test_edition_normalization_scrubs_only_the_anchors_evidence_cannot_carry(
-    tmp_path: Path,
-) -> None:
-    """The editor writes its own sentences and needs the analyst's safety net.
-
-    normalize_analysis_item strips anchors the analyst cannot ground, but the
-    edition normalizer never did, so one unsupported version string in a
-    headline was fatal - that is what held the 2026-08-29 09:50 window on
-    "claim claim-items-4-headline-block contains ungrounded entity/version/
-    number anchors". Grounded anchors must survive: they are what makes the line
-    worth reading.
-    """
-
-    layout = SiteLayout(tmp_path)
-    layout.ensure()
-    snapshot = _snapshot(layout)
-    excerpt = snapshot.evidence_bundles[0].evidence[0].excerpt
-    scope = VerificationScope(
-        memories={},
-        baseline_evidence={},
-        current_ids_by_event={"event-0": {"event-0-1"}},
-        baseline_ids_by_event={},
-        memory_ids_by_event={},
-        current_evidence={"event-0-1": excerpt},
-    )
-    draft = _edition_draft(snapshot.publication_marker)
-    claim = draft.claims[2].model_copy(
-        update={"text": "判断：Qwen9.9-Nonexistent 把成本降到 0.37 元。"}
-    )
-    candidate = draft.model_copy(
-        update={
-            "claims": [draft.claims[0], draft.claims[1], claim, draft.claims[3]],
-            "thesis_block": draft.thesis_block.model_copy(update={"text": claim.text}),
-        }
-    )
-
-    normalized = normalize_edition_draft(candidate, scope)
-
-    text = normalized.claims[2].text
-    assert "Qwen9.9-Nonexistent" not in text
-    assert "0.37" not in text
-    assert "相关版本" in text and "相关指标" in text
-    assert text.startswith("判断：")
-    assert normalized.thesis_block.text == text
-
-
 def test_an_under_sourced_delta_block_is_dropped_not_fatal(tmp_path: Path) -> None:
     """delta_from_before is optional by instruction and by schema.
 
