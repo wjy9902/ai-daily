@@ -68,9 +68,15 @@ def test_persona_recovery_request_budget_stays_within_schema_ceiling() -> None:
     config = load_config(Path("config"))
 
     assert config.persona is not None
-    assert config.persona.budget.request_limit == 190
-    assert config.persona.budget.input_token_limit == 2_700_000
-    assert config.persona.budget.cost_cny_limit == 25.0
+    # A runaway backstop, not an operating limit: a persona day measured ¥6.35,
+    # 53 requests and 684k output tokens on 2026-08-31 with two manual re-runs
+    # on top of the three windows. Cost must be the ceiling a runaway reaches
+    # first, so the token limits sit above what the money can buy.
+    budget = config.persona.budget
+    assert budget.cost_cny_limit >= 40.0
+    assert budget.request_limit >= 200
+    assert budget.output_token_limit >= budget.cost_cny_limit / 6.26 * 1_000_000
+    assert budget.input_token_limit >= budget.output_token_limit
 
 
 def test_huggingface_model_source_requires_namespace() -> None:
