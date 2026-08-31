@@ -53,6 +53,65 @@ class HistoricalIndex:
     titles: set[str]
 
 
+@dataclass(frozen=True)
+class PublishedItem:
+    """One story we already ran, as the planner needs to see it."""
+
+    target_date: date
+    category: str
+    headline: str
+
+
+def recent_published_items(
+    published_dir: Path,
+    before_date: date,
+    days: int = TITLE_WINDOW_DAYS,
+    limit: int = 80,
+) -> list[PublishedItem]:
+    """What we published over the last few days, newest first.
+
+    remove_historical can only delete candidates. It cannot stop the planner
+    reaching for a different write-up of the same announcement, because the
+    planner has never been shown what already ran - it sees a pile of
+    candidates and chooses. That is why 2026-08-31 led with Tencent's Hy4
+    release a day after 2026-08-30 did, and why deleting that one candidate
+    just moved the repeat onto another story from the same cluster.
+
+    Whether a recurring story is a duplicate or a new development is a
+    judgement ("此前的传闻被官方确认" is a new item, the same release announced
+    twice is not), and the planner is already instructed to make it. It just
+    needs the evidence to make it on.
+    """
+
+    first_date = before_date - timedelta(days=days)
+    items: list[PublishedItem] = []
+    if not published_dir.exists():
+        return items
+    for path in sorted(published_dir.glob("*.json"), reverse=True):
+        try:
+            issue_date = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if not first_date <= issue_date < before_date:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for group in ("details", "briefs"):
+            for entry in payload.get(group, []):
+                headline = entry.get("headline")
+                if isinstance(headline, str) and headline.strip():
+                    items.append(
+                        PublishedItem(
+                            target_date=issue_date,
+                            category=str(entry.get("category") or ""),
+                            headline=headline,
+                        )
+                    )
+    return items[:limit]
+
+
 def _story_titles(body: str) -> set[str]:
     marked = marked_story_titles(body)
     if marked:

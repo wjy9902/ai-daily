@@ -148,7 +148,11 @@ class FakeGateway:
         if output_type.__name__.startswith("EditorialPlanOutput_"):
             if self.fail_plan:
                 raise RuntimeError("editor failed")
-            return output_type.model_validate(_grouped_plan_output(_plan_output(values)))
+            # The planning prompt carries the candidates alongside the record of
+            # what already ran, so the planner can tell a repeat from a follow-up.
+            return output_type.model_validate(
+                _grouped_plan_output(_plan_output(values["candidates"]))
+            )
         return _draft_output(values)
 
 

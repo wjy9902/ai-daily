@@ -28,7 +28,7 @@ from ai_daily.content import (
     validate_editorial_plan,
 )
 from ai_daily.degradation import DegradationTracker, FailureClass
-from ai_daily.history import local_historical_index
+from ai_daily.history import local_historical_index, recent_published_items
 from ai_daily.model_gateway import (
     MissingProviderSecret,
     ModelGateway,
@@ -333,7 +333,9 @@ class DailyPipeline:
         plan: EditorialPlan | None = None
         drafts: list[DraftItem] = []
         try:
-            decisions, plan, drafts = await self._generate_content(candidates, run_dir, tracker)
+            decisions, plan, drafts = await self._generate_content(
+                candidates, run_dir, tracker, target_date
+            )
         except ModelStageFailed as error:
             # Tuple unpacking above never runs when the stage raises, so the
             # partial judge output has to come off the exception.
@@ -415,7 +417,11 @@ class DailyPipeline:
         return filtered, candidates
 
     async def _generate_content(
-        self, candidates: list[Event], run_dir: Path, tracker: DegradationTracker
+        self,
+        candidates: list[Event],
+        run_dir: Path,
+        tracker: DegradationTracker,
+        target_date: date,
     ) -> tuple[list[JudgeDecision], EditorialPlan | None, list[DraftItem]]:
         decisions: list[JudgeDecision] = []
         stage = "judge"
@@ -444,6 +450,12 @@ class DailyPipeline:
                 candidates,
                 decisions,
                 self.config.pipeline,
+                # remove_historical already dropped candidates that repeat a
+                # published story, but it can only delete candidates - it cannot
+                # stop the planner reaching for a different write-up of the same
+                # announcement, which is exactly what happened on 2026-08-31.
+                # The planner is the thing that chooses, so it gets the record.
+                recent_published_items(self.layout.published, target_date),
             )
             write_artifact(run_dir / "editorial-plan.json", editorial_plan)
             editorial_plan, uncorroborated = enforce_lead_corroboration(editorial_plan, candidates)
