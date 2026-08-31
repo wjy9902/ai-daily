@@ -148,6 +148,36 @@ def test_history_filter_keeps_a_new_product_version() -> None:
     assert remove_historical([event], history) == [event]
 
 
+def test_history_filter_drops_a_foreign_language_rerun_of_yesterdays_release() -> None:
+    """Our headline and the outlet's title are different kinds of string.
+
+    2026-08-31 led with Tencent's Hy4 release a day after 2026-08-30 led with
+    it. The candidate came from a different write-up, so the URL index could not
+    help, and symmetric token overlap scored jaccard 0.12 between "Introducing
+    Hy4 Preview" and our own spec-laden Chinese headline.
+    """
+
+    event = cluster_items([item("1", "https://example.com/hy4", "Introducing Hy4 Preview")])[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles={"腾讯发布开源旗舰 Hy4 preview：总参数 770B、激活 49B、上下文 1M"},
+    )
+    assert remove_historical([event], history) == []
+
+
+def test_history_filter_keeps_a_followup_about_a_product_already_covered() -> None:
+    """Same product, new development: the planner is told to run these."""
+
+    event = cluster_items(
+        [item("1", "https://example.com/router", "Hy4 上线 OpenRouter 与腾讯云")]
+    )[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles={"腾讯发布开源旗舰 Hy4 preview：总参数 770B、激活 49B、上下文 1M"},
+    )
+    assert remove_historical([event], history) == [event]
+
+
 def test_history_filter_keeps_a_distinct_followup_for_the_same_model() -> None:
     event = cluster_items([item("1", "https://example.com/pricing", "OpenAI 调整 GPT-5 API 定价")])[
         0
