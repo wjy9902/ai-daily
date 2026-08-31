@@ -84,14 +84,23 @@ uv run python scripts/render_fixture.py \
 `/jiayu/`，不会调用公众号写接口。三次窗口先等待 marker 稳定 30 秒；相同 marker 的成稿可复用，
 旧日期补跑只增加主编版归档，不会把首页回滚到旧日报。
 
-运行状态独立写入 `/www/wwwroot/ai-daily/status/persona.json`。关键状态包括：
+主编版运行状态独立写入 `/www/wwwroot/ai-daily/status/persona.json`：
 
 - `ready`：稿件通过确定性证据、风格和长度门禁。
 - `held`：上游级别、记忆冲突、证据或模型结构校验不合格，没有发布。
+
+微信草稿状态另写入 `/www/wwwroot/ai-daily/status/wechat.json`，不会覆盖主编版状态。关键状态包括：
+
 - `draft_verified`：微信草稿创建后又通过 `draft/get` 元数据与规范化 HTML 回读。
 - `unknown`：发送后响应不确定，禁止重试，只能对账。
 
 人工启用草稿前，先在 `/etc/ai-daily/env` 配置 `WECHAT_*` 与两把不同的 HMAC key，然后：
+
+`persona-run --mode draft` 只是保留的命令入口；它直接读取 `published/<date>.json`，并复用网站
+基础日报的正文渲染结果，不调用主编模型、不读取主编版成稿，也不重写正文。公众号标题固定为
+`AI 日报 YYYY-MM-DD`；摘要使用基础日报已有的 `highlight`，仅在超过微信 120 字限制时截断；
+原始网站刊期作为来源链接。为满足微信正文 2 万字符限制，发送版只压缩网站专用 HTML 包装，
+并在生成时校验可见文字逐字一致；回读草稿时，来源链接的文字边界、顺序和地址也必须逐一一致。
 
 ```bash
 # 分别运行两次；每次输出作为一把 key，禁止复用

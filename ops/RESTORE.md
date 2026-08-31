@@ -118,6 +118,8 @@ systemctl list-timers ai-daily.timer
 
 甲鱼主编版数据恢复完成后，再安装 `ai-daily-persona.{service,timer}`。默认保持 `--mode site`；
 先验证 `/jiayu/` 和 `status/persona.json`，再单独决定是否恢复微信草稿权限。
+`status/wechat.json` 只有在恢复公众号凭据并至少运行一次草稿准备或留置流程后才会出现，
+此前返回 404 属于预期状态。
 
 ### 9. 验收
 
@@ -126,6 +128,8 @@ curl -fsS https://daily.jiayutool.cn/ >/dev/null && echo page ok
 curl -fsS https://daily.jiayutool.cn/rss.xml >/dev/null && echo rss ok
 curl -fsS https://daily.jiayutool.cn/status.json | head -30
 curl -fsS https://daily.jiayutool.cn/status/persona.json | head -30
+# 恢复公众号凭据并至少运行一次草稿准备或留置流程后再执行：
+curl -fsS https://daily.jiayutool.cn/status/wechat.json | head -30
 ```
 
 `status.json` 里的 `level` 和 `generated_at` 是判断"真的在出刊"的依据，

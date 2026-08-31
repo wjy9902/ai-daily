@@ -262,6 +262,23 @@ def test_local_index_reads_titles_and_source_urls_from_published_records(
         "https://example.test/story-0",
         "https://example.test/story-1",
     }
+    assert len(index.stories) == 2
+    assert index.stories[0].issue_date == date(2026, 8, 12)
+    assert "Source story 0" in index.stories[0].texts
+    assert "Fact 0 is confirmed by the source." in index.stories[0].texts
+
+
+def test_local_index_keeps_event_text_for_seven_days_but_not_old_headlines(
+    tmp_path: Path,
+) -> None:
+    published = tmp_path / "published"
+    _publish(published, date(2026, 8, 8))
+    _publish(published, date(2026, 8, 5))
+
+    index = local_historical_index(published, 45, date(2026, 8, 13))
+
+    assert index.titles == set()
+    assert {story.issue_date for story in index.stories} == {date(2026, 8, 8)}
 
 
 def _publish_days(published: Path, days: tuple[date, ...]) -> None:

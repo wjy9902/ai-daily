@@ -9,19 +9,23 @@ from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, ClassVar
+from urllib.parse import urlsplit
 
 import httpx
 
 from ai_daily.persona_models import (
     AuthorizationRecord,
+    DailyWechatEdition,
     OperationReceipt,
-    PersonaEdition,
     ReleaseAttestation,
     RenderReceipt,
+    WechatEdition,
     canonical_json,
 )
 
 WECHAT_API = "https://api.weixin.qq.com/cgi-bin"
+WECHAT_DIGEST_LIMIT = 120
+WECHAT_CONTENT_CHAR_LIMIT = 20_000
 
 
 class WechatPublicationError(RuntimeError):
@@ -90,7 +94,7 @@ def verify_authorization(
 
 
 def attest_release(
-    edition: PersonaEdition,
+    edition: WechatEdition,
     receipt: RenderReceipt,
     authorization: AuthorizationRecord,
     account_fingerprint: str,
@@ -123,7 +127,7 @@ def attest_release(
 
 def verify_attestation(
     attestation: ReleaseAttestation,
-    edition: PersonaEdition,
+    edition: WechatEdition,
     receipt: RenderReceipt,
     key: str,
 ) -> None:
@@ -372,7 +376,7 @@ async def publish_draft(
     *,
     client: WechatClient,
     slots: PublicationSlots,
-    edition: PersonaEdition,
+    edition: WechatEdition,
     html: str,
     receipt: RenderReceipt,
     authorization: AuthorizationRecord,
@@ -517,7 +521,7 @@ async def reconcile_draft(
     *,
     client: WechatClient,
     slots: PublicationSlots,
-    edition: PersonaEdition,
+    edition: WechatEdition,
     receipt: RenderReceipt,
     authorization: AuthorizationRecord,
     attestation: ReleaseAttestation,
@@ -622,18 +626,27 @@ def _unknown_receipt(
 
 
 def draft_article_payload(
-    edition: PersonaEdition,
+    edition: WechatEdition,
     html: str,
     cover_media_id: str,
     author: str,
 ) -> dict[str, Any]:
-    source_url = str(edition.source_links[0]).split("#", 1)[0]
+    if isinstance(edition, DailyWechatEdition):
+        title = edition.title
+        digest = _truncate_digest(edition.digest)
+        source_url = edition.source_url
+        marker_prefix = "daily"
+    else:
+        title = edition.title_block.text
+        digest = edition.digest_block.text
+        source_url = str(edition.source_links[0]).split("#", 1)[0]
+        marker_prefix = "jiayu"
     article = {
-        "title": edition.title_block.text,
+        "title": title,
         "author": author,
-        "digest": edition.digest_block.text,
+        "digest": digest,
         "content": html,
-        "content_source_url": f"{source_url}#jiayu-{edition.payload_sha256}",
+        "content_source_url": f"{source_url}#{marker_prefix}-{edition.payload_sha256}",
         "thumb_media_id": cover_media_id,
         "need_open_comment": 1,
         "only_fans_can_comment": 0,
@@ -641,18 +654,27 @@ def draft_article_payload(
     limits = {
         "title": 32,
         "author": 16,
-        "digest": 120,
-        "content": 20_000,
-        "content_source_url": 1_024,
+        "digest": WECHAT_DIGEST_LIMIT,
     }
     for field, limit in limits.items():
         if not 0 < len(str(article[field])) <= limit:
             raise WechatPublicationError(f"draft field exceeds WeChat limit: {field}")
+    if not 0 < len(html) < WECHAT_CONTENT_CHAR_LIMIT:
+        raise WechatPublicationError("draft field exceeds WeChat limit: content")
+    source_url_size = len(str(article["content_source_url"]).encode("utf-8"))
+    if not 0 < source_url_size < 1_024:
+        raise WechatPublicationError("draft field exceeds WeChat limit: content_source_url")
     if len(html.encode("utf-8")) >= 1_000_000:
         raise WechatPublicationError("draft HTML exceeds 1 MB")
     if not cover_media_id.strip():
         raise WechatPublicationError("permanent cover media_id is required")
     return article
+
+
+def _truncate_digest(value: str) -> str:
+    if len(value) <= WECHAT_DIGEST_LIMIT:
+        return value
+    return f"{value[: WECHAT_DIGEST_LIMIT - 1]}…"
 
 
 class _DraftHTMLCanonicalizer(HTMLParser):
@@ -662,15 +684,15 @@ class _DraftHTMLCanonicalizer(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "a":
+            self.tokens.append(("start", "a", _anchor_href(attrs)))
             return
         self.tokens.append(("start", tag, sorted((name, value or "") for name, value in attrs)))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "a":
-            return
         self.tokens.append(("end", tag))
 
     def handle_data(self, data: str) -> None:
@@ -685,8 +707,22 @@ class _DraftHTMLCanonicalizer(HTMLParser):
 def canonical_draft_html_sha256(content: str) -> str:
     parser = _DraftHTMLCanonicalizer()
     parser.feed(content)
+    parser.close()
     payload = json.dumps(parser.tokens, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _anchor_href(attrs: list[tuple[str, str | None]]) -> str:
+    allowed = {"class", "href", "rel", "target", "title"}
+    if any(name not in allowed for name, _ in attrs):
+        raise WechatPublicationError("draft link contains an unexpected attribute")
+    hrefs = [value for name, value in attrs if name == "href"]
+    if len(hrefs) != 1 or hrefs[0] is None:
+        raise WechatPublicationError("draft link must contain exactly one href")
+    parsed = urlsplit(hrefs[0])
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise WechatPublicationError("draft link must use an absolute http(s) URL")
+    return hrefs[0]
 
 
 def _raise_api_error(payload: dict[str, Any]) -> None:

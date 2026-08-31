@@ -18,7 +18,7 @@ from ai_daily.models import (
     ModelRun,
     StrictModel,
 )
-from ai_daily.publication import PublicationLevel
+from ai_daily.publication import DailyPublication, PublicationLevel
 
 SCHEMA_VERSION: Literal[1] = 1
 
@@ -523,11 +523,59 @@ class OperationReceipt(StrictModel):
         return self
 
 
+class DailyWechatEdition(StrictModel):
+    """An immutable WeChat wrapper around the published daily, without rewriting it."""
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    column_id: str = Field(pattern=r"^[a-z0-9-]+$")
+    target_date: date
+    publication: DailyPublication
+    site_base_url: HttpUrl
+    payload_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def validate_publication(self) -> DailyWechatEdition:
+        if self.publication.target_date != self.target_date:
+            raise ValueError("daily WeChat target date does not match its publication")
+        if not self.publication.marker_is_valid():
+            raise ValueError("daily WeChat publication marker is invalid")
+        return self
+
+    def canonical_payload(self) -> dict[str, Any]:
+        payload = self.model_dump(mode="json")
+        payload.pop("payload_sha256", None)
+        return payload
+
+    def signed(self) -> DailyWechatEdition:
+        return self.model_copy(update={"payload_sha256": sha256_payload(self.canonical_payload())})
+
+    def hash_is_valid(self) -> bool:
+        return self.payload_sha256 == sha256_payload(self.canonical_payload())
+
+    @property
+    def title(self) -> str:
+        return f"AI 日报 {self.target_date.isoformat()}"
+
+    @property
+    def digest(self) -> str:
+        return self.publication.highlight or "每日 AI 要闻，证据优先，每条都可回溯到一手来源。"
+
+    @property
+    def source_url(self) -> str:
+        return (
+            f"{str(self.site_base_url).rstrip('/')}"
+            f"/daily/{self.target_date.isoformat()}/"
+        )
+
+
+WechatEdition = PersonaEdition | DailyWechatEdition
+
+
 class WechatTarget(StrictModel):
     """Immutable bytes and metadata for one production draft attempt."""
 
     schema_version: Literal[1] = SCHEMA_VERSION
-    edition: PersonaEdition
+    edition: WechatEdition
     html: str
     render_receipt: RenderReceipt
     authorization: AuthorizationRecord

@@ -45,12 +45,49 @@ NON_STORY_HEADINGS = {
 #: unpublishable. Three days still catches the real duplicate: the same story
 #: re-reported by a slower outlet a day or two behind.
 TITLE_WINDOW_DAYS = 3
+STORY_WINDOW_DAYS = 7
+
+
+@dataclass(frozen=True)
+class HistoricalStory:
+    """Searchable text retained for one recently published event."""
+
+    event_id: str
+    issue_date: date
+    texts: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class HistoricalIndex:
     urls: set[str]
     titles: set[str]
+    stories: tuple[HistoricalStory, ...] = ()
+
+
+def _story_texts(entry: dict[str, object]) -> tuple[str, ...]:
+    values: list[str] = []
+    for key in ("headline", "tldr", "brief"):
+        value = entry.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value.strip())
+    facts = entry.get("facts")
+    if isinstance(facts, list):
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            for key in ("text", "quote"):
+                value = fact.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.append(value.strip())
+    sources = entry.get("sources")
+    if isinstance(sources, list):
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            title = source.get("title")
+            if isinstance(title, str) and title.strip():
+                values.append(title.strip())
+    return tuple(dict.fromkeys(values))
 
 
 @dataclass(frozen=True)
@@ -131,6 +168,7 @@ def local_historical_index(
     days: int,
     before_date: date,
     title_days: int = TITLE_WINDOW_DAYS,
+    story_days: int = STORY_WINDOW_DAYS,
 ) -> HistoricalIndex:
     """Build the dedupe index from locally published issues.
 
@@ -138,18 +176,22 @@ def local_historical_index(
     network dependency from the critical path: an API hiccup used to mean the
     index came back empty, which silently let yesterday's stories run again.
 
-    ``days`` bounds the URL index and ``title_days`` the headline index; see
-    :data:`TITLE_WINDOW_DAYS` for why the two differ.
+    ``days`` bounds the URL index, ``title_days`` the exact headline index,
+    and ``story_days`` the richer event-text index. The latter can safely span
+    a week because matching also requires shared named/product anchors and
+    contextual overlap.
     """
 
     first_date = before_date - timedelta(days=days)
     first_title_date = before_date - timedelta(days=min(title_days, days))
+    first_story_date = before_date - timedelta(days=min(story_days, days))
     urls: set[str] = set()
     titles: set[str] = set()
+    stories: list[HistoricalStory] = []
     if not published_dir.exists():
-        return HistoricalIndex(urls=urls, titles=titles)
+        return HistoricalIndex(urls=urls, titles=titles, stories=tuple(stories))
 
-    for path in published_dir.glob("*.json"):
+    for path in sorted(published_dir.glob("*.json")):
         try:
             issue_date = date.fromisoformat(path.stem)
         except ValueError:
@@ -161,16 +203,34 @@ def local_historical_index(
         except (OSError, json.JSONDecodeError):
             continue
         index_titles = first_title_date <= issue_date
+        index_story = first_story_date <= issue_date
         for group in ("details", "briefs"):
             for entry in payload.get(group, []):
+                if not isinstance(entry, dict):
+                    continue
                 headline = entry.get("headline")
                 if index_titles and isinstance(headline, str):
                     titles.add(headline)
-                for source in entry.get("sources", []):
-                    url = source.get("url")
-                    if isinstance(url, str):
-                        urls.add(url)
-    return HistoricalIndex(urls=urls, titles=titles)
+                if index_story:
+                    texts = _story_texts(entry)
+                    event_id = entry.get("event_id")
+                    if texts and isinstance(event_id, str):
+                        stories.append(
+                            HistoricalStory(
+                                event_id=event_id,
+                                issue_date=issue_date,
+                                texts=texts,
+                            )
+                        )
+                sources = entry.get("sources")
+                if isinstance(sources, list):
+                    for source in sources:
+                        if not isinstance(source, dict):
+                            continue
+                        url = source.get("url")
+                        if isinstance(url, str):
+                            urls.add(url)
+    return HistoricalIndex(urls=urls, titles=titles, stories=tuple(stories))
 
 
 async def fetch_historical_index(

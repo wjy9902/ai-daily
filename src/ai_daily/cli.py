@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -18,15 +19,18 @@ from ai_daily.persona_cli import (
     authorize_wechat as _authorize_wechat,
 )
 from ai_daily.persona_cli import (
+    hold_daily_draft as _hold_daily_draft,
+)
+from ai_daily.persona_cli import (
     persona_draft as _persona_draft,
 )
 from ai_daily.persona_cli import (
     wechat_probe as _wechat_probe,
 )
 from ai_daily.persona_cli import (
-    wechat_reconcile as _wechat_reconcile,
+    wechat_reconcile as _wechat_reconcile_unlocked,
 )
-from ai_daily.persona_models import PersonaEdition
+from ai_daily.persona_models import PersonaEdition, WechatTarget
 from ai_daily.persona_pipeline import PersonaPipeline
 from ai_daily.persona_render import render_persona_placeholder
 from ai_daily.persona_replay import freeze_replay_dataset, run_replay
@@ -40,6 +44,7 @@ from ai_daily.site_publisher import (
     PublicationRefused,
     SiteLayout,
     activate_release,
+    active_release_contains_publication,
     build_archive,
     hold_previous_release,
     persona_run_lock,
@@ -51,6 +56,7 @@ from ai_daily.site_publisher import (
     recent_persona_editions,
     recent_publications,
     render_release,
+    wechat_run_lock,
     write_persona_status,
     write_status,
 )
@@ -352,8 +358,42 @@ async def _archive(args: argparse.Namespace) -> int:
 
 
 async def _persona_run(args: argparse.Namespace) -> int:
+    if args.mode == "draft":
+        return await _run_wechat_locked(
+            args,
+            "draft_contended",
+            _persona_run_unlocked,
+        )
     with persona_run_lock(_layout(args)):
         return await _persona_run_unlocked(args)
+
+
+async def _wechat_reconcile(args: argparse.Namespace) -> int:
+    return await _run_wechat_locked(
+        args,
+        "reconcile_contended",
+        _wechat_reconcile_unlocked,
+    )
+
+
+async def _run_wechat_locked(
+    args: argparse.Namespace,
+    contention_action: str,
+    operation: Callable[[argparse.Namespace], Awaitable[int]],
+) -> int:
+    layout = _layout(args)
+    try:
+        with wechat_run_lock(layout):
+            return await operation(args)
+    except PublicationRefused as error:
+        _emit(
+            {
+                "action": contention_action,
+                "target_date": _target_date(args.date).isoformat(),
+                "reason": str(error),
+            }
+        )
+        return 1
 
 
 async def _persona_run_unlocked(args: argparse.Namespace) -> int:
@@ -361,6 +401,11 @@ async def _persona_run_unlocked(args: argparse.Namespace) -> int:
     layout = _layout(args)
     layout.ensure()
     target = _target_date(args.date)
+    if args.mode == "draft":
+        publication = read_publication(layout, target)
+        if publication is None:
+            return _hold_daily_draft(layout, target, "published daily is missing")
+        return await _persona_draft(args, config, layout, publication)
     edition_path = layout.persona_edition_path(target)
     edition = _read_persona_edition(layout, target)
     active_marker = load_upstream_snapshot(layout, target).publication_marker
@@ -376,12 +421,24 @@ async def _persona_run_unlocked(args: argparse.Namespace) -> int:
             target,
             "upstream marker changed after the persona edition was frozen",
         )
-    if layout.wechat_target_path(target).exists() and edition is None:
-        return _hold_existing_persona(
-            layout,
-            target,
-            "immutable WeChat target exists without its persona edition",
-        )
+    wechat_target_path = layout.wechat_target_path(target)
+    if wechat_target_path.exists() and edition is None:
+        try:
+            wechat_target = WechatTarget.model_validate_json(
+                wechat_target_path.read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return _hold_existing_persona(
+                layout,
+                target,
+                "immutable WeChat target is invalid",
+            )
+        if isinstance(wechat_target.edition, PersonaEdition):
+            return _hold_existing_persona(
+                layout,
+                target,
+                "immutable WeChat target exists without its persona edition",
+            )
     if edition is None:
         pipeline = PersonaPipeline(
             config,
@@ -399,10 +456,8 @@ async def _persona_run_unlocked(args: argparse.Namespace) -> int:
     if edition is None:
         _emit({"error": "persona edition was not persisted"})
         return 1
-    if args.mode in {"site", "draft"}:
+    if args.mode == "site":
         _publish_persona_site(config, layout, edition)
-    if args.mode == "draft":
-        return await _persona_draft(args, config, layout, edition)
     action = "persona_ready" if args.mode == "dry-run" else "persona_site_published"
     write_persona_status(
         layout,
@@ -502,7 +557,6 @@ def _active_release_contains(
     if not layout.current.exists():
         return False
     active = layout.current.resolve()
-    daily = active / "daily" / latest.target_date.isoformat() / "index.html"
     persona = active / "jiayu" / f"{edition.target_date.isoformat()}.html"
     expected_editions = recent_persona_editions(layout)
     archive_complete = all(
@@ -512,9 +566,8 @@ def _active_release_contains(
         for item in expected_editions
     )
     return (
-        daily.exists()
+        active_release_contains_publication(layout, latest)
         and persona.exists()
-        and latest.marker in daily.read_text(encoding="utf-8")
         and edition.payload_sha256 in persona.read_text(encoding="utf-8")
         and archive_complete
     )
@@ -576,7 +629,10 @@ def build_parser() -> argparse.ArgumentParser:
     archive = subparsers.add_parser("archive", help="list published days and gaps")
     archive.add_argument("--date")
 
-    persona = subparsers.add_parser("persona-run", help="build the 甲鱼主编版")
+    persona = subparsers.add_parser(
+        "persona-run",
+        help="build the 甲鱼主编版, or prepare the original daily as a WeChat draft",
+    )
     persona.add_argument("--date")
     persona.add_argument("--mode", choices=("dry-run", "site", "draft"), required=True)
     persona.add_argument("--authorization", type=Path)

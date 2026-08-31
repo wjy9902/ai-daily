@@ -13,6 +13,7 @@ from .site import (
     render_daily,
     render_fallback,
     render_index,
+    render_issue,
     render_rss,
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "render_daily",
     "render_fallback",
     "render_index",
+    "render_issue",
     "render_rss",
 ]

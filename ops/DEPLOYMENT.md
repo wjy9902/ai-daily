@@ -27,7 +27,7 @@
 ├── releases/     <date>-<ts>/ 每次发布一个，保留 30 个
 ├── current →     软链，指向当前 release
 ├── fallback/     预构建兜底页，渲染器挂了也能服务
-├── status/       基础日报与主编版独立状态（Caddy no-store）
+├── status/       基础日报、主编版与微信草稿独立状态（Caddy no-store）
 ├── budget/       <date>.json 基础日报模型预算台账
 ├── upstream/     marker-keyed 基础日报快照与日期激活指针
 ├── persona-editions/  已验证的甲鱼主编版结构化成稿

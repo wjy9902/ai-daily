@@ -27,6 +27,7 @@ from ai_daily.persona_models import (
     ClaimQuote,
     Critique,
     CritiqueFinding,
+    DailyWechatEdition,
     EditionAssembly,
     EditionAssemblyItem,
     EditionDraft,
@@ -91,12 +92,15 @@ from ai_daily.persona_wechat import (
     verify_authorization,
 )
 from ai_daily.publication import PublicationLevel
+from ai_daily.render import render_issue
 from ai_daily.site_publisher import (
     PublicationRefused,
     SiteLayout,
+    publication_lock,
     publish_site,
     recent_persona_editions,
 )
+from ai_daily.wechat_render import _compact_issue_html, _visible_text, render_daily_wechat
 
 TARGET = date(2026, 8, 27)
 QUOTE = "Evidence for story 0."
@@ -1448,11 +1452,11 @@ def test_hmac_authorization_attestation_and_slot_idempotency(tmp_path: Path) -> 
     assert slots.get(attestation.publication_slot)["attempt_id"] == "attempt-3"  # type: ignore[index]
 
 
-def test_draft_html_canonicalization_allows_stripped_link_wrappers() -> None:
+def test_draft_html_canonicalization_rejects_stripped_link_wrappers() -> None:
     linked = '<p>来源：<a href="https://example.com">https://example.com</a></p>'
     unlinked = "<p>来源：https://example.com</p>"
 
-    assert canonical_draft_html_sha256(linked) == canonical_draft_html_sha256(unlinked)
+    assert canonical_draft_html_sha256(linked) != canonical_draft_html_sha256(unlinked)
 
 
 def test_draft_html_canonicalization_rejects_changed_link_text() -> None:
@@ -1460,6 +1464,250 @@ def test_draft_html_canonicalization_rejects_changed_link_text() -> None:
     changed = "<p>来源：https://evil.example</p>"
 
     assert canonical_draft_html_sha256(expected) != canonical_draft_html_sha256(changed)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "remote_content",
+    [
+        '<p>来源：<a href="https://phishing.example/source">Example</a></p>',
+        '<p><a href="https://example.com/source">来源：</a>Example</p>',
+        '<p>来源：<a href="https://example.com/source"></a>Example</p>',
+        (
+            '<p>来源：<a href="https://example.com/source" '
+            'onclick="alert(1)">Example</a></p>'
+        ),
+    ],
+)
+async def test_draft_readback_rejects_changed_or_unsafe_link(
+    remote_content: str,
+) -> None:
+    expected = {
+        "title": "AI 日报",
+        "author": "甲鱼",
+        "digest": "摘要",
+        "content": '<p>来源：<a href="https://example.com/source">Example</a></p>',
+        "content_source_url": "https://daily.example.test/daily/2026-08-27/",
+        "thumb_media_id": "cover-1",
+        "need_open_comment": 1,
+        "only_fans_can_comment": 0,
+    }
+    remote = expected | {"content": remote_content}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"news_item": [remote]}, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = WechatClient("app", "secret", http)
+        with pytest.raises(WechatPublicationError, match=r"does not match|unexpected attribute"):
+            await client.verify_draft("media-id", expected, "token")
+
+
+@pytest.mark.asyncio
+async def test_draft_readback_rejects_platform_stripping_every_link_wrapper() -> None:
+    expected = {
+        "title": "AI 日报",
+        "author": "甲鱼",
+        "digest": "摘要",
+        "content": '<p>来源：<a href="https://example.com/source">Example</a></p>',
+        "content_source_url": "https://daily.example.test/daily/2026-08-27/",
+        "thumb_media_id": "cover-1",
+        "need_open_comment": 1,
+        "only_fans_can_comment": 0,
+    }
+    remote = expected | {"content": "<p>来源：Example</p>"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"news_item": [remote]}, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = WechatClient("app", "secret", http)
+        with pytest.raises(WechatPublicationError, match="does not match"):
+            await client.verify_draft("media-id", expected, "token")
+
+
+def test_daily_wechat_renderer_reuses_original_issue_without_rewriting() -> None:
+    publication = factories.publication(target_date=TARGET)
+    edition = DailyWechatEdition(
+        column_id="jiayu-editorial",
+        target_date=TARGET,
+        publication=publication,
+        site_base_url=HttpUrl(factories.SITE),
+        payload_sha256="0" * 64,
+    ).signed()
+    rendered = render_daily_wechat(edition)
+    payload = persona_cli.draft_article_payload(edition, rendered.html, "cover-1", "甲鱼")
+
+    assert _visible_text(rendered.html) == _visible_text(render_issue(publication))
+    assert payload["title"] == f"AI 日报 {TARGET.isoformat()}"
+    assert payload["digest"] == publication.highlight
+    assert payload["content"] == rendered.html
+    assert payload["content_source_url"].startswith(
+        f"{factories.SITE}/daily/{TARGET.isoformat()}/#daily-"
+    )
+    assert "甲鱼主编版" not in rendered.html
+
+
+def test_daily_wechat_digest_is_platform_truncated_without_changing_body() -> None:
+    publication = factories.publication(target_date=TARGET, highlight="原" * 121)
+    edition = DailyWechatEdition(
+        column_id="jiayu-editorial",
+        target_date=TARGET,
+        publication=publication,
+        site_base_url=HttpUrl(factories.SITE),
+        payload_sha256="0" * 64,
+    ).signed()
+    rendered = render_daily_wechat(edition)
+    payload = persona_cli.draft_article_payload(edition, rendered.html, "cover-1", "甲鱼")
+
+    assert payload["digest"] == "原" * 119 + "…"
+    assert payload["content"] == rendered.html
+    assert _visible_text(rendered.html) == _visible_text(render_issue(publication))
+
+
+def test_wechat_body_must_be_strictly_below_twenty_thousand_characters() -> None:
+    edition = _edition("a" * 64)
+
+    accepted = persona_cli.draft_article_payload(edition, "字" * 19_999, "cover-1", "甲鱼")
+    assert len(accepted["content"]) == 19_999
+    with pytest.raises(WechatPublicationError, match="content"):
+        persona_cli.draft_article_payload(edition, "字" * 20_000, "cover-1", "甲鱼")
+
+
+def test_wechat_source_url_must_be_strictly_below_one_kilobyte() -> None:
+    publication = factories.publication(target_date=TARGET)
+
+    def edition_for_size(size: int) -> DailyWechatEdition:
+        padding = size
+        for _ in range(3):
+            edition = DailyWechatEdition(
+                column_id="jiayu-editorial",
+                target_date=TARGET,
+                publication=publication,
+                site_base_url=HttpUrl(f"https://example.com/{'a' * padding}"),
+                payload_sha256="0" * 64,
+            ).signed()
+            actual = len(
+                f"{edition.source_url}#daily-{edition.payload_sha256}".encode()
+            )
+            if actual == size:
+                return edition
+            padding += size - actual
+        raise AssertionError(f"could not build a {size}-byte source URL")
+
+    accepted = persona_cli.draft_article_payload(
+        edition_for_size(1_023), "<p>原文</p>", "cover-1", "甲鱼"
+    )
+    assert len(accepted["content_source_url"].encode("utf-8")) == 1_023
+    with pytest.raises(WechatPublicationError, match="content_source_url"):
+        persona_cli.draft_article_payload(
+            edition_for_size(1_024), "<p>原文</p>", "cover-1", "甲鱼"
+        )
+
+
+def test_daily_wechat_compacts_a_full_issue_below_platform_limit() -> None:
+    details = []
+    for index in range(9):
+        card = factories.story_card(index)
+        details.append(
+            card.model_copy(
+                update={
+                    "tldr": f"第 {index} 条摘要：" + "甲" * 80,
+                    "facts": [
+                        card.facts[0].model_copy(update={"text": "已确认事实：" + "乙" * 120})
+                    ],
+                    "why_it_matters": "对产品决策的影响：" + "丙" * 160,
+                    "action": "可执行建议：" + "丁" * 100,
+                    "caveat": "边界与争议：" + "戊" * 120,
+                }
+            )
+        )
+    briefs = [
+        factories.brief_card(index + 100).model_copy(
+            update={"brief": f"第 {index} 条快讯：" + "己" * 90}
+        )
+        for index in range(20)
+    ]
+    publication = factories.publication(
+        target_date=TARGET,
+        details=details,
+        briefs=briefs,
+        highlight="今天的重要变化：" + "庚" * 180,
+    )
+    edition = DailyWechatEdition(
+        column_id="jiayu-editorial",
+        target_date=TARGET,
+        publication=publication,
+        site_base_url=HttpUrl(factories.SITE),
+        payload_sha256="0" * 64,
+    ).signed()
+
+    original = render_issue(publication)
+    rendered = render_daily_wechat(edition)
+    payload = persona_cli.draft_article_payload(edition, rendered.html, "cover-1", "甲鱼")
+
+    assert len(original) > 20_000
+    assert len(rendered.html) < 20_000
+    assert _visible_text(rendered.html) == _visible_text(original)
+    assert payload["content"] == rendered.html
+
+
+@pytest.mark.parametrize(
+    "source_html",
+    [
+        "<article><script>alert(1)</script></article>",
+        '<article><p><a href="javascript:alert(1)">来源</a></p></article>',
+    ],
+)
+def test_daily_wechat_compactor_rejects_unexpected_or_unsafe_markup(
+    source_html: str,
+) -> None:
+    with pytest.raises(ValueError):
+        _compact_issue_html(source_html)
+
+
+def test_daily_wechat_compactor_preserves_spaces_between_inline_tags() -> None:
+    original = (
+        '<article><p><strong>模型 A</strong> '
+        '<a href="https://example.com/source">已经发布</a></p></article>'
+    )
+
+    compacted = _compact_issue_html(original)
+
+    assert _visible_text(original) == "模型 A 已经发布"
+    assert _visible_text(compacted) == _visible_text(original)
+
+
+def test_daily_wechat_edition_rejects_mismatched_or_tampered_publication() -> None:
+    publication = factories.publication(target_date=TARGET)
+    fields = {
+        "column_id": "jiayu-editorial",
+        "target_date": TARGET,
+        "site_base_url": HttpUrl(factories.SITE),
+        "payload_sha256": "0" * 64,
+    }
+
+    with pytest.raises(ValueError, match="target date"):
+        DailyWechatEdition(publication=publication, **(fields | {"target_date": date(2026, 8, 26)}))
+    with pytest.raises(ValueError, match="marker"):
+        DailyWechatEdition(
+            publication=publication.model_copy(update={"highlight": "内容已被篡改"}),
+            **fields,
+        )
+
+
+def test_daily_wechat_renderer_rejects_tampered_edition_hash() -> None:
+    publication = factories.publication(target_date=TARGET)
+    edition = DailyWechatEdition(
+        column_id="jiayu-editorial",
+        target_date=TARGET,
+        publication=publication,
+        site_base_url=HttpUrl(factories.SITE),
+        payload_sha256="0" * 64,
+    ).signed()
+
+    with pytest.raises(ValueError, match="invalid hash"):
+        render_daily_wechat(edition.model_copy(update={"payload_sha256": "f" * 64}))
 
 
 class _ReadTimeoutWechatClient:
@@ -1583,9 +1831,56 @@ def _wechat_publish_inputs(tmp_path: Path) -> dict[str, Any]:
     }
 
 
+def _daily_wechat_publish_inputs(tmp_path: Path) -> dict[str, Any]:
+    authorization = _authorization(allowed_actions=["create_draft"])
+    publication = factories.publication(target_date=TARGET)
+    edition = DailyWechatEdition(
+        column_id="jiayu-editorial",
+        target_date=TARGET,
+        publication=publication,
+        site_base_url=HttpUrl(factories.SITE),
+        payload_sha256="0" * 64,
+    ).signed()
+    rendered = render_daily_wechat(edition)
+    attestation = attest_release(
+        edition,
+        rendered.receipt,
+        authorization,
+        account_fingerprint("app", "account-1"),
+        "release-v1",
+        RELEASE_KEY,
+    )
+    return {
+        "slots": PublicationSlots(tmp_path / "daily-slots.sqlite3"),
+        "edition": edition,
+        "html": rendered.html,
+        "receipt": rendered.receipt,
+        "authorization": authorization,
+        "attestation": attestation,
+        "auth_key": AUTH_KEY,
+        "release_key": RELEASE_KEY,
+        "account_stable_id": "account-1",
+        "cover_media_id": "cover-1",
+        "author": "甲鱼",
+    }
+
+
 @pytest.mark.asyncio
 async def test_wechat_successfully_creates_and_verifies_one_draft(tmp_path: Path) -> None:
     inputs = _wechat_publish_inputs(tmp_path)
+
+    receipt = await publish_draft(client=cast(Any, _SuccessfulWechatClient()), **inputs)
+
+    slot = inputs["slots"].get(inputs["attestation"].publication_slot)
+    assert receipt.state == "verified"
+    assert receipt.remote_id == "remote-media-id"
+    assert slot is not None and slot["state"] == "verified"
+    assert slot["remote_id"] == "remote-media-id"
+
+
+@pytest.mark.asyncio
+async def test_daily_wechat_successfully_creates_and_verifies_one_draft(tmp_path: Path) -> None:
+    inputs = _daily_wechat_publish_inputs(tmp_path)
 
     receipt = await publish_draft(client=cast(Any, _SuccessfulWechatClient()), **inputs)
 
@@ -1991,7 +2286,8 @@ async def test_persona_draft_writes_prepared_and_verified_manifests(
 ) -> None:
     layout = SiteLayout(tmp_path / "site")
     layout.ensure()
-    edition = _edition("a" * 64)
+    publication = factories.publication(target_date=TARGET)
+    publish_site(layout, publication, factories.SITE)
     authorization_path = tmp_path / "authorization.json"
     write_artifact(authorization_path, _authorization())
     for name, value in {
@@ -2004,17 +2300,26 @@ async def test_persona_draft_writes_prepared_and_verified_manifests(
         monkeypatch.setenv(name, value)
     args = SimpleNamespace(authorization=authorization_path, execute=False)
 
-    assert await persona_cli.persona_draft(args, load_config(Path("config")), layout, edition) == 0
+    assert (
+        await persona_cli.persona_draft(
+            args, load_config(Path("config")), layout, publication
+        )
+        == 0
+    )
     manifest_path = layout.persona_manifest_path(TARGET)
     prepared = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert prepared["wechat_state"] == "not_attempted"
+    assert layout.wechat_status_file.exists()
+    assert not layout.persona_status_file.exists()
     render_receipt = RenderReceipt.model_validate_json(
         Path(prepared["render_receipt_path"]).read_text(encoding="utf-8")
     )
-    assert render_receipt.edition_payload_sha256 == edition.payload_sha256
     target = WechatTarget.model_validate_json(
         layout.wechat_target_path(TARGET).read_text(encoding="utf-8")
     )
+    assert isinstance(target.edition, DailyWechatEdition)
+    assert render_receipt.edition_payload_sha256 == target.edition.payload_sha256
+    assert _visible_text(target.html) == _visible_text(render_issue(publication))
 
     async def verified(*args: Any, **kwargs: Any) -> OperationReceipt:
         return OperationReceipt(
@@ -2032,7 +2337,12 @@ async def test_persona_draft_writes_prepared_and_verified_manifests(
 
     monkeypatch.setattr(persona_cli, "_execute_target", verified)
     args.execute = True
-    assert await persona_cli.persona_draft(args, load_config(Path("config")), layout, edition) == 0
+    assert (
+        await persona_cli.persona_draft(
+            args, load_config(Path("config")), layout, publication
+        )
+        == 0
+    )
     completed = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert completed["wechat_state"] == "draft_verified"
     assert Path(completed["wechat_receipt_path"]).exists()
@@ -2044,7 +2354,8 @@ async def test_persona_draft_persists_unknown_receipt_and_manifest(
 ) -> None:
     layout = SiteLayout(tmp_path / "site")
     layout.ensure()
-    edition = _edition("a" * 64)
+    publication = factories.publication(target_date=TARGET)
+    publish_site(layout, publication, factories.SITE)
     authorization_path = tmp_path / "authorization.json"
     write_artifact(authorization_path, _authorization())
     for name, value in {
@@ -2082,10 +2393,150 @@ async def test_persona_draft_persists_unknown_receipt_and_manifest(
     monkeypatch.setattr(persona_cli, "_execute_target", unknown)
     args = SimpleNamespace(authorization=authorization_path, execute=True)
 
-    assert await persona_cli.persona_draft(args, load_config(Path("config")), layout, edition) == 2
+    assert (
+        await persona_cli.persona_draft(
+            args, load_config(Path("config")), layout, publication
+        )
+        == 2
+    )
     manifest = json.loads(layout.persona_manifest_path(TARGET).read_text(encoding="utf-8"))
     assert manifest["wechat_state"] == "unknown"
     assert Path(manifest["wechat_receipt_path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_daily_draft_holds_when_publication_is_not_active(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    publication = factories.publication(target_date=TARGET)
+    write_artifact(layout.publication_path(TARGET), publication)
+
+    result = await persona_cli.persona_draft(
+        SimpleNamespace(authorization=None, execute=False),
+        load_config(Path("config")),
+        layout,
+        publication,
+    )
+
+    status = json.loads(layout.wechat_status_file.read_text(encoding="utf-8"))
+    assert result == 1
+    assert status["action"] == "draft_held"
+    assert "not in the active site" in status["reason"]
+    assert not layout.wechat_target_path(TARGET).exists()
+
+
+@pytest.mark.asyncio
+async def test_daily_draft_records_publication_lock_contention_as_held(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    publication = factories.publication(target_date=TARGET)
+    publish_site(layout, publication, factories.SITE)
+
+    with publication_lock(layout):
+        result = await persona_cli.persona_draft(
+            SimpleNamespace(authorization=None, execute=False),
+            load_config(Path("config")),
+            layout,
+            publication,
+        )
+
+    status = json.loads(layout.wechat_status_file.read_text(encoding="utf-8"))
+    assert result == 1
+    assert status["action"] == "draft_held"
+    assert "another publication run holds the lock" in status["reason"]
+    assert not layout.wechat_target_path(TARGET).exists()
+
+
+@pytest.mark.asyncio
+async def test_receipt_conflict_is_rejected_before_daily_target_is_installed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    original = factories.publication(target_date=TARGET, level=PublicationLevel.L2B)
+    upgraded = factories.publication(target_date=TARGET, level=PublicationLevel.L0)
+    publish_site(layout, original, factories.SITE)
+    write_artifact(
+        layout.persona_render_receipt_path(TARGET),
+        RenderReceipt(
+            edition_payload_sha256="a" * 64,
+            markdown_sha256="b" * 64,
+            html_sha256="c" * 64,
+            renderer_version="legacy-renderer",
+            template_version="legacy-template",
+        ),
+    )
+    authorization_path = tmp_path / "authorization.json"
+    write_artifact(authorization_path, _authorization())
+    for name, value in {
+        "WECHAT_APP_ID": "app",
+        "WECHAT_ACCOUNT_STABLE_ID": "account-1",
+        "AI_DAILY_AUTH_HMAC_KEY": AUTH_KEY,
+        "AI_DAILY_RELEASE_HMAC_KEY": RELEASE_KEY,
+        "WECHAT_COVER_MEDIA_ID": "cover-1",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match="immutable render receipt"):
+        await persona_cli.persona_draft(
+            SimpleNamespace(authorization=authorization_path, execute=False),
+            load_config(Path("config")),
+            layout,
+            original,
+        )
+
+    assert not layout.wechat_target_path(TARGET).exists()
+    publish_site(layout, upgraded, factories.SITE)
+    assert json.loads(layout.publication_path(TARGET).read_text(encoding="utf-8"))[
+        "marker"
+    ] == upgraded.marker
+
+
+@pytest.mark.asyncio
+async def test_daily_draft_freezes_target_under_publication_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    original = factories.publication(target_date=TARGET, level=PublicationLevel.L2B)
+    upgraded = factories.publication(target_date=TARGET, level=PublicationLevel.L0)
+    publish_site(layout, original, factories.SITE)
+    authorization_path = tmp_path / "authorization.json"
+    write_artifact(authorization_path, _authorization())
+    for name, value in {
+        "WECHAT_APP_ID": "app",
+        "WECHAT_ACCOUNT_STABLE_ID": "account-1",
+        "AI_DAILY_AUTH_HMAC_KEY": AUTH_KEY,
+        "AI_DAILY_RELEASE_HMAC_KEY": RELEASE_KEY,
+        "WECHAT_COVER_MEDIA_ID": "cover-1",
+    }.items():
+        monkeypatch.setenv(name, value)
+    original_build = persona_cli._build_target
+    upgrade_was_blocked = False
+
+    def build_while_upgrade_contends(*args: Any, **kwargs: Any) -> tuple[WechatTarget, Path]:
+        nonlocal upgrade_was_blocked
+        with pytest.raises(PublicationRefused, match="another publication run"):
+            with publication_lock(layout):
+                publish_site(layout, upgraded, factories.SITE)
+        upgrade_was_blocked = True
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(persona_cli, "_build_target", build_while_upgrade_contends)
+
+    result = await persona_cli.persona_draft(
+        SimpleNamespace(authorization=authorization_path, execute=False),
+        load_config(Path("config")),
+        layout,
+        original,
+    )
+
+    frozen = WechatTarget.model_validate_json(
+        layout.wechat_target_path(TARGET).read_text(encoding="utf-8")
+    )
+    committed = json.loads(layout.publication_path(TARGET).read_text(encoding="utf-8"))
+    assert result == 0
+    assert upgrade_was_blocked is True
+    assert isinstance(frozen.edition, DailyWechatEdition)
+    assert frozen.edition.publication.marker == original.marker
+    assert committed["marker"] == original.marker
 
 
 def test_short_hmac_keys_are_rejected() -> None:

@@ -469,10 +469,8 @@ def render_daily(publication: DailyPublication, site_base_url: str) -> str:
     for an L3 page is a bug rather than something to paper over.
     """
 
-    if publication.level is PublicationLevel.L3:
-        raise ValueError("L3 has no issue page; keep the previous release instead")
     base = _site_base(site_base_url)
-    body = "\n".join(_issue(publication, prefix=_DAILY_PREFIX, permalink=False))
+    body = render_issue(publication)
     description = publication.highlight or SITE_DESCRIPTION
     return _page(
         title=f"{SITE_TITLE} {publication.target_date.isoformat()}",
@@ -482,6 +480,14 @@ def render_daily(publication: DailyPublication, site_base_url: str) -> str:
         base=base,
         body=body,
     )
+
+
+def render_issue(publication: DailyPublication) -> str:
+    """Render the original issue body shared by the website and WeChat draft."""
+
+    if publication.level is PublicationLevel.L3:
+        raise ValueError("L3 has no issue page; keep the previous release instead")
+    return "\n".join(_issue(publication, prefix=_DAILY_PREFIX, permalink=False))
 
 
 def render_index(
