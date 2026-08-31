@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -535,6 +535,7 @@ class PlanningGateway:
     def __init__(self, output: EditorialPlan) -> None:
         self.output = output
         self.candidate_count = 0
+        self.published_headlines: list[str] = []
         self.output_schema: dict[str, Any] = {}
 
     async def generate(
@@ -546,7 +547,9 @@ class PlanningGateway:
         validator: Any = None,
         stage: Any = None,
     ) -> Any:
-        self.candidate_count = len(json.loads(prompt))
+        payload = json.loads(prompt)
+        self.candidate_count = len(payload["candidates"])
+        self.published_headlines = [row["headline"] for row in payload["recently_published"]]
         self.output_schema = output_type.model_json_schema()
         return output_type.model_validate(_grouped_plan(self.output))
 
@@ -1260,6 +1263,45 @@ def test_rumor_copy_requires_attribution() -> None:
 
     with pytest.raises(ValueError, match="lacks attribution"):
         validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+async def test_planner_is_shown_what_already_ran() -> None:
+    """remove_historical deletes candidates; only the planner can decline to pick one.
+
+    2026-08-31 led with Tencent's Hy4 release a day after 2026-08-30 did.
+    Filtering that candidate out just moved the repeat onto another write-up of
+    the same announcement, because the planner had never been shown the record
+    and was choosing blind.
+    """
+
+    from ai_daily.history import PublishedItem
+
+    events = [numbered_event(index) for index in range(17)]
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=True,
+            category="模型与平台",
+            relevance=80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for value in events
+    ]
+    gateway = PlanningGateway(valid_global_plan())
+    published = [
+        PublishedItem(
+            target_date=date(2026, 8, 30), category="模型与平台", headline="腾讯发布开源旗舰 Hy4"
+        ),
+    ]
+
+    await plan_digest(  # type: ignore[arg-type]
+        gateway, events, decisions, load_config(Path("config")).pipeline, published
+    )
+
+    assert gateway.candidate_count == 17
+    assert gateway.published_headlines == ["腾讯发布开源旗舰 Hy4"]
 
 
 def test_rumor_copy_may_name_its_source_instead_of_a_marker() -> None:
