@@ -272,7 +272,11 @@ class RoleModelConfig(StrictModel):
 
 
 class BudgetConfig(StrictModel):
-    request_limit: int = Field(gt=0, le=200)
+    # The schema ceiling used to be 200, which was sized when the budget was an
+    # operating limit. It is a runaway backstop now, and cost is the control
+    # that matters; a request cap low enough to stop a working day is the
+    # failure mode this whole block keeps producing.
+    request_limit: int = Field(gt=0, le=2000)
     input_token_limit: int = Field(gt=0)
     output_token_limit: int = Field(gt=0)
     cost_cny_limit: float = Field(gt=0)
