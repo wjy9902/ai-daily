@@ -1262,6 +1262,35 @@ def test_rumor_copy_requires_attribution() -> None:
         validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
 
 
+def test_rumor_copy_may_name_its_source_instead_of_a_marker() -> None:
+    """Naming the outlet is attribution, and better attribution than 据报道.
+
+    The planner is told to write 消息出处 "(据报道、爆料称、消息称、知情人士等)" -
+    an open list - and a marker whitelist was the whole test, so
+    "TestingCatalog 发现…" failed while a vague "据报道：…" passed. On
+    2026-08-31 that took all three windows and cost the issue every detail
+    story; the two events it died on came from TestingCatalog and Techmeme.
+    """
+
+    events = [numbered_event(index) for index in range(17)]
+    label = events[4].items[0].source_label
+    plan_value = _rumor_plan(
+        4, f"{label} 发现新模型进入灰度测试", f"{label} 在后台看到新的模型入口。"
+    )
+
+    validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
+def test_rumor_copy_naming_an_unrelated_outlet_is_still_unattributed() -> None:
+    """The source path checks the event's own outlets, not any capitalized word."""
+
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = _rumor_plan(4, "Nintendo 发现新模型进入灰度测试", "后台出现了新的模型入口。")
+
+    with pytest.raises(ValueError, match="lacks attribution"):
+        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+
+
 def test_rumor_cannot_lead() -> None:
     events = [numbered_event(index) for index in range(17)]
     plan_value = _rumor_plan(0, "爆料称新模型最快周四发布", "据报道，新模型已进入灰度测试。")

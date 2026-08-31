@@ -53,11 +53,23 @@ DRAFT_EVIDENCE_EXCERPT_CHARS = 6_000
 #: The one category whose copy may report unverified claims — always with
 #: attribution, never as the paper's own voice, and never in the lead slot.
 RUMOR_CATEGORY = "前瞻与传闻"
-#: Copy in the rumor category must name where the claim comes from. Without a
-#: marker like 据报道 or 爆料称 a rumor reads as a verified fact, which is the
-#: exact failure the speculation gates exist to stop.
+#: Copy in the rumor category must name where the claim comes from. Without it a
+#: rumor reads as a verified fact, which is the exact failure the speculation
+#: gates exist to stop.
+#:
+#: The marker list used to be the whole test, and it was narrower than the rule
+#: it enforces. The planner is told to write 消息出处 "(据报道、爆料称、消息称、
+#: 知情人士等)" - an open list - so it writes what a person would write:
+#: "TestingCatalog 发现…", "Techmeme 报道…", "The Information 披露…". None of
+#: those matched, while a vague "据报道：…" did, so the copy that actually named
+#: its origin was the copy that got rejected. On 2026-08-31 that took every one
+#: of the day's three windows and cost the issue all of its detail stories; it
+#: had been taking one window a day since 2026-08-28. Verbs that only ever
+#: introduce someone else's claim are listed here; naming the source outright is
+#: handled by _names_its_source, which checks the event's own source labels.
 RUMOR_ATTRIBUTION_RE = re.compile(
-    r"(?:据报道|据.{0,12}报道|据传|据悉|据爆料|爆料称|消息称|传闻|知情人士|社区发现|尚未官方确认|预告|路线图)"
+    r"(?:据报道|据.{0,12}报道|据传|据悉|据爆料|爆料称|消息称|传闻|知情人士|社区发现"
+    r"|尚未官方确认|预告|路线图|报道称|披露|透露|曝光|泄露|援引|引述|外媒)"
 )
 SPECULATIVE_COPY_RE = re.compile(
     r"(?:传闻|尚未证实|据猜测|推测|可能性(?:较?高|较?大)|或将|或随后|"
@@ -687,12 +699,38 @@ def validate_editorial_plan(
     _validate_plan_quotas(plan.selections, config)
 
 
+def _source_names(event: Event) -> list[str]:
+    """Names of the outlets this event actually came from.
+
+    Labels carry suffixes we add ("TechCrunch AI", "MiniMax @ X"); copy names
+    the outlet, not our label, so the trimmed form counts too. Anything under
+    three characters is dropped - it would match by accident rather than by
+    attribution.
+    """
+
+    names: list[str] = []
+    for item in event.items:
+        label = (item.source_label or item.source or "").strip()
+        for candidate in (label, re.sub(r"\s*(?:@\s*X|AI)$", "", label).strip()):
+            if len(candidate) >= 3 and candidate not in names:
+                names.append(candidate)
+    return names
+
+
+def _names_its_source(selection: EditorialSelection, event: Event | None) -> bool:
+    if event is None:
+        return False
+    copy = f"{selection.headline}\n{selection.brief}"
+    return any(name in copy for name in _source_names(event))
+
+
 def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     for selection in plan.selections:
         is_rumor = selection.category == RUMOR_CATEGORY
         if is_rumor and not (
             RUMOR_ATTRIBUTION_RE.search(selection.headline)
             or RUMOR_ATTRIBUTION_RE.search(selection.brief)
+            or _names_its_source(selection, events_by_id.get(selection.event_id))
         ):
             raise ValueError(
                 "editorial plan rumor item lacks attribution: "
