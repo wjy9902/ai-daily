@@ -4,7 +4,6 @@ import json
 import re
 from collections import Counter
 from collections.abc import Sequence
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, create_model
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -29,11 +28,13 @@ from ai_daily.models import (
     EvidenceBundle,
     JudgeDecision,
     PipelineConfig,
-    SourceChannel,
     SourceTier,
     StrictModel,
 )
-from ai_daily.normalize import canonicalize_url
+from ai_daily.normalize import (
+    FIRST_PARTY_CHANNELS,
+    registrable_domain,
+)
 
 
 class JudgeBatch(BaseModel):
@@ -101,48 +102,6 @@ FULLWIDTH_PUNCTUATION = (
 )
 HALFWIDTH_PUNCTUATION = ",,..:;!?()[][]{}<><>" + '""""""' + "''" + "---~%#&@+=/\\|*$_"
 PUNCTUATION_TABLE = str.maketrans(FULLWIDTH_PUNCTUATION, HALFWIDTH_PUNCTUATION)
-# Registrable-domain suffixes that span more than one label. Kept as an explicit
-# list on purpose: a public-suffix dependency is not worth taking for the
-# handful of multi-part suffixes this feed actually sees.
-MULTI_LABEL_PUBLIC_SUFFIXES = frozenset(
-    {
-        "com.cn",
-        "net.cn",
-        "org.cn",
-        "gov.cn",
-        "edu.cn",
-        "ac.cn",
-        "co.uk",
-        "org.uk",
-        "ac.uk",
-        "gov.uk",
-        "me.uk",
-        "net.uk",
-        "co.jp",
-        "or.jp",
-        "ne.jp",
-        "ac.jp",
-        "go.jp",
-        "com.au",
-        "net.au",
-        "org.au",
-        "edu.au",
-        "gov.au",
-        "co.kr",
-        "or.kr",
-        "com.hk",
-        "org.hk",
-        "com.tw",
-        "org.tw",
-        "com.sg",
-        "com.br",
-        "com.mx",
-        "co.in",
-        "co.nz",
-        "co.za",
-    }
-)
-FIRST_PARTY_CHANNELS = frozenset({SourceChannel.OFFICIAL, SourceChannel.RELEASE})
 
 
 def normalize_quote_text(value: str) -> str:
@@ -213,26 +172,6 @@ def validate_evidence_quotes(draft: DraftItem, bundle: EvidenceBundle) -> None:
                 "copy the sentence verbatim from that evidence excerpt, or cite the "
                 "evidence the sentence really comes from"
             )
-
-
-def registrable_domain(url: str) -> str:
-    """The eTLD+1 of ``url``: the unit of source independence.
-
-    ``www.example.com`` and ``news.example.com`` are the same publisher, so
-    they collapse to ``example.com``. Multi-label public suffixes such as
-    ``com.cn`` or ``co.uk`` keep one more label so that ``example.com.cn`` does
-    not collapse to the suffix itself.
-    """
-
-    host = (urlsplit(canonicalize_url(url)).hostname or "").strip(".")
-    if not host:
-        raise ValueError(f"cannot determine a registrable domain for url={url}")
-    labels = host.split(".")
-    if len(labels) <= 2:
-        return host
-    if ".".join(labels[-2:]) in MULTI_LABEL_PUBLIC_SUFFIXES:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
 
 
 def lead_is_corroborated(event: Event) -> bool:

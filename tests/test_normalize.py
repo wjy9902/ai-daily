@@ -2,8 +2,16 @@ from datetime import UTC, date, datetime
 from itertools import permutations
 
 from ai_daily.history import HistoricalIndex, HistoricalStory
-from ai_daily.models import RawItem, SourceChannel, SourceTier, SourceTimeKind
-from ai_daily.normalize import canonicalize_url, cluster_items, is_ai_related, remove_historical
+from ai_daily.models import Event, RawItem, SourceChannel, SourceTier, SourceTimeKind
+from ai_daily.normalize import (
+    _channel_score,
+    _corroboration,
+    _is_actionable,
+    canonicalize_url,
+    cluster_items,
+    is_ai_related,
+    remove_historical,
+)
 
 
 def item(item_id: str, url: str, title: str) -> RawItem:
@@ -330,3 +338,105 @@ def test_a_bare_link_title_merges_with_the_story_it_names() -> None:
         ]
     )
     assert len(events) == 1
+
+
+def test_a_latin_action_term_does_not_fire_inside_a_longer_word() -> None:
+    """``api`` inside capital and rapid used to mark funding news as actionable."""
+
+    assert not _is_actionable("anthropic raises $30b and the capital funds compute")
+    assert not _is_actionable("meta reorganizes its lab after rapid growth")
+    assert not _is_actionable("a study of therapies assisted by machine learning")
+    assert not _is_actionable("freedom of speech online")
+
+
+def test_action_terms_still_match_the_forms_a_headline_uses() -> None:
+    for text in (
+        "now available in the api",
+        "openai launches gpt-5.6",
+        "new models are available",
+        "the endpoint is deprecated",
+        "scheduled for deprecation",
+        "prices drop 40%",
+        "meta open sources the weights",
+    ):
+        assert _is_actionable(text), text
+
+
+def test_cjk_action_terms_keep_matching_without_word_boundaries() -> None:
+    assert _is_actionable("openai 发布新模型")
+    assert _is_actionable("额度重置")
+    assert not _is_actionable("某公司裁员")
+
+
+def _sourced(channel: SourceChannel, url: str, name: str) -> RawItem:
+    return RawItem(
+        source=name,
+        source_tier=SourceTier.A,
+        source_item_id=name,
+        url=url,
+        title="t",
+        discovered_at=datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
+        published_at=datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
+        source_channel=channel,
+    )
+
+
+def _event(*items: RawItem) -> Event:
+    return Event(
+        event_id="e",
+        canonical_url=str(items[0].url),
+        title="t",
+        summary="s",
+        items=list(items),
+        published_at=items[0].published_at,
+    )
+
+
+def test_one_party_talking_about_itself_is_not_corroboration() -> None:
+    """Seven OpenAI feeds used to score the same as four independent outlets."""
+
+    event = _event(
+        _sourced(SourceChannel.OFFICIAL, "https://openai.com/a", "openai-news"),
+        _sourced(SourceChannel.OFFICIAL, "https://learn.chatgpt.com/a", "openai-changelog"),
+        _sourced(SourceChannel.OFFICIAL, "https://x.com/OpenAI/1", "x-openai"),
+        _sourced(SourceChannel.OFFICIAL, "https://x.com/OpenAIDevs/2", "x-openai-devs"),
+        _sourced(SourceChannel.NEWS, "https://x.com/sama/3", "x-sama"),
+    )
+    assert _corroboration(event) == 0
+
+
+def test_a_lone_announcement_scores_the_same_however_many_feeds_carry_it() -> None:
+    """Otherwise the bonus measures how many feeds we point at a company."""
+
+    big = _event(
+        _sourced(SourceChannel.OFFICIAL, "https://anthropic.com/a", "anthropic-news"),
+        _sourced(SourceChannel.OFFICIAL, "https://anthropic.com/eng/a", "anthropic-eng"),
+        _sourced(SourceChannel.OFFICIAL, "https://x.com/AnthropicAI/1", "x-anthropic"),
+    )
+    small = _event(_sourced(SourceChannel.OFFICIAL, "https://mistral.ai/a", "mistral"))
+    assert _corroboration(big) == _corroboration(small) == 0
+
+
+def test_independent_publishers_still_earn_the_bonus() -> None:
+    two = _event(
+        _sourced(SourceChannel.OFFICIAL, "https://openai.com/a", "openai-news"),
+        _sourced(SourceChannel.NEWS, "https://reuters.com/a", "reuters"),
+        _sourced(SourceChannel.NEWS, "https://theverge.com/a", "verge"),
+    )
+    three = _event(
+        _sourced(SourceChannel.NEWS, "https://reuters.com/a", "reuters"),
+        _sourced(SourceChannel.NEWS, "https://theverge.com/b", "verge"),
+        _sourced(SourceChannel.NEWS, "https://techcrunch.com/c", "tc"),
+    )
+    assert _corroboration(two) == 7
+    assert _corroboration(three) == 14
+
+
+def test_channel_scores_still_suppress_research_and_release_as_before() -> None:
+    """The folded-in values must equal what the removed penalties produced."""
+
+    assert _channel_score(SourceChannel.RESEARCH) == 2
+    assert _channel_score(SourceChannel.RELEASE) == 14
+    assert _channel_score(SourceChannel.OFFICIAL) == 30
+    assert _channel_score(SourceChannel.NEWS) == 24
+    assert _channel_score(SourceChannel.COMMUNITY) == 16

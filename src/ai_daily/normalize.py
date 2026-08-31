@@ -229,6 +229,48 @@ AI_PHRASES = (
     "语音模型",
     "视频模型",
 )
+# Registrable-domain suffixes that span more than one label. Kept as an explicit
+# list on purpose: a public-suffix dependency is not worth taking for the
+# handful of multi-part suffixes this feed actually sees.
+MULTI_LABEL_PUBLIC_SUFFIXES = frozenset(
+    {
+        "com.cn",
+        "net.cn",
+        "org.cn",
+        "gov.cn",
+        "edu.cn",
+        "ac.cn",
+        "co.uk",
+        "org.uk",
+        "ac.uk",
+        "gov.uk",
+        "me.uk",
+        "net.uk",
+        "co.jp",
+        "or.jp",
+        "ne.jp",
+        "ac.jp",
+        "go.jp",
+        "com.au",
+        "net.au",
+        "org.au",
+        "edu.au",
+        "gov.au",
+        "co.kr",
+        "or.kr",
+        "com.hk",
+        "org.hk",
+        "com.tw",
+        "org.tw",
+        "com.sg",
+        "com.br",
+        "com.mx",
+        "co.in",
+        "co.nz",
+        "co.za",
+    }
+)
+FIRST_PARTY_CHANNELS = frozenset({SourceChannel.OFFICIAL, SourceChannel.RELEASE})
 CHANNEL_PRIORITY = {
     SourceChannel.OFFICIAL: 0,
     SourceChannel.NEWS: 1,
@@ -405,6 +447,26 @@ def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
     return jaccard >= 0.38 and containment >= 0.55
 
 
+def registrable_domain(url: str) -> str:
+    """The eTLD+1 of ``url``: the unit of source independence.
+
+    ``www.example.com`` and ``news.example.com`` are the same publisher, so
+    they collapse to ``example.com``. Multi-label public suffixes such as
+    ``com.cn`` or ``co.uk`` keep one more label so that ``example.com.cn`` does
+    not collapse to the suffix itself.
+    """
+
+    host = (urlsplit(canonicalize_url(url)).hostname or "").strip(".")
+    if not host:
+        raise ValueError(f"cannot determine a registrable domain for url={url}")
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    if ".".join(labels[-2:]) in MULTI_LABEL_PUBLIC_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
     by_url: dict[str, list[RawItem]] = defaultdict(list)
     for item in items:
@@ -527,6 +589,42 @@ ACTION_TERMS = (
     "下线",
     "停用",
 )
+#: ``api`` used to fire inside capital, rapid and therapies, so four of every
+#: seven English matches were false and the term stopped separating anything.
+#: Latin terms now need word boundaries, with the inflections an English
+#: headline actually uses - which is also what lets "deprecat" reach
+#: deprecated and deprecation. CJK has no such boundary, so it stays a
+#: substring test; it never had the collision problem.
+_ACTION_LATIN_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(term) for term in ACTION_TERMS if term.isascii())
+    + r")(?:s|es|ed|ing|d|ion)?\b"
+)
+_ACTION_CJK_TERMS = tuple(term for term in ACTION_TERMS if not term.isascii())
+
+
+def _is_actionable(text: str) -> bool:
+    return bool(_ACTION_LATIN_RE.search(text)) or any(term in text for term in _ACTION_CJK_TERMS)
+
+
+def _corroboration(event: Event) -> int:
+    """How many independent publishers, other than the newsmaker, carried this.
+
+    Counting configured sources measured how many feeds this project happens to
+    point at one company: an OpenAI launch reaches seven of them and scored the
+    full bonus for one party talking about itself, while a smaller lab with a
+    single feed scored nothing for the same news. Publishers are registrable
+    domains - the definition lead_is_corroborated already uses - and first-party
+    items are the claim rather than evidence for it, so they do not count here.
+    Being the newsmaker is already paid for in the channel score.
+    """
+
+    publishers = {
+        registrable_domain(str(item.url))
+        for item in event.items
+        if item.source_channel not in FIRST_PARTY_CHANNELS
+    }
+    return min(18, max(0, (len(publishers) - 1) * 7))
 
 
 def score_events(events: list[Event], now: datetime) -> list[Event]:
@@ -538,12 +636,10 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
         channel_score = max(_channel_score(channel) for channel in channels)
         age = now - (event.published_at or event.primary_item.discovered_at)
         recency = max(0, 20 - age.total_seconds() / 3600 / 2)
-        corroboration = min(18, (len({item.source for item in event.items}) - 1) * 7)
+        corroboration = _corroboration(event)
         text = f"{event.title} {event.summary}".lower()
-        actionability = 12 if any(term in text for term in ACTION_TERMS) else 4
+        actionability = 12 if _is_actionable(text) else 4
         popularity = min(6, math.log1p(_numeric_metrics(event)) / 1.2)
-        research_penalty = 10 if channels == {SourceChannel.RESEARCH} else 0
-        release_penalty = 4 if channels == {SourceChannel.RELEASE} else 0
         scored.append(
             event.model_copy(
                 update={
@@ -556,9 +652,7 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
                             + recency
                             + corroboration
                             + actionability
-                            + popularity
-                            - research_penalty
-                            - release_penalty,
+                            + popularity,
                         ),
                     )
                 }
@@ -603,12 +697,24 @@ def _event_channel(event: Event) -> SourceChannel:
 
 
 def _channel_score(channel: SourceChannel) -> int:
+    """How much this channel alone says a story is worth carrying.
+
+    Research and release sit low because this is a news digest: a paper or a
+    version bump is not the day's story unless someone else made it one, and a
+    cluster that also reaches news or official picks that channel up instead.
+
+    Both used to carry a second penalty subtracted in score_events. It fired on
+    exactly the condition that produced their number here - ``max()`` returns
+    research's score only when research is the only channel - so it was one
+    judgement written twice. Folded in at the magnitude it already had.
+    """
+
     return {
         SourceChannel.OFFICIAL: 30,
         SourceChannel.NEWS: 24,
-        SourceChannel.RELEASE: 18,
         SourceChannel.COMMUNITY: 16,
-        SourceChannel.RESEARCH: 12,
+        SourceChannel.RELEASE: 14,
+        SourceChannel.RESEARCH: 2,
     }[channel]
 
 
