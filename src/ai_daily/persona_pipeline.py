@@ -742,6 +742,17 @@ def _edition_instructions(minimum: int, maximum: int) -> str:
         "优先选择中文原句，避免版面出现整段英文；"
         "只有在没有中文原句可选时才使用英文原句。"
         "除 confirmed_change 外，每个 text 都必须是 30 字以内的完整短句。"
+        # The validator rejects any digit-bearing token in interpretive text that
+        # is not verbatim in the cited evidence, and until now the editor was
+        # never told. The analyst has carried this rule from the start; the
+        # editor writes its own sentences and had no way to know. It kept
+        # reaching for the number that made the story ("净下调约 17%"), derived
+        # from two figures rather than quoted from either, and lost the run on
+        # every retry - four of them on 2026-08-31 12:29.
+        "判断、建议、不确定性里出现的任何数字、百分比、版本号和型号，"
+        "都必须原样出现在所引证据原文中；"
+        "不得自己计算、换算、相减或推算出新的数字(净变化、增减幅度、倍数、差值等)。"
+        "找不到有据可查的数字就不要写数字，改用不含数字的说法。"
         "任何 text 和 quote 都不得含“我、我的、本人、我们、咱们”；"
         "confirmed_change 必须从同一分析中选择不含这些词的 current_fact 原句，"
         "不得选择企业以第一人称发布的原文。"
