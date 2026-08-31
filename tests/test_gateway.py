@@ -465,7 +465,10 @@ async def test_three_concurrent_persona_calls_reserve_and_release_budget(
 ) -> None:
     base = load_config().models
     budget = BudgetConfig(
-        request_limit=6,
+        # Three concurrent calls, each reserving its own request ceiling of
+        # 2 + retries, so the three fit exactly and the concurrency is what the
+        # test measures rather than the budget refusing one of them.
+        request_limit=3 * (2 + output_retries("judge")),
         input_token_limit=100_000,
         output_token_limit=60_000,
         cost_cny_limit=3.0,
