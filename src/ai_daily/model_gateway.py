@@ -37,7 +37,16 @@ OUTPUT_RETRIES = 1
 # paid for, which is why 2026-08-27 and 2026-08-28 held at about ¥1.1 a window.
 # Each extra retry sends the validation error back to the model and costs one
 # editor call (~¥0.05), against a whole run's spend.
-ROLE_OUTPUT_RETRIES: dict[ModelRole, int] = {"persona_edition_editor": 3}
+# The finalizer is the same shape as the editor and fails even later: it has to
+# echo back every blocker id the critic invented, exactly once, while rewriting
+# a draft that still has to pass the whole of verify_edition. On 2026-08-31 the
+# critic raised 5, 12 and 5 blockers on the three windows and the finalizer lost
+# all three - after the planner, the baselines, five analysts, the editor and
+# the critic had all been paid for.
+ROLE_OUTPUT_RETRIES: dict[ModelRole, int] = {
+    "persona_edition_editor": 3,
+    "persona_finalizer": 3,
+}
 # The daily pipeline defaults to one provider call at a time. The persona pipeline
 # explicitly opts into at most three concurrent analysts and reserves request/cost
 # allowance before each call so their combined in-flight spend cannot exceed budget.
