@@ -216,8 +216,14 @@ def normalize_edition_draft(
             if claim.claim_type in INTERPRETIVE_PREFIX:
                 text = _neutralize_generic_voice(_neutralize_collective_voice(text))
                 prefix = INTERPRETIVE_PREFIX[claim.claim_type]
-                if not text.startswith(prefix):
-                    text = prefix + text
+                # The editor picks the prefix by what the sentence sounds like,
+                # the claim type decides which one is correct, and prepending
+                # without looking produced "判断：不确定性：单一事故…" and
+                # "不确定性：建议：观察…" in the 2026-08-31 drafts. Every one of
+                # those drew its own critic blocker, and the finalizer has to
+                # clear all of them at once. Strip whichever prefix is there
+                # before applying the right one.
+                text = _apply_interpretive_prefix(text, prefix)
                 # The analyst's interpretive text is scrubbed of anchors it cannot
                 # ground; the editor writes its own short sentences and was never
                 # given the same treatment, so one unsupported version string in a
@@ -235,6 +241,20 @@ def normalize_edition_draft(
     }
     prunable_claim_ids = dropped_claim_ids - referenced_claim_ids
     return _rebuild_edition(draft, normalized, block_updates, prunable_claim_ids)
+
+
+def _apply_interpretive_prefix(text: str, prefix: str) -> str:
+    """Give the text exactly one prefix, the one its claim type calls for."""
+
+    body = text.lstrip()
+    changed = True
+    while changed:
+        changed = False
+        for candidate in INTERPRETIVE_PREFIX.values():
+            if body.startswith(candidate):
+                body = body[len(candidate) :].lstrip()
+                changed = True
+    return prefix + body
 
 
 def _neutralize_collective_voice(text: str) -> str:

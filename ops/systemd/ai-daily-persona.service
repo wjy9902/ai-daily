@@ -16,7 +16,15 @@ EnvironmentFile=/etc/ai-daily/env
 # Production remains site-only until a signed draft authorization, permanent
 # cover media id, and both independent HMAC keys have been provisioned.
 ExecStart=/www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily persona-daily --mode site
-TimeoutStartSec=1800
+# Observed 2026-08-31: the three windows ran 28, 26 and 30 minutes, and the
+# third was killed at the 1800s ceiling mid-run. The pipeline is a planner, a
+# baseline pass, five analysts, an editor, a critic and a finalizer in series,
+# and the editor and finalizer now retry up to three times each. A run that is
+# allowed to finish is worth more than three that are killed at the same point,
+# so this is sized above the whole chain rather than at the old edge. Windows
+# are 30 minutes apart; systemd will not start a second instance while one is
+# still running, so an overrun costs that window rather than stacking runs.
+TimeoutStartSec=3300
 MemoryHigh=600M
 MemoryMax=900M
 CPUWeight=50

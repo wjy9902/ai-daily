@@ -2493,6 +2493,37 @@ def test_an_under_sourced_delta_block_is_dropped_not_fatal(tmp_path: Path) -> No
     verify_analysis_item(normalized, snapshot, scope)
 
 
+def test_edition_normalization_replaces_a_wrong_prefix_instead_of_stacking_one(
+    tmp_path: Path,
+) -> None:
+    """The claim type decides the prefix; the editor guesses from how it reads.
+
+    Prepending without looking produced "判断：不确定性：单一事故…" and
+    "不确定性：建议：观察…" in the 2026-08-31 drafts. Each of those drew its own
+    critic blocker, and the finalizer has to clear every blocker at once, so
+    two mechanical ones cost the whole run.
+    """
+
+    layout = SiteLayout(tmp_path)
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    draft = _edition_draft(snapshot.publication_marker)
+    claim = draft.claims[2].model_copy(update={"text": "不确定性：建议：观察价格是否再次调整。"})
+    candidate = draft.model_copy(
+        update={
+            "claims": [draft.claims[0], draft.claims[1], claim, draft.claims[3]],
+            "thesis_block": draft.thesis_block.model_copy(update={"text": claim.text}),
+        }
+    )
+
+    normalized = normalize_edition_draft(candidate, _scope())
+
+    text = normalized.claims[2].text
+    assert text == "判断：观察价格是否再次调整。"
+    assert "不确定性：" not in text
+    assert "建议：" not in text
+
+
 class _FakeGateway:
     def __init__(self, draft: EditionDraft) -> None:
         config = load_config(Path("config")).persona
