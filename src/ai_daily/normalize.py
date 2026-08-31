@@ -10,7 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from pydantic import HttpUrl
 
-from ai_daily.history import HistoricalIndex
+from ai_daily.history import HistoricalIndex, HistoricalStory
 from ai_daily.models import Event, RawItem, SourceChannel
 
 TRACKING_PARAMS = {
@@ -38,6 +38,113 @@ STOPWORDS = {
     "发布",
     "推出",
     "正式",
+}
+HISTORICAL_STOPWORDS = STOPWORDS | {
+    "a",
+    "about",
+    "according",
+    "ai",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "been",
+    "being",
+    "but",
+    "by",
+    "can",
+    "company",
+    "could",
+    "did",
+    "do",
+    "does",
+    "for",
+    "from",
+    "get",
+    "had",
+    "has",
+    "have",
+    "how",
+    "in",
+    "into",
+    "is",
+    "it",
+    "its",
+    "just",
+    "make",
+    "may",
+    "model",
+    "models",
+    "more",
+    "new",
+    "news",
+    "not",
+    "now",
+    "of",
+    "on",
+    "only",
+    "or",
+    "other",
+    "our",
+    "out",
+    "over",
+    "report",
+    "reported",
+    "reports",
+    "rt",
+    "said",
+    "says",
+    "some",
+    "system",
+    "than",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "today",
+    "too",
+    "under",
+    "up",
+    "very",
+    "via",
+    "was",
+    "we",
+    "were",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "why",
+    "will",
+    "with",
+    "would",
+    "you",
+    "your",
+    "一个",
+    "一种",
+    "今日",
+    "公司",
+    "已经",
+    "消息",
+    "模型",
+    "目前",
+    "相关",
+    "研究",
+    "表示",
+    "进行",
+    "通过",
 }
 AI_TOKENS = {
     "agent",
@@ -521,7 +628,74 @@ def remove_historical(events: list[Event], history: HistoricalIndex) -> list[Eve
         for event in events
         if canonicalize_url(str(event.canonical_url)) not in canonical_history
         and not any(_title_match(event.title, title) for title in history.titles)
+        and not any(_historical_story_match(event, story) for story in history.stories)
     ]
+
+
+def _historical_story_match(event: Event, story: HistoricalStory) -> bool:
+    return any(
+        _historical_text_match(current, previous)
+        for current in _event_history_texts(event)
+        for previous in story.texts
+    )
+
+
+def _event_history_texts(event: Event) -> tuple[str, ...]:
+    values = [event.title, event.summary[:1600]]
+    for item in event.items:
+        values.extend((item.title, item.summary[:1600]))
+    return tuple(value for value in dict.fromkeys(values) if value.strip())
+
+
+def _historical_text_match(left: str, right: str) -> bool:
+    left_tokens = _historical_tokens(left)
+    right_tokens = _historical_tokens(right)
+    shared = left_tokens & right_tokens
+    if len(shared) < 4 or not (_historical_anchors(left) & _historical_anchors(right)):
+        return False
+    containment = len(shared) / min(len(left_tokens), len(right_tokens))
+    if containment >= 0.6:
+        return True
+    shared_products = title_product_identifiers(left) & title_product_identifiers(right)
+    return bool(shared_products and len(shared) >= 5 and containment >= 0.45)
+
+
+def _historical_tokens(value: str) -> set[str]:
+    tokens = {_stem_history_token(token) for token in title_tokens(value)}
+    return {token for token in tokens if len(token) >= 2 and token not in HISTORICAL_STOPWORDS}
+
+
+def _historical_anchors(value: str) -> set[str]:
+    anchors = set(title_product_identifiers(value))
+    for raw in LATIN_TOKEN_RE.findall(value):
+        token = _stem_history_token(raw)
+        if token in HISTORICAL_STOPWORDS:
+            continue
+        looks_named = len(raw) >= 3 and (
+            raw[0].isupper() or any(char.isupper() for char in raw[1:])
+        )
+        if raw.lower() in AI_TOKENS or looks_named:
+            anchors.add(token)
+    return anchors
+
+
+def _stem_history_token(token: str) -> str:
+    if not token.isascii():
+        return token
+    value = token.lower().strip(".+-")
+    for suffix, replacement, minimum in (
+        ("ies", "y", 6),
+        ("ically", "ic", 8),
+        ("edly", "", 7),
+        ("ing", "", 7),
+        ("ed", "", 6),
+        ("ly", "", 6),
+        ("es", "", 6),
+        ("s", "", 5),
+    ):
+        if len(value) >= minimum and value.endswith(suffix):
+            return value[: -len(suffix)] + replacement
+    return value
 
 
 def _title_match(left: str, right: str) -> bool:

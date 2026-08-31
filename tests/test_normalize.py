@@ -1,7 +1,7 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from itertools import permutations
 
-from ai_daily.history import HistoricalIndex
+from ai_daily.history import HistoricalIndex, HistoricalStory
 from ai_daily.models import RawItem, SourceChannel, SourceTier, SourceTimeKind
 from ai_daily.normalize import canonicalize_url, cluster_items, is_ai_related, remove_historical
 
@@ -63,6 +63,76 @@ def test_history_filter_matches_a_rephrased_story_title() -> None:
     event = cluster_items([item("1", "https://example.com/a", "阿里正式发布全新推理模型")])[0]
     history = HistoricalIndex(urls=set(), titles={"阿里发布全新推理模型"})
     assert remove_historical([event], history) == []
+
+
+def test_history_filter_matches_a_cross_language_report_from_another_outlet() -> None:
+    event = cluster_items(
+        [
+            item(
+                "court-followup",
+                "https://techcrunch.com/anthropic-court-win",
+                "Anthropic gets its first court win over the Pentagon's supply-chain risk label",
+            ).model_copy(
+                update={
+                    "summary": (
+                        "A federal judge ruled the Trump administration illegally labeled "
+                        "Anthropic a supply-chain risk."
+                    )
+                }
+            )
+        ]
+    )[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles={"美法院裁定五角大楼将 Anthropic 列为供应链风险违法"},
+        stories=(
+            HistoricalStory(
+                event_id="previous-court-story",
+                issue_date=date(2026, 8, 29),
+                texts=(
+                    "Trump blacklisting of Anthropic deemed illegal by federal judge",
+                    (
+                        "The Trump administration's blacklisting of Anthropic was illegal, "
+                        "a federal judge ruled."
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert remove_historical([event], history) == []
+
+
+def test_history_filter_keeps_a_different_story_about_the_same_company() -> None:
+    event = cluster_items(
+        [
+            item(
+                "hardware-standard",
+                "https://example.com/anthropic-mhs",
+                "Anthropic launches a hardware standard for AI agents",
+            ).model_copy(
+                update={
+                    "summary": "MHS gives agents one interface for microscopes and robotic arms."
+                }
+            )
+        ]
+    )[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles={"美法院裁定五角大楼将 Anthropic 列为供应链风险违法"},
+        stories=(
+            HistoricalStory(
+                event_id="previous-court-story",
+                issue_date=date(2026, 8, 29),
+                texts=(
+                    "Trump blacklisting of Anthropic deemed illegal by federal judge",
+                    "A federal judge ruled the administration's Anthropic blacklist illegal.",
+                ),
+            ),
+        ),
+    )
+
+    assert remove_historical([event], history) == [event]
 
 
 def test_cluster_matches_chinese_reports_of_the_same_event() -> None:
