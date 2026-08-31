@@ -1404,11 +1404,6 @@ def _verification_scope(
         memory_ids_by_event={
             selection.event_id: set(selection.memory_ids) for selection in plan.selections
         },
-        current_evidence={
-            evidence.evidence_id: evidence.excerpt
-            for bundle in snapshot.evidence_bundles
-            for evidence in bundle.evidence
-        },
     )
 
 
