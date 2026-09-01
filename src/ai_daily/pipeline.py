@@ -57,7 +57,6 @@ from ai_daily.normalize import (
     score_events,
     select_candidate_pool,
 )
-from ai_daily.persona_snapshot import persist_upstream_snapshot
 from ai_daily.publication import DailyPublication, PublicationLevel
 from ai_daily.site_publisher import SiteLayout
 from ai_daily.sources import Collector
@@ -234,8 +233,6 @@ class DailyPipeline:
         # An injected gateway keeps its own ledger; tests want that. Only a
         # gateway we own gets rebound to the day's on-disk budget in run().
         self._owns_gateway = gateway is None
-        self._last_decisions: list[JudgeDecision] = []
-        self._last_plan: EditorialPlan | None = None
 
     def _bind_daily_budget(self, target_date: date) -> None:
         """Point the ledger at this date's on-disk budget.
@@ -305,14 +302,6 @@ class DailyPipeline:
         )
         write_artifact(run_dir / "run.json", artifact)
         write_artifact(run_dir / "publication.json", publication)
-        if publish:
-            persist_upstream_snapshot(
-                self.layout,
-                publication,
-                candidates,
-                self._last_decisions,
-                self._last_plan,
-            )
         return RunOutcome(
             artifact=artifact,
             publication=publication,
@@ -344,19 +333,12 @@ class DailyPipeline:
 
         if plan is not None:
             try:
-                publication = build_full_publication(target_date, plan, drafts, candidates, tracker)
-                self._last_decisions = decisions
-                self._last_plan = plan
-                return publication
+                return build_full_publication(target_date, plan, drafts, candidates, tracker)
             except ComposeError:
                 tracker.record(FailureClass.PLAN_FAILED)
 
         if decisions:
-            self._last_decisions = decisions
-            self._last_plan = None
             return build_judged_publication(target_date, decisions, candidates, tracker)
-        self._last_decisions = []
-        self._last_plan = None
         return build_ranked_publication(target_date, candidates, tracker)
 
     async def _collect(

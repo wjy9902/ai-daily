@@ -6,7 +6,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
+from ai_daily.budget import BudgetExceeded, BudgetStage
 from ai_daily.config import Secrets, load_config
 from ai_daily.model_gateway import (
     Invocation,
@@ -14,9 +14,8 @@ from ai_daily.model_gateway import (
     ModelGateway,
     ModelInvocationFailed,
     is_recoverable,
-    output_retries,
 )
-from ai_daily.models import BudgetConfig, JudgeDecision, ModelEndpoint
+from ai_daily.models import JudgeDecision, ModelEndpoint
 
 
 def test_only_transient_failures_are_recoverable() -> None:
@@ -99,17 +98,6 @@ def test_only_alibaba_gets_the_thinking_mode_override() -> None:
     for role in gateway.config.roles.values():
         for endpoint in (role.primary, role.fallback):
             assert gateway._model_settings(endpoint)["extra_body"] is None
-
-
-def test_persona_edition_editor_disables_deepseek_thinking() -> None:
-    gateway = ModelGateway(load_config().models, Secrets())
-    endpoint = gateway.config.roles["persona_edition_editor"].primary
-
-    assert endpoint.provider == "deepseek"
-    assert gateway._model_settings(endpoint, role="persona_edition_editor")["extra_body"] == {
-        "thinking": {"type": "disabled"}
-    }
-    assert gateway._model_settings(endpoint, role="persona_critic")["extra_body"] is None
 
 
 async def test_provider_sdk_retries_are_disabled() -> None:
@@ -458,152 +446,3 @@ async def test_concurrent_invocations_stay_bounded_and_audited(
     assert maximum == 1
     assert gateway.ledger.requests == 8
     assert sum(run.request_count for run in gateway.runs) == 8
-
-
-async def test_three_concurrent_persona_calls_reserve_and_release_budget(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base = load_config().models
-    budget = BudgetConfig(
-        # Three concurrent calls, each reserving its own ceiling, so the three
-        # fit exactly and the concurrency is what the test measures rather than
-        # the budget refusing one of them.
-        request_limit=3 * 2 * (1 + output_retries("judge")),
-        input_token_limit=200_000,
-        output_token_limit=120_000,
-        cost_cny_limit=3.0,
-    )
-    ledger = BudgetLedger(budget)
-    gateway = ModelGateway(
-        base.model_copy(update={"budget": budget}),
-        Secrets(),
-        ledger=ledger,
-        max_concurrency=3,
-        reservation_cost_cny=1.0,
-    )
-    active = 0
-    maximum = 0
-    counter = 0
-
-    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
-        nonlocal active, maximum, counter
-        active += 1
-        maximum = max(maximum, active)
-        await asyncio.sleep(0.01)
-        active -= 1
-        counter += 1
-        return ModelResponse(
-            parts=[
-                ToolCallPart(
-                    info.output_tools[0].name,
-                    {
-                        "event_id": f"event-{counter}",
-                        "selected": True,
-                        "category": "行业动态",
-                        "relevance": 90,
-                        "confidence": 0.9,
-                        "reason": "重要事件",
-                        "evidence_ids": [f"event-{counter}-1"],
-                    },
-                )
-            ]
-        )
-
-    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
-
-    results = await asyncio.gather(
-        *[
-            gateway.generate(
-                "judge",
-                JudgeDecision,
-                "instructions",
-                f"prompt-{index}",
-                stage=BudgetStage.PERSONA,
-            )
-            for index in range(3)
-        ]
-    )
-
-    assert len(results) == 3
-    assert maximum == 3
-    assert ledger.reserved_requests == 0
-    assert ledger.reserved_input_tokens == 0
-    assert ledger.reserved_output_tokens == 0
-    assert ledger.reserved_cost_cny == pytest.approx(0)
-    assert ledger.stage_reserved_requests[BudgetStage.PERSONA.value] == 0
-
-
-async def test_cancelled_persona_call_releases_budget_reservation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    base = load_config().models
-    ledger = BudgetLedger(base.budget)
-    gateway = ModelGateway(
-        base,
-        Secrets(),
-        ledger=ledger,
-        max_concurrency=3,
-        reservation_cost_cny=0.5,
-    )
-    started = asyncio.Event()
-
-    async def respond(messages: object, info: AgentInfo) -> ModelResponse:
-        started.set()
-        await asyncio.Event().wait()
-        raise AssertionError("unreachable")
-
-    monkeypatch.setattr(gateway, "_build_model", lambda endpoint: FunctionModel(respond))
-    task = asyncio.create_task(
-        gateway.generate(
-            "judge",
-            JudgeDecision,
-            "instructions",
-            "prompt",
-            stage=BudgetStage.PERSONA,
-        )
-    )
-    await started.wait()
-    task.cancel()
-
-    with pytest.raises(asyncio.CancelledError):
-        await task
-
-    assert ledger.reserved_requests == 0
-    assert ledger.reserved_input_tokens == 0
-    assert ledger.reserved_output_tokens == 0
-    assert ledger.reserved_cost_cny == pytest.approx(0)
-
-
-def test_the_edition_editor_is_the_only_role_with_extra_output_retries() -> None:
-    """One retry is enough for a handful of fields; an edition is about thirty.
-
-    Every one of them has to clear its own length cap, keep its prefix, avoid
-    first person and add up to a bounded body at the same time, and a single
-    miss anywhere throws away a run that has already paid for every analyst -
-    which is what "Exceeded maximum output retries (1)" cost on 2026-08-27 and
-    2026-08-28.
-    """
-
-    assert output_retries("persona_edition_editor") == 3
-    for role in ("judge", "editor", "persona_planner", "persona_analyst", "persona_critic"):
-        assert output_retries(role) == 1
-
-
-def test_the_persona_budget_covers_the_editors_worst_case_reservation() -> None:
-    config = load_config()
-    persona = config.persona
-    assert persona is not None
-    endpoint = config.models.roles["persona_edition_editor"].primary
-    requests = 1 + output_retries("persona_edition_editor")
-    # The editor's prompt cap, as bytes, which is how the ceiling counts them.
-    prompt = "\u7248" * 90_000
-    reserved_input, reserved_output = ModelGateway._call_token_ceiling(
-        endpoint, "", prompt, requests, persona.budget.output_token_limit
-    )
-    reserved_cost = ModelGateway._token_cost_ceiling(endpoint, reserved_input, reserved_output)
-
-    ledger = BudgetLedger(persona.budget)
-    assert requests <= ledger.stage_remaining_requests(BudgetStage.PERSONA)
-    assert reserved_cost <= ledger.stage_remaining_cost(BudgetStage.PERSONA)
-    assert reserved_input <= ledger.remaining_input_tokens()
-    assert reserved_output <= ledger.remaining_output_tokens()

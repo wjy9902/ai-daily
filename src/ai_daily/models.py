@@ -12,16 +12,7 @@ type Category = Literal[
 type EditorialCategory = Literal[
     "模型与平台", "前沿研究", "值得试的项目", "行业动态", "国内 AI", "前瞻与传闻"
 ]
-type ModelRole = Literal[
-    "judge",
-    "editor",
-    "persona_planner",
-    "persona_analyst",
-    "persona_edition_editor",
-    "persona_critic",
-    "persona_finalizer",
-    "persona_baseline",
-]
+type ModelRole = Literal["judge", "editor"]
 JUDGE_BATCH_SIZE = 10
 
 

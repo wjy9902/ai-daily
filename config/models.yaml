@@ -54,7 +54,7 @@ roles:
       # statement once the fallback has actually been exercised.
       input_cost_cny_per_million: 12.0
       output_cost_cny_per_million: 96.0
-  editor: &persona_editor
+  editor:
     primary:
       provider: deepseek
       model: deepseek-v4-pro
@@ -78,33 +78,3 @@ roles:
       # Same estimate caveat as above.
       input_cost_cny_per_million: 12.0
       output_cost_cny_per_million: 96.0
-  persona_planner:
-    <<: *persona_editor
-  persona_analyst:
-    <<: *persona_editor
-  persona_edition_editor:
-    <<: *persona_editor
-    primary:
-      provider: deepseek
-      model: deepseek-v4-pro
-      timeout_seconds: 180
-      # Thinking is disabled only for final assembly, so reserve for the compact
-      # edition JSON rather than hidden reasoning tokens.
-      max_output_tokens: 20000
-      temperature: 0.1
-      input_cost_cny_per_million: 3.13
-      output_cost_cny_per_million: 6.26
-    fallback:
-      provider: openai
-      model: gpt-5.6-terra
-      timeout_seconds: 150
-      max_output_tokens: 8192
-      temperature: 1.0
-      input_cost_cny_per_million: 12.0
-      output_cost_cny_per_million: 96.0
-  persona_critic:
-    <<: *persona_editor
-  persona_finalizer:
-    <<: *persona_editor
-  persona_baseline:
-    <<: *persona_editor

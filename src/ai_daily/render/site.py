@@ -189,7 +189,6 @@ def _header(prefix: str) -> list[str]:
         '<nav class="site-nav">',
         f'<a href="{_t(prefix)}index.html">今日</a>',
         f'<a href="{_t(prefix)}archive.html">归档</a>',
-        f'<a href="{_t(prefix)}jiayu/index.html">甲鱼主编版</a>',
         f'<a href="{_t(prefix)}rss.xml">RSS</a>',
         "</nav>",
         "</header>",
