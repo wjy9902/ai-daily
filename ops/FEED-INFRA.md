@@ -87,6 +87,32 @@ curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
 - 两个服务都对上游变化敏感，把它们当"经常部分失败"的源对待——管线的
   source health 会记录，不会拖垮刊期。
 - compose 里已配 10 分钟缓存，三个 timer 窗口不会对 X 重复施压。
+- **rsshub 镜像过期会让 X 源静默返回上一年的存档**，比零条目隐蔽得多。
+  2026-09-01 实测：25 个 X 源里 14 个返回约 100 条、最新一条停在 2025-11
+  （x-chatgpt 停在 2025-08），HTTP 200、`probe-sources` 报 `ok`，但全部被
+  36 小时保鲜窗过滤掉，静默贡献为零，而 Tier A 覆盖率照样显示 93%。
+  **判别特征：陈旧的一律返回 99–100 条（RSSHub 上限），健康的只返回 3–18 条。**
+  根因就是镜像旧——运行中的构建于 08-25，上游最新是 08-31。重建即可：
+
+  ```bash
+  cd /www/wwwroot/ai-daily/feed-infra && docker compose up -d rsshub
+  ```
+
+  重建后 24 新鲜 / 0 陈旧 / 1 失败（仅剩 x-xai），真实 probe 的进窗条目
+  75 → 114。排查时已排除的方向，不必重走：没有 Redis、缓存 TTL 只有 600s、
+  容器已起 4 天，所以不可能是 RSSHub 自身缓存；X 的 syndication 端点对
+  sama/claudeai 确实也返回 2025-11，但对 elonmusk/gdb 是新鲜的，所以上游
+  不是唯一原因。**X 源大面积"有条目但都超窗"时，先升级镜像再查别的。**
+- **同一账号的 `user` 与 `media` 路由会轮换着坏。** 2026-08-29
+  `user/AnthropicAI` 空、改用 `media/`（当时 20 条）；2026-09-01 反过来——
+  media 空、user 有新条目。按"当天哪条有货"配，并且知道这个选择会过期。
+- **`probe-sources` 的 `ok` 不代表源在供货。** 它只看抓没抓到条目。现在报告
+  里带 `newest_item_at` / `newest_item_age_days` / `stale`（阈值 30 天，见
+  `probe.py:STALE_AFTER_DAYS`），`status.json` 也带 `newest_item_at`。
+  加上这个之后立刻查出三个此前不知道的死源，且都不是 X 源：
+  `qwen-blog` 343 天（配置还指着已废弃的 qwenlm.github.io，Qwen 已迁到
+  qwen.ai/blog，新站没有 RSS，需要改 html_index）、`anthropic-engineering`
+  99 天（站上实际有 08-27 的新文，抓取器漏了）、`aisi-blog` 47 天。
 - **采集任务的 `mps_id` 必须是 JSON 对象数组，不是逗号分隔串。**
   `jobs/mps.py` 的 `get_feeds()` 做的是 `json.loads(task.mps_id)` 再取
   `item["id"]`，所以只有 `[{"id":"MP_WXS_..."},...]` 这一种格式能跑。写成
