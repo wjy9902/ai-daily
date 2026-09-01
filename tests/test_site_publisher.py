@@ -239,6 +239,75 @@ def test_a_naive_rerun_of_the_same_level_is_refused_and_keeps_the_record(
     assert_serves(layout, record)
 
 
+def test_a_same_level_rerun_that_carries_more_stories_replaces_the_issue(
+    layout: SiteLayout,
+) -> None:
+    """2026-09-01: four windows all landed L1, so the first one won.
+
+    The window that carried 29 stories was refused against the 25 already
+    published, and the Nvidia/MediaTek and Anthropic alignment stories the
+    benchmark digest led on went with it.
+    """
+
+    published = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 4)],
+    )
+    publish_site(layout, published, SITE)
+
+    richer = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 7)],
+    )
+    assert guard_same_day_overwrite(layout, richer) is None
+    publish_site(layout, richer, SITE)
+    assert_serves(layout, richer)
+
+
+def test_a_same_level_rerun_that_carries_less_is_still_refused(
+    layout: SiteLayout,
+) -> None:
+    published = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 7)],
+    )
+    publish_site(layout, published, SITE)
+
+    thinner = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 4)],
+    )
+    with pytest.raises(PublicationRefused, match="would not improve"):
+        publish_site(layout, thinner, SITE)
+    assert_serves(layout, published)
+
+
+def test_briefs_cannot_displace_an_issue_that_reported_more_stories(
+    layout: SiteLayout,
+) -> None:
+    """Details are compared first, so volume alone cannot win."""
+
+    detailed = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card(0), factories.story_card(1)],
+        briefs=[factories.brief_card(2)],
+    )
+    publish_site(layout, detailed, SITE)
+
+    brief_heavy = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card(0)],
+        briefs=[factories.brief_card(i) for i in range(1, 9)],
+    )
+    with pytest.raises(PublicationRefused, match="would not improve"):
+        publish_site(layout, brief_heavy, SITE)
+    assert_serves(layout, detailed)
+
+
 def test_the_cli_publishes_through_the_guarded_transaction() -> None:
     """The CLI must not carry a second publish path of its own.
 

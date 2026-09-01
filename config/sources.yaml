@@ -548,6 +548,27 @@ sources:
     channel: official
     limit: 15
 
+  # Both of these publish to their own sites first, but runway.com/news and
+  # developer.meta.com render their article lists client-side and emit no feed,
+  # so html_index has no hrefs to match and RSSHub has no route for either.
+  # The X accounts carry the same announcements: 2026-09-01's Runway Solaris and
+  # Meta Muse Code both reached the benchmark digest and neither reached us.
+  - name: x-runway
+    display_name: Runway @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/runwayml
+    tier: A
+    channel: official
+    limit: 15
+
+  - name: x-meta-ai
+    display_name: Meta AI @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/AIatMeta
+    tier: A
+    channel: official
+    limit: 15
+
   # The Ling releases are announced by @AntLingAGI, but RSSHub's timeline
   # route returns an empty feed for that account on every attempt (its media
   # route works, which is a partial view and misses text-only posts). This is

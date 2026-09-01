@@ -244,10 +244,37 @@ def guard_same_day_overwrite(
         return None
     if is_upgrade(existing.level, publication.level):
         return None
+    if _carries_more(existing, publication):
+        return None
     raise PublicationRefused(
-        f"{publication.target_date} is already published at {existing.level.value}; "
-        f"{publication.level.value} would not improve it"
+        f"{publication.target_date} is already published at {existing.level.value} "
+        f"with {_coverage(existing)[1]} stories; {publication.level.value} with "
+        f"{_coverage(publication)[1]} would not improve it"
     )
+
+
+def _coverage(publication: DailyPublication) -> tuple[int, int]:
+    """How much this issue carries: detailed stories first, then everything."""
+
+    return len(publication.details), len(publication.details) + len(publication.briefs)
+
+
+def _carries_more(existing: DailyPublication, candidate: DailyPublication) -> bool:
+    """True when a same-level rerun is worth replacing the published issue with.
+
+    The level alone said 2026-09-01's four windows were interchangeable, so the
+    first L1 won and a later L1 carrying 29 stories against 25 was refused -
+    with it went the Nvidia/MediaTek and Anthropic alignment stories the
+    benchmark digest led on that day. Level measures how much of the pipeline
+    survived, not how much news came out the other end.
+
+    Details are compared before the total so a flood of briefs cannot displace
+    an issue that actually reported its stories.
+    """
+
+    if existing.level is not candidate.level:
+        return False
+    return _coverage(candidate) > _coverage(existing)
 
 
 def _write_atomic(path: Path, payload: str) -> None:
