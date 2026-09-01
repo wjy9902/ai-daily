@@ -25,12 +25,12 @@ Exit codes: 0 renewed, 1 renewal refused (QR re-scan required), 2 usage error.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 
 import requests
+import yaml
 
 LIC_PATH = Path(
     os.environ.get("WEREAD_LIC_PATH", "/www/wwwroot/ai-daily/feed-infra/data/we-mp-rss/wx.lic")
@@ -53,10 +53,12 @@ HEADERS = {
 
 
 def _load() -> tuple[dict, dict]:
-    document = json.loads(LIC_PATH.read_text(encoding="utf-8"))
+    """Read wx.lic. It is plain YAML despite the extension."""
+
+    document = yaml.safe_load(LIC_PATH.read_text(encoding="utf-8")) or {}
     stored = document.get("weread_data", {})
     if isinstance(stored, str):
-        stored = json.loads(stored)
+        stored = yaml.safe_load(stored) or {}
     return document, stored
 
 
@@ -110,7 +112,10 @@ def main() -> int:
     stored["cookie"] = renewed
     document["weread_data"] = stored
     scratch = LIC_PATH.with_name(LIC_PATH.name + ".tmp")
-    scratch.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    scratch.write_text(
+        yaml.safe_dump(document, allow_unicode=True, default_flow_style=False),
+        encoding="utf-8",
+    )
     os.replace(scratch, LIC_PATH)
 
     # Report whether the renewed session can actually read, so a rate limit or
