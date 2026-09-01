@@ -12,10 +12,12 @@ import pytest
 from pydantic import HttpUrl
 
 from ai_daily.budget import BudgetLedger, BudgetStage
-from ai_daily.models import BudgetConfig, SourceConfig, SourceTier
+from ai_daily.models import BudgetConfig, RawItem, SourceConfig, SourceTier
 from ai_daily.papers import (
     apply_cross_mentions,
     arxiv_id,
+    build_candidates,
+    historical_paper_keys,
     normalize_title,
     publication_gate,
     score_signals,
@@ -24,7 +26,7 @@ from ai_daily.papers import (
     validate_deep_read,
 )
 from ai_daily.papers_config import load_papers_config
-from ai_daily.papers_fulltext import clean_arxiv_html
+from ai_daily.papers_fulltext import clean_arxiv_html, fetch_full_papers
 from ai_daily.papers_models import (
     DeepRead,
     ExperimentClaim,
@@ -45,6 +47,7 @@ from ai_daily.site_publisher import (
     publication_lock,
     publish_papers_site,
     publish_site,
+    render_release,
 )
 from ai_daily.sources import Collector
 
@@ -298,6 +301,57 @@ async def test_arxiv_fetch_uses_configured_categories(monkeypatch: pytest.Monkey
     assert seen_query == "cat:cs.AI OR cat:cs.MA"
 
 
+def test_hf_and_arxiv_versions_merge_to_one_candidate() -> None:
+    config = load_papers_config()
+    hf = RawItem(
+        source="papers-hf-daily",
+        source_tier=SourceTier.A,
+        source_item_id="2609.00001v2",
+        url="https://huggingface.co/papers/2609.00001",
+        title="Merged paper",
+        summary="HF abstract",
+        published_at=datetime(2026, 9, 1, tzinfo=UTC),
+        discovered_at=datetime(2026, 9, 1, tzinfo=UTC),
+        metrics={"upvotes": 8, "organization": "Example Lab"},
+    )
+    arxiv = hf.model_copy(
+        update={
+            "source": "papers-arxiv",
+            "source_item_id": "https://arxiv.org/abs/2609.00001v3",
+            "url": HttpUrl("https://arxiv.org/abs/2609.00001v3"),
+            "summary": "Full arXiv abstract",
+            "author": "Alice, Bob",
+            "metrics": {},
+        }
+    )
+    merged = build_candidates([hf, arxiv], config)
+    assert len(merged) == 1
+    assert merged[0].arxiv_id == "2609.00001"
+    assert merged[0].signals.hf_listed is True
+    assert merged[0].authors == "Alice, Bob"
+
+
+async def test_missing_arxiv_html_becomes_a_simple_read_reason() -> None:
+    feed = b"""<feed xmlns='http://www.w3.org/2005/Atom'><entry>
+    <id>https://arxiv.org/abs/2609.00001v3</id><author><name>Alice</name></author>
+    </entry></feed>"""
+    paths: list[str] = []
+
+    class FakeCollector:
+        async def _request(self, url: str, **kwargs: object) -> httpx.Response:
+            del kwargs
+            paths.append(url)
+            request = httpx.Request("GET", url)
+            if "export.arxiv.org" in url:
+                return httpx.Response(200, content=feed, request=request)
+            return httpx.Response(404, request=request)
+
+    result = await fetch_full_papers(cast(Any, FakeCollector()), ["2609.00001"])
+    assert paths[-1].endswith("/2609.00001v3")
+    assert result["2609.00001"].text is None
+    assert result["2609.00001"].failure == "arXiv HTML unavailable"
+
+
 def test_custom_papers_budget_shares_are_independent() -> None:
     ledger = BudgetLedger(
         BudgetConfig(
@@ -419,6 +473,42 @@ async def test_papers_publish_gives_up_when_daily_holds_lock(tmp_path: Path) -> 
         await publish_papers_site(
             layout, papers_publication(), factories.SITE, lock_attempts=2, retry_seconds=0
         )
+
+
+async def test_activation_double_failure_leaves_record_for_next_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_daily import site_publisher
+
+    layout = SiteLayout(tmp_path / "site")
+    daily = factories.publication()
+    publish_site(layout, daily, factories.SITE)
+    publication = papers_publication()
+    original_activate = site_publisher.activate_release
+    monkeypatch.setattr(
+        site_publisher,
+        "activate_release",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("activation failed")),
+    )
+    with pytest.raises(OSError, match="activation failed"):
+        await publish_papers_site(layout, publication, factories.SITE, retry_seconds=0)
+    assert layout.papers_publication_path(publication.target_date).exists()
+
+    monkeypatch.setattr(site_publisher, "activate_release", original_activate)
+    release = render_release(layout, daily, factories.SITE, "self-heal")
+    original_activate(layout, release)
+    page = release / "papers" / publication.target_date.isoformat() / "index.html"
+    assert publication.marker in page.read_text(encoding="utf-8")
+
+
+def test_corrupt_historical_papers_record_is_not_swallowed(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    publication = papers_publication()
+    corrupted = publication.model_dump_json().replace("Candidate paper 1", "tampered")
+    layout.papers_publication_path(publication.target_date).write_text(corrupted, encoding="utf-8")
+    with pytest.raises(ValueError, match="marker"):
+        historical_paper_keys(layout)
 
 
 def test_systemd_contract_and_cli_have_no_papers_date_option() -> None:
