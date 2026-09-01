@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "target_date": "2026-09-01",
+  "generated_at": "2026-09-01T00:30:00Z",
+  "papers": [
+    {
+      "arxiv_id": "2609.00001",
+      "title": "Mechanistic Planning for Reliable Tool-Using Agents",
+      "abstract": "We study reliable planning for agents that call external tools.",
+      "authors": "Alice Example, Bob Example",
+      "arxiv_url": "https://arxiv.org/abs/2609.00001",
+      "hf_url": "https://huggingface.co/papers/2609.00001",
+      "alphaxiv_url": "https://www.alphaxiv.org/abs/2609.00001",
+      "signals": {
+        "hf_listed": true,
+        "upvotes": 42,
+        "organization": "Example Research",
+        "org_tier": 0.4,
+        "github_repo": "https://github.com/example/agent",
+        "github_stars": 128,
+        "cross_mentions": 2,
+        "agent_bonus": 1.0,
+        "base_score": 18.3,
+        "final_score": 19.3
+      },
+      "topic": "agent",
+      "deep_read": {
+        "positioning": "把工具调用的搜索过程改造成可检查、可回滚的分层规划。",
+        "background": "端到端 agent 在长链工具调用中会放大早期错误，已有方法缺少显式状态校验。",
+        "mechanism": "系统先生成高层子目标，再为每个子目标维护前置条件与完成证据。每次工具返回后，验证器更新状态图；不满足前置条件时只回滚当前分支，而不是重启整条轨迹。训练数据由带成功与失败标签的工具轨迹组成，目标同时优化下一步动作和状态一致性。",
+        "experiment_summary": "主要基线覆盖直接提示、反思式 agent 和树搜索；结果与消融共同支持状态校验和局部回滚的贡献。",
+        "experiments": [
+          {
+            "claim": "在 ToolBench 上成功率由 41.2% 提升到 56.8%。",
+            "quote": "Success rate | Direct 41.2 | Ours 56.8"
+          },
+          {
+            "claim": "移除状态验证后成功率下降 9.4 个百分点。",
+            "quote": "w/o state verifier | 47.4 (-9.4)"
+          }
+        ],
+        "novelty": "局部回滚本身并非全新，但把它与显式前置条件证据绑定是清晰的系统增量。",
+        "soundness": "组件和消融形成闭环，不过验证器错误的传播仍需更细分析。",
+        "significance": "适合高代价工具链，能减少整轨重跑。",
+        "limitations": "评测集中在文本 API；真实浏览器和长时任务中的状态漂移尚未覆盖。",
+        "follow_up": "可把状态证据用于训练过程奖励，并与 process reward model 对比。"
+      },
+      "fallback_reason": null
+    },
+    {
+      "arxiv_id": "2609.00002",
+      "title": "A Compact Reasoning Model",
+      "abstract": "A compact model trained for structured reasoning.",
+      "authors": "Carol Example",
+      "arxiv_url": "https://arxiv.org/abs/2609.00002",
+      "hf_url": null,
+      "alphaxiv_url": "https://www.alphaxiv.org/abs/2609.00002",
+      "signals": {
+        "hf_listed": false,
+        "upvotes": 0,
+        "organization": "Example University",
+        "org_tier": 0.4,
+        "github_repo": null,
+        "github_stars": 0,
+        "cross_mentions": 1,
+        "agent_bonus": 0.0,
+        "base_score": 1.8,
+        "final_score": 1.8
+      },
+      "topic": "推理与对齐",
+      "deep_read": null,
+      "fallback_reason": "arXiv HTML unavailable"
+    }
+  ],
+  "marker": ""
+}

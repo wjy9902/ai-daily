@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -70,6 +71,7 @@ class SourceConfig(StrictModel):
     ai_focused: bool = True
     link_pattern: str | None = Field(default=None, max_length=300)
     namespace: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]+$", max_length=80)
+    arxiv_categories: list[str] | None = Field(default=None, min_length=1, max_length=10)
     enabled: bool = True
     limit: int = Field(default=30, ge=1, le=100)
     timeout_seconds: float = Field(default=20, gt=0, le=60)
@@ -84,6 +86,12 @@ class SourceConfig(StrictModel):
             raise ValueError("huggingface_models sources require namespace")
         if self.kind != "huggingface_models" and self.namespace:
             raise ValueError("namespace is only valid for huggingface_models sources")
+        if self.kind != "arxiv" and self.arxiv_categories:
+            raise ValueError("arxiv_categories is only valid for arxiv sources")
+        if self.arxiv_categories and any(
+            not re.fullmatch(r"[a-z-]+\.[A-Za-z-]+", category) for category in self.arxiv_categories
+        ):
+            raise ValueError("arxiv_categories contains an invalid category")
         if self.url.scheme != "https":
             raise ValueError("sources require HTTPS")
         return self

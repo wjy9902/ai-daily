@@ -1,0 +1,52 @@
+artifacts_dir: artifacts
+site_base_url: https://daily.jiayutool.cn
+score_threshold: 4.0
+min_main_papers: 3
+max_papers: 8
+max_supplements: 2
+first_tier_organizations:
+  - anthropic
+  - google deepmind
+  - google research
+  - openai
+  - meta ai
+  - microsoft research
+  - nvidia
+  - apple
+  - amazon
+  - alibaba
+  - qwen
+  - bytedance
+  - tencent
+  - baidu
+  - tsinghua university
+  - peking university
+  - stanford university
+  - massachusetts institute of technology
+  - university of california, berkeley
+  - carnegie mellon university
+  - princeton university
+  - university of oxford
+  - university of cambridge
+  - eth zurich
+budget:
+  request_limit: 60
+  input_token_limit: 3000000
+  output_token_limit: 600000
+  cost_cny_limit: 8.0
+sources:
+  - name: papers-hf-daily
+    display_name: Hugging Face Daily Papers
+    kind: huggingface
+    url: https://huggingface.co/api/daily_papers
+    tier: A
+    channel: research
+    limit: 50
+  - name: papers-arxiv
+    display_name: arXiv AI/ML/CL/Agents
+    kind: arxiv
+    url: https://export.arxiv.org/api/query
+    tier: A
+    channel: research
+    limit: 100
+    arxiv_categories: [cs.AI, cs.CL, cs.LG, cs.MA]

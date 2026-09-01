@@ -192,6 +192,26 @@ time {
   margin-bottom: 1.1rem;
 }
 
+/* ---------- 论文深读 ---------- */
+
+.papers-main { max-width: 860px; }
+.papers-edition { margin-bottom: 1.5rem; }
+.papers-edition h1 { margin: 0.2rem 0; }
+.papers-kicker, .paper-authors { color: var(--muted); }
+.paper-card { border-top: 1px solid var(--line); padding: 1.6rem 0; }
+.paper-title { font-size: 1.35rem; line-height: 1.35; margin: 0.5rem 0; }
+.paper-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.paper-badge { background: var(--surface); border: 1px solid var(--line); border-radius: 99px;
+  color: var(--muted); font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+.paper-links { display: block; margin: 0.6rem 0 1rem; }
+.paper-section { border-top: 1px solid var(--line); padding: 0.65rem 0; }
+.paper-section summary { cursor: pointer; font-weight: 700; }
+.paper-section__body { color: var(--ink-soft); white-space: pre-line; }
+.paper-evidence blockquote { border-left: 3px solid var(--accent); color: var(--muted);
+  margin-left: 0; padding-left: 0.8rem; }
+.paper-fallback { color: var(--accent); font-weight: 700; }
+.papers-archive { border-top: 2px solid var(--ink); margin-top: 2rem; padding-top: 1rem; }
+
 /* ---------- 甲鱼主编版 ---------- */
 
 .persona-edition h1 {

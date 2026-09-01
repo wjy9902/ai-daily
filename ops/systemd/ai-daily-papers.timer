@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Daily papers publication window
+Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/PAPERS.md
+
+[Timer]
+# Server local time is Asia/Shanghai. This avoids every daily digest window.
+OnCalendar=*-*-* 06:10:00
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=60s
+Unit=ai-daily-papers.service
+
+[Install]
+WantedBy=timers.target

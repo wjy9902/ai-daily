@@ -755,10 +755,11 @@ class Collector:
         ]
 
     async def _fetch_arxiv(self, source: SourceConfig) -> list[RawItem]:
+        categories = source.arxiv_categories or ["cs.AI", "cs.LG", "cs.CL"]
         response = await self._get(
             source,
             params={
-                "search_query": "cat:cs.AI OR cat:cs.LG OR cat:cs.CL",
+                "search_query": " OR ".join(f"cat:{category}" for category in categories),
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
                 "max_results": source.limit,
@@ -790,6 +791,13 @@ class Collector:
             title = paper.get("title")
             if not paper_id or not title:
                 continue
+            raw_organization = paper.get("organization")
+            organization = (
+                raw_organization.get("name")
+                if isinstance(raw_organization, dict)
+                else raw_organization
+            )
+            authors = paper.get("authors") or []
             items.append(
                 RawItem(
                     **_source_fields(source),
@@ -799,7 +807,20 @@ class Collector:
                     summary=paper.get("summary") or paper.get("abstract") or "",
                     published_at=_published(paper.get("publishedAt")),
                     discovered_at=now,
-                    metrics={"upvotes": value.get("numUpvotes", 0)},
+                    author=", ".join(
+                        str(author.get("name") or author)
+                        if isinstance(author, dict)
+                        else str(author)
+                        for author in authors
+                    )
+                    or None,
+                    metrics={
+                        "upvotes": value.get("upvotes", value.get("numUpvotes", 0)) or 0,
+                        "organization": organization or "",
+                        "github_repo": paper.get("githubRepo") or "",
+                        "github_stars": paper.get("githubStars") or 0,
+                        "comments": paper.get("numComments") or 0,
+                    },
                 )
             )
         return items

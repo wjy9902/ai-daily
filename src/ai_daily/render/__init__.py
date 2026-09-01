@@ -7,6 +7,7 @@ re-running collection or the models.
 
 from __future__ import annotations
 
+from .papers import render_papers_index, render_papers_issue, render_papers_rss
 from .site import (
     ArchiveEntry,
     render_archive,
@@ -24,5 +25,8 @@ __all__ = [
     "render_fallback",
     "render_index",
     "render_issue",
+    "render_papers_index",
+    "render_papers_issue",
+    "render_papers_rss",
     "render_rss",
 ]

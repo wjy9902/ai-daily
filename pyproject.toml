@@ -42,6 +42,7 @@ packages = ["src/ai_daily"]
 addopts = "-q"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = [".", "tests"]
 
 [tool.ruff]
 line-length = 100
