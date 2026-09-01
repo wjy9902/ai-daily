@@ -22,9 +22,16 @@ async def run(args: argparse.Namespace) -> None:
     layout.ensure()
     pipeline = PapersPipeline(config, config_dir, layout, Secrets())
     try:
+        selected = artifact.selected[: args.count]
+        if args.arxiv_id:
+            by_id = {paper.arxiv_id: paper for paper in artifact.selected}
+            missing = [paper_id for paper_id in args.arxiv_id if paper_id not in by_id]
+            if missing:
+                raise ValueError(f"arXiv IDs are not in the selection artifact: {missing}")
+            selected = [by_id[paper_id] for paper_id in args.arxiv_id]
         publication = await build_papers_publication(
             artifact.target_date,
-            artifact.selected[: args.count],
+            selected,
             pipeline.collector,
             pipeline.gateway,
         )
@@ -41,6 +48,11 @@ def main() -> None:
     parser.add_argument("--site-root", type=Path, required=True)
     parser.add_argument("--config-dir", default="config")
     parser.add_argument("--count", type=int, choices=(1, 2), default=2)
+    parser.add_argument(
+        "--arxiv-id",
+        action="append",
+        help="deep-read this selected arXiv ID; repeat to choose two",
+    )
     args = parser.parse_args()
     asyncio.run(run(args))
 
