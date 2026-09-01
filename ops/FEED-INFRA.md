@@ -113,6 +113,28 @@ curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
   `qwen-blog` 343 天（配置还指着已废弃的 qwenlm.github.io，Qwen 已迁到
   qwen.ai/blog，新站没有 RSS，需要改 html_index）、`anthropic-engineering`
   99 天（站上实际有 08-27 的新文，抓取器漏了）、`aisi-blog` 47 天。
+- **微信读书凭证会过期，而且过期是静默的。** 2026-09-01：建站时（08-27 12:22）扫码写入的
+  cookie 在 05:00 前后失效，12 个号全部 `mp cover returned HTTP 499`，持续 7 小时无人发现——
+  因为 feed 仍在供应已入库的旧文章，`probe-sources` 照样报 `ok`。当天丢了橘鸦的头条
+  （DeepSeek 开源 V4-Flash-Vision-Exp，只在公众号发）。
+  **已自动化**：`ops/feed-infra/renew-weread-session.py` + `weread-session-renew.timer`
+  每 6 小时调 `POST /web/login/renewal`（微信读书网页端自己用的接口），拿 cookie 里的
+  `wr_rt` 换新的 `wr_skey` 并写回 `wx.lic`。凭证寿命约 5 天，6 小时一次留出 20 次机会而不是 1 次。
+  只有 `wr_rt` 本身失效才需要重新扫码，脚本此时以非零退出，journal 里看得见。
+  **`wx.lic` 是 YAML 不是 JSON**，尽管扩展名不像。
+- **别把自己打进限流。** 采集 cron 原为 `0 */10 * * * *`——12 个号每 10 分钟一轮 =
+  每天 1728 次 WeRead 调用，而公众号一天才发几篇。凭证续期后接口从 `-2012`（cookie 过期）
+  变成 `-2014`（请求频率过高），限流累积十小时后需要数小时才衰减。已改为每小时一轮
+  （`0 0 * * * *`，288 次/天），仍远早于 04:20 出刊窗口。
+  **改完 cron 必须重启容器**：调度器不会重新读库。
+- **判断凭证是否还活着**（不看日志的最快办法）：
+
+  ```bash
+  docker exec we-mp-rss /app/env_x86_64/bin/python3 -c 'import sys; sys.path.insert(0,"/app");
+  from core.wx.model.weread_mp import MpsWereadMP; w=MpsWereadMP(); w._load_weread_auth(); print(w.test_auth())'
+  ```
+
+  `ok: True` = 凭证有效；若同时接口仍报 499/-2014，那是限流不是凭证。
 - **采集任务的 `mps_id` 必须是 JSON 对象数组，不是逗号分隔串。**
   `jobs/mps.py` 的 `get_feeds()` 做的是 `json.loads(task.mps_id)` 再取
   `item["id"]`，所以只有 `[{"id":"MP_WXS_..."},...]` 这一种格式能跑。写成
