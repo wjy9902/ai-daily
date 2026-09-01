@@ -9,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ai_daily.models import JUDGE_BATCH_SIZE, ModelsConfig, PipelineConfig, SourceConfig
-from ai_daily.persona_models import PersonaRuntimeConfig
 
 
 class SourcesDocument(BaseModel):
@@ -34,7 +33,6 @@ class AppConfig(BaseModel):
     pipeline: PipelineConfig
     models: ModelsConfig
     sources: list[SourceConfig]
-    persona: PersonaRuntimeConfig | None = None
 
     @model_validator(mode="after")
     def validate_pipeline_budget(self) -> AppConfig:
@@ -65,15 +63,8 @@ def load_config(config_dir: Path = Path("config")) -> AppConfig:
     pipeline = PipelineConfig.model_validate(_read_yaml(config_dir / "pipeline.yaml"))
     models = ModelsConfig.model_validate(_read_yaml(config_dir / "models.yaml"))
     sources = SourcesDocument.model_validate(_read_yaml(config_dir / "sources.yaml"))
-    persona_path = config_dir / "persona.yaml"
-    persona = (
-        PersonaRuntimeConfig.model_validate(_read_yaml(persona_path))
-        if persona_path.exists()
-        else None
-    )
     return AppConfig(
         pipeline=pipeline,
         models=models,
         sources=sources.sources,
-        persona=persona,
     )

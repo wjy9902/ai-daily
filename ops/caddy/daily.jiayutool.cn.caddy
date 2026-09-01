@@ -12,7 +12,7 @@ daily.jiayutool.cn {
 		file_server
 	}
 
-	@channel_status path /status/persona.json /status/wechat.json
+	@channel_status path /status.json
 	handle @channel_status {
 		root * /www/wwwroot/ai-daily
 		header Cache-Control "no-store"

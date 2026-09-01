@@ -13,7 +13,6 @@
 | 站点根 | `/www/wwwroot/ai-daily` |
 | 运行用户 | `ai-daily`（system 用户，nologin，无 sudo） |
 | 定时 | `ai-daily.timer` → 04:20 / 05:05 / 07:00 / 08:30 CST |
-| 定时（主编版） | `ai-daily-persona.timer` → 08:50 / 09:20 / 09:50 CST |
 | 反代 | Caddy，与 `zb.jiayutool.cn` 同实例，互不影响 |
 
 ## 目录
@@ -27,24 +26,14 @@
 ├── releases/     <date>-<ts>/ 每次发布一个，保留 30 个
 ├── current →     软链，指向当前 release
 ├── fallback/     预构建兜底页，渲染器挂了也能服务
-├── status/       基础日报、主编版与微信草稿独立状态（Caddy no-store）
+├── status/       出刊状态（Caddy no-store）
 ├── budget/       <date>.json 基础日报模型预算台账
-├── upstream/     marker-keyed 基础日报快照与日期激活指针
-├── persona-editions/  已验证的甲鱼主编版结构化成稿
-├── persona-runs/ 计划、分析、审稿和渲染回执
-├── persona-budget/ 独立模型预算与原子预留台账
-├── wechat-targets/ 微信创建前冻结的 HTML、元数据与请求哈希
-└── wechat-slots.sqlite3 账号/栏目/日期唯一发布 slot
 ```
 
 **工具链为什么不在 `/home`**：unit 开着 `ProtectHome=yes`。这个进程解析敌意网页内容，
 同机还存着别的服务的凭证，没有任何理由看到 home 目录。把 uv、Python、cache 和 SSH 身份
 都放到站点根下，`ReadWritePaths` 就只剩一条。启动报 `203/EXEC` 通常意味着有东西被挪回
 了 `/home`。
-
-**主编版窗口必须全部晚于基础日报的最后一个窗口。** 主编版一旦出刊就冻结当天的上游
-marker（`_persona_date_is_frozen`），排在基础窗口之前会让那个窗口的升级永远发不出去。
-`tests/test_workflows.py` 断言了这个顺序。
 
 ## 已验证（2026-08-28 实测）
 
@@ -104,45 +93,7 @@ DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产
    （GLM-5.3-Flash、Kimi K3 等）跨媒体、跨语言合并，带年份/榜单/同语言重叠三道
    护栏。当天实测 681 条原始条目下，跨域佐证事件从 1 个升至 7 个，
    「两个独立域佐证」首次实际可达。
-4. ~~甲鱼主编版尚未部署~~：已上线，`ai-daily-persona.timer` 与 service 均 enabled。
-   微信仍是 `draft_only`，freepublish 无权限。
-5. **主编版每天出刊失败**：2026-08-28 三个窗口全部 `held`，三次原因各不相同。根因已定位
-   并修复（2026-08-28），但**尚未经过一次真实出刊验证**——改动让约束变得可满足，不等于模型
-   下次一定满足。明天 08:50 / 09:20 / 09:50 三个窗口是第一次实测。三条各自的根因：
-   - `persona plan referenced unknown evidence`：`_planner_event_rows` 只把每个事件的前
-     2 条证据给 planner，而 `_validate_plan` 允许引用 3 条、bundle 也确实带 3 条
-     （`event.items[:3]`）。当天候选池里有 3 条证据的两个事件恰好都被选中——佐证最强的
-     事件正是有三个来源的那些。翻遍所有落盘的 plan，planner 只出现过 `-1` 和 `-2`
-     （290 次 / 222 次），`-3` 一次都没有：给它看 2 个却允许它引 3 个。已改为给足 3 条。
-   - `edition body length 1738 outside 700-1600`：不是模型写多了。`confirmed_change` 必须
-     逐字等于已验证原文（`persona_verifier.py`），长度由源站作者决定：08-27 是 574 字，
-     08-28 是 991 字（五条里三条是长英文句）。其余每个字段都被 `AssemblyInterpretiveText`
-     限制在 30 字符，主编自己能写的上限约 990。991 加一段写满的正文塞不进 1600。上限改为
-     2000（schema 自身 990 上限 + 实测最宽的引用总量），同时修好本该兜底却什么都没做的
-     压缩逻辑——`_compact_text` 在截断窗口内找不到句号时会原样返回未压缩文本，而它被调用
-     时的窗口约 20 字符，中文分析句在前 20 字符里几乎不可能有句号。
-   - `Exceeded maximum output retries (1)`：`OUTPUT_RETRIES` 是全局常量，而 `generate()`
-     的外层循环只对网络类错误重试，所以版面编辑一共只有 2 次 provider 请求，去让约 30 个
-     独立字段同时满足长度上限、前缀、无第一人称和总字数区间。一个字段写长就整轮报废，
-     而此时所有分析师的钱已经花完（每次约 ¥1.1）。改为按角色配置，版面编辑给 3 次。
-   顺带修掉一个从未触发过的死结：`no_major_update` 版本的正文只有主旨加最多 2 条观察，
-   三个 30 字符文本共 90 字，而下限是 300——真正平静的一天必然 `held`。下限改为 50。
-   这是把算术改成一致，不是「平静的一天值 50 个字」的编辑判断；要说更多，得先动
-   thesis 与 watchlist 的 30 字符上限。
-
-   **2026-08-29 续**：上述三条一条都没再复发，版面编辑的 `request_count: 4` 证明
-   按角色重试已生效。但三个窗口仍全 `held`，露出下一层的两条，均已修复：
-   - `item ... delta lacks current or baseline evidence`（分析师）：`delta_from_before`
-     按指令和 schema 都是可选块，分析师被要求「没有可信 baseline 就省略」。它照写不误
-     却只给了一侧出处，整轮就废掉。改为在 `normalize_analysis_item` 里丢弃这个块，
-     而不是让一段可选的分析毁掉已经付过钱的整轮。
-   - `claim ... contains ungrounded entity/version/number anchors`（版面编辑）：
-     `normalize_analysis_item` 早就会把分析师无法落地的 anchor 换成
-     「相关指标 / 相关版本」，但 `normalize_edition_draft` 从来没有同样处理，而版面
-     编辑是要自己写短句的。同一条规则，一边有安全网一边没有。现在两边一致，且只擦掉
-     证据里查不到的 anchor——「Qwen3.8-Flash」这种有据可查的照常保留。
-
-6. **基础日报 plan 阶段份额撞墙**：2026-08-29 全天只花 ¥3.13/¥8，但 plan 阶段
+4. **基础日报 plan 阶段份额撞墙**：2026-08-29 全天只花 ¥3.13/¥8，但 plan 阶段
    ¥2.008 撞满自己的 ¥2.00，最后一个窗口降级成 L2A（0 详报 / 12 快讯），
    还剩 ¥4.87 没花。升级守卫保住了当期的 L1，属于运气。
    根因是一个 `STAGE_SHARE` 同时管请求数和钱，而两个阶段要的东西相反：判定用掉
@@ -177,14 +128,3 @@ ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'cd /www/wwwroot/ai-daily/app && s
 ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'ls -1t /www/wwwroot/ai-daily/releases | head -3'
 ```
 
-部署主编版代码后安装独立定时器（默认仅网站）：
-
-```bash
-cp ops/systemd/ai-daily-persona.{service,timer} /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now ai-daily-persona.timer
-systemctl list-timers ai-daily-persona.timer
-```
-
-草稿模式必须在签名授权、永久封面、独立 HMAC keys 全部配置后，人工修改 service 的
-`ExecStart` 为 `--mode draft --execute --authorization ...`。不要启用 freepublish 或群发替代路径。

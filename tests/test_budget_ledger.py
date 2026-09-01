@@ -187,22 +187,24 @@ def test_stale_ledger_instances_cannot_overwrite_each_others_reservations(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
+    # Sized against the draft stage's own share of the cap, so the first
+    # reservation fits and a second identical one cannot.
     config = factories.budget_config(request_limit=10, cost_cny_limit=2)
     first = _ledger(store, config)
     stale = _ledger(store, config)
 
-    first.reserve(BudgetStage.PERSONA, 2, 1.5, input_tokens=100, output_tokens=50)
+    first.reserve(BudgetStage.DRAFT, 2, 0.5, input_tokens=100, output_tokens=50)
 
     with pytest.raises(StageBudgetExceeded, match="cost reservation"):
         stale.reserve(
-            BudgetStage.PERSONA,
+            BudgetStage.DRAFT,
             2,
-            1.5,
+            0.5,
             input_tokens=100,
             output_tokens=50,
         )
     persisted = _ledger(store, config)
-    assert persisted.reserved_cost_cny == pytest.approx(1.5)
+    assert persisted.reserved_cost_cny == pytest.approx(0.5)
     assert persisted.reserved_input_tokens == 100
     assert persisted.reserved_output_tokens == 50
 
@@ -217,7 +219,7 @@ def test_persisted_fractional_reservations_settle_without_rounding_drift(
     second_cost = 0.6206486
     for cost in (first_cost, second_cost):
         ledger.reserve(
-            BudgetStage.PERSONA,
+            BudgetStage.DRAFT,
             2,
             cost,
             input_tokens=100,
@@ -225,7 +227,7 @@ def test_persisted_fractional_reservations_settle_without_rounding_drift(
         )
 
     ledger.settle_reservation(
-        BudgetStage.PERSONA,
+        BudgetStage.DRAFT,
         2,
         first_cost,
         100,
@@ -233,7 +235,7 @@ def test_persisted_fractional_reservations_settle_without_rounding_drift(
         _run(0.1),
     )
     ledger.settle_reservation(
-        BudgetStage.PERSONA,
+        BudgetStage.DRAFT,
         2,
         second_cost,
         100,
@@ -244,7 +246,7 @@ def test_persisted_fractional_reservations_settle_without_rounding_drift(
     persisted = _ledger(store, config)
     assert persisted.reserved_requests == 0
     assert persisted.reserved_cost_cny == 0
-    assert persisted.stage_reserved_cost[BudgetStage.PERSONA.value] == 0
+    assert persisted.stage_reserved_cost[BudgetStage.DRAFT.value] == 0
 
 
 def test_next_run_conservatively_charges_orphaned_reservations(
@@ -253,7 +255,7 @@ def test_next_run_conservatively_charges_orphaned_reservations(
     store = _store(tmp_path)
     ledger = _ledger(store)
     ledger.reserve(
-        BudgetStage.PERSONA,
+        BudgetStage.DRAFT,
         2,
         0.5,
         input_tokens=120,

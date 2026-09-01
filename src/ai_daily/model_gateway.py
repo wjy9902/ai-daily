@@ -28,28 +28,11 @@ from ai_daily.models import ModelEndpoint, ModelRole, ModelRun, ModelsConfig
 OutputT = TypeVar("OutputT", bound=BaseModel)
 OUTPUT_RETRIES = 1
 # The outer loop in generate() only retries transport failures, so a schema or
-# validator rejection gets exactly 1 + OUTPUT_RETRIES provider requests. That is
-# enough for roles whose output is a handful of fields. The edition editor is not
-# one of them: a standard edition is about thirty independent text fields that
-# must simultaneously stay inside their own length cap, keep their 判断/建议/不确定性
-# prefix, avoid first person, and add up to a bounded body. One over-long field
-# anywhere kills the run - and it kills it after every analyst has already been
-# paid for, which is why 2026-08-27 and 2026-08-28 held at about ¥1.1 a window.
-# Each extra retry sends the validation error back to the model and costs one
-# editor call (~¥0.05), against a whole run's spend.
-# The finalizer is the same shape as the editor and fails even later: it has to
-# echo back every blocker id the critic invented, exactly once, while rewriting
-# a draft that still has to pass the whole of verify_edition. On 2026-08-31 the
-# critic raised 5, 12 and 5 blockers on the three windows and the finalizer lost
-# all three - after the planner, the baselines, five analysts, the editor and
-# the critic had all been paid for.
-ROLE_OUTPUT_RETRIES: dict[ModelRole, int] = {
-    "persona_edition_editor": 3,
-    "persona_finalizer": 3,
-}
-# The daily pipeline defaults to one provider call at a time. The persona pipeline
-# explicitly opts into at most three concurrent analysts and reserves request/cost
-# allowance before each call so their combined in-flight spend cannot exceed budget.
+# validator rejection gets exactly 1 + OUTPUT_RETRIES provider requests, which is
+# enough for the daily roles: their output is a handful of fields.
+ROLE_OUTPUT_RETRIES: dict[ModelRole, int] = {}
+# One provider call at a time: the daily pipeline has no stage that benefits
+# from overlapping them.
 MAX_MODEL_CONCURRENCY = 1
 
 
@@ -241,13 +224,10 @@ class ModelGateway:
             raise
         except Exception as error:
             recorded_error: Exception = error
-            # Whichever ceiling stops the run, report what the model actually got
-            # wrong. Sizing request_limit against pydantic-ai's retry accounting
-            # was guesswork twice over - 1 + retries and then 2 + retries both
-            # tripped, on 2026-08-31 at 12:29 and 12:52 - and each time the
-            # persona held on "The next request would exceed the request_limit",
-            # which says nothing about the edition. The validation errors are
-            # right here either way.
+            # Whichever ceiling stops the run, report what the model actually
+            # got wrong. A run that dies on "The next request would exceed the
+            # request_limit" says nothing about the output that was rejected,
+            # and the validation errors are right here either way.
             if isinstance(error, (UnexpectedModelBehavior, UsageLimitExceeded)) and (
                 validation_errors
             ):
@@ -366,8 +346,6 @@ class ModelGateway:
         extra_body: dict[str, object] | None = None
         if endpoint.provider == "alibaba":
             extra_body = {"enable_thinking": False}
-        elif endpoint.provider == "deepseek" and role == "persona_edition_editor":
-            extra_body = {"thinking": {"type": "disabled"}}
         return ModelSettings(
             temperature=endpoint.temperature,
             max_tokens=min(

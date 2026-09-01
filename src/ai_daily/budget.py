@@ -34,7 +34,6 @@ class BudgetStage(StrEnum):
     JUDGE = "judge"
     PLAN = "plan"
     DRAFT = "draft"
-    PERSONA = "persona"
 
 
 #: How the day's budget is divided. Requests and money are split deliberately,
@@ -57,8 +56,6 @@ STAGE_REQUEST_SHARE: dict[BudgetStage, float] = {
     BudgetStage.PLAN: 0.15,
     # 99 requests against 21 observed.
     BudgetStage.DRAFT: 0.55,
-    # Persona uses a separate ledger and owns its full configured allowance.
-    BudgetStage.PERSONA: 1.0,
 }
 STAGE_COST_SHARE: dict[BudgetStage, float] = {
     # ¥1.20 against ¥0.45 observed.
@@ -67,7 +64,6 @@ STAGE_COST_SHARE: dict[BudgetStage, float] = {
     BudgetStage.PLAN: 0.50,
     # ¥2.80 against ¥0.67 observed.
     BudgetStage.DRAFT: 0.35,
-    BudgetStage.PERSONA: 1.0,
 }
 RESERVATION_COST_TOLERANCE = 1e-6
 

@@ -131,7 +131,7 @@ curl -s '<从 we-mp-rss 界面复制的某个公众号 RSS 地址>' | head -40
   `compose.override.yml` 已固化）。采集只写标题和链接，`content` 一律留空，正文靠
   `jobs/fetch_no_article.py` 的补抓任务回填。这条链路坏了不会报"采集失败"，只会让
   RSS 的 `<description>` 等于标题、`<content:encoded>` 为空，管线拿到手就是十几个字，
-  详报被降级成快讯、主编版连 `QUOTE_MIN_CHARS` 都过不了。
+  详报被降级成快讯。
   - `GATHER.CONTENT_AUTO_INTERVAL` 默认 **59**，而代码是 `cron = f"*/{interval} * * * *"`。
     cron 的 `*/59` 只在第 0 分和第 59 分触发——每小时两次、隔 1 分钟，然后空 58 分钟。
     采集每 10 分钟一轮，正文却只在 :59/:00 落地，04:20 那个窗口拿到的新文章必然只有标题。
