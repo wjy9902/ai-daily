@@ -18,6 +18,7 @@ is simply garbage-collected.
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import json
 import os
@@ -29,13 +30,23 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from .papers_models import PapersPublication, load_papers_publication
 from .publication import (
     DailyPublication,
     PublicationLevel,
     is_upgrade,
     load_publication,
 )
-from .render import ArchiveEntry, render_archive, render_daily, render_index, render_rss
+from .render import (
+    ArchiveEntry,
+    render_archive,
+    render_daily,
+    render_index,
+    render_papers_index,
+    render_papers_issue,
+    render_papers_rss,
+    render_rss,
+)
 
 #: How many release directories to keep. The site is small, but the disk is
 #: shared with other services, so retention is explicit rather than unbounded.
@@ -58,6 +69,10 @@ class SiteLayout:
     @property
     def published(self) -> Path:
         return self.root / "published"
+
+    @property
+    def published_papers(self) -> Path:
+        return self.root / "published-papers"
 
     @property
     def releases(self) -> Path:
@@ -90,6 +105,7 @@ class SiteLayout:
     def ensure(self) -> None:
         for path in (
             self.published,
+            self.published_papers,
             self.releases,
             self.status_dir,
             self.fallback,
@@ -99,6 +115,9 @@ class SiteLayout:
 
     def publication_path(self, target_date: date) -> Path:
         return self.published / f"{target_date.isoformat()}.json"
+
+    def papers_publication_path(self, target_date: date) -> Path:
+        return self.published_papers / f"{target_date.isoformat()}.json"
 
     def budget_path(self, target_date: date) -> Path:
         return self.budget / f"{target_date.isoformat()}.json"
@@ -181,6 +200,16 @@ def recent_publications(layout: SiteLayout, limit: int) -> list[DailyPublication
         if publication is not None:
             publications.append(publication)
     return publications
+
+
+def papers_publications(layout: SiteLayout) -> list[PapersPublication]:
+    """Load every papers record; corruption is fatal rather than silently omitted."""
+
+    publications = [
+        load_papers_publication(path.read_text(encoding="utf-8"))
+        for path in layout.published_papers.glob("*.json")
+    ]
+    return sorted(publications, key=lambda item: item.target_date, reverse=True)
 
 
 def build_archive(layout: SiteLayout, publications: list[DailyPublication]) -> list[ArchiveEntry]:
@@ -299,6 +328,7 @@ def render_release(
     publication: DailyPublication,
     site_base_url: str,
     stamp: str,
+    papers_publication: PapersPublication | None = None,
 ) -> Path:
     """Render a complete site into a new release directory."""
 
@@ -328,9 +358,42 @@ def render_release(
         issue_dir = daily_dir / item.target_date.isoformat()
         issue_dir.mkdir(parents=True, exist_ok=True)
         (issue_dir / "index.html").write_text(render_daily(item, site_base_url), encoding="utf-8")
+    _render_papers_release(release, layout, site_base_url, papers_publication)
     _copy_assets(release)
     _assert_marker_rendered(release, publication)
     return release
+
+
+def _render_papers_release(
+    release: Path,
+    layout: SiteLayout,
+    site_base_url: str,
+    papers_publication: PapersPublication | None,
+) -> None:
+    paper_history = papers_publications(layout)
+    if papers_publication is not None:
+        paper_history = [
+            papers_publication,
+            *(item for item in paper_history if item.target_date != papers_publication.target_date),
+        ]
+        paper_history.sort(key=lambda item: item.target_date, reverse=True)
+    if not paper_history:
+        return
+    papers_dir = release / "papers"
+    papers_dir.mkdir()
+    latest_papers = paper_history[0]
+    (papers_dir / "index.html").write_text(
+        render_papers_index(latest_papers, paper_history, site_base_url), encoding="utf-8"
+    )
+    (papers_dir / "rss.xml").write_text(
+        render_papers_rss(paper_history[:RSS_LIMIT], site_base_url), encoding="utf-8"
+    )
+    for paper_item in paper_history[:RSS_LIMIT]:
+        issue_dir = papers_dir / paper_item.target_date.isoformat()
+        issue_dir.mkdir(parents=True, exist_ok=True)
+        (issue_dir / "index.html").write_text(
+            render_papers_issue(paper_item, site_base_url), encoding="utf-8"
+        )
 
 
 def _copy_assets(release: Path) -> None:
@@ -366,6 +429,73 @@ def activate_release(layout: SiteLayout, release: Path) -> None:
         staging.unlink()
     staging.symlink_to(release, target_is_directory=True)
     os.replace(staging, layout.current)
+
+
+async def publish_papers_site(
+    layout: SiteLayout,
+    publication: PapersPublication,
+    site_base_url: str,
+    now: datetime | None = None,
+    *,
+    lock_attempts: int = 10,
+    retry_seconds: float = 60,
+) -> Path:
+    """Publish one papers issue with a short final lock and ordered commit."""
+
+    if not publication.marker_is_valid():
+        raise PublicationRefused("papers publication checksum is missing or stale")
+    layout.ensure()
+    record_path = layout.papers_publication_path(publication.target_date)
+    if record_path.exists():
+        raise PublicationRefused(f"papers for {publication.target_date} are already published")
+    daily = recent_publications(layout, 1)
+    if not daily:
+        raise PublicationRefused("papers publishing requires at least one daily publication")
+
+    for attempt in range(lock_attempts):
+        try:
+            with publication_lock(layout):
+                return _publish_papers_locked(
+                    layout, publication, daily[0], site_base_url, record_path, now
+                )
+        except PublicationRefused as error:
+            if "another publication run holds the lock" not in str(error):
+                raise
+            if attempt + 1 >= lock_attempts:
+                raise PublicationRefused(
+                    "publication lock remained busy after 10 attempts"
+                ) from error
+            await asyncio.sleep(retry_seconds)
+    raise AssertionError("unreachable")
+
+
+def _publish_papers_locked(
+    layout: SiteLayout,
+    publication: PapersPublication,
+    daily: DailyPublication,
+    site_base_url: str,
+    record_path: Path,
+    now: datetime | None,
+) -> Path:
+    if record_path.exists():
+        raise PublicationRefused(f"papers for {publication.target_date} are already published")
+    stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    release = render_release(
+        layout,
+        daily,
+        site_base_url,
+        f"papers-{stamp}",
+        papers_publication=publication,
+    )
+    _write_atomic(record_path, publication.model_dump_json(indent=2))
+    committed = load_papers_publication(record_path.read_text(encoding="utf-8"))
+    if committed.marker != publication.marker:
+        raise PublicationRefused("papers record failed its commit round trip")
+    try:
+        activate_release(layout, release)
+    except OSError:
+        activate_release(layout, release)
+    return release
 
 
 def prune_releases(layout: SiteLayout, keep: int = RELEASE_RETENTION) -> list[Path]:

@@ -11,8 +11,12 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from ai_daily.artifacts import write_artifact
 from ai_daily.benchmark import benchmark_models
 from ai_daily.config import AppConfig, Secrets, load_config
+from ai_daily.papers import PapersPipeline, build_papers_publication, publication_gate
+from ai_daily.papers_config import load_papers_config
+from ai_daily.papers_models import PaperCandidate, PapersRunArtifact
 from ai_daily.pipeline import DailyPipeline
 from ai_daily.probe import probe_sources
 from ai_daily.publication import LEVEL_NOTICE, DailyPublication, PublicationLevel
@@ -25,6 +29,7 @@ from ai_daily.site_publisher import (
     build_archive,
     hold_previous_release,
     publication_lock,
+    publish_papers_site,
     publish_site,
     published_dates,
     read_publication,
@@ -273,6 +278,87 @@ async def _probe(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _papers(args: argparse.Namespace) -> int:
+    """Select today's papers and optionally deep-read and publish them."""
+
+    config_dir = Path(args.config_dir)
+    config = load_papers_config(config_dir)
+    layout = _layout(args)
+    layout.ensure()
+    target = datetime.now(BEIJING).date()
+    pipeline = PapersPipeline(config, config_dir, layout, Secrets())
+    try:
+        artifact, run_dir = await pipeline.select_today(target)
+        if not artifact.selected:
+            _emit(
+                {
+                    "action": "held_previous_release",
+                    "reasons": artifact.reasons,
+                    "artifact": str(run_dir / "selection.json"),
+                }
+            )
+            return 1
+        if args.mode == "dry-run":
+            _emit(_papers_dry_payload(artifact, run_dir))
+            return 0
+        return await _publish_selected_papers(
+            pipeline, artifact.selected, target, run_dir, layout, str(config.site_base_url)
+        )
+    finally:
+        await pipeline.aclose()
+
+
+def _papers_dry_payload(artifact: PapersRunArtifact, run_dir: Path) -> dict[str, Any]:
+    return {
+        "mode": "dry-run",
+        "artifact": str(run_dir / "selection.json"),
+        "selected": [
+            {
+                "arxiv_id": item.arxiv_id,
+                "title": item.title,
+                "topic": item.topic,
+                "supplement": item.supplement,
+                "signals": item.signals.model_dump(mode="json"),
+            }
+            for item in artifact.selected
+        ],
+    }
+
+
+async def _publish_selected_papers(
+    pipeline: PapersPipeline,
+    selected: list[PaperCandidate],
+    target: date,
+    run_dir: Path,
+    layout: SiteLayout,
+    site_base_url: str,
+) -> int:
+    publication = await build_papers_publication(
+        target, selected, pipeline.collector, pipeline.gateway
+    )
+    write_artifact(run_dir / "publication.json", publication)
+    accepted, reason = publication_gate(publication)
+    if not accepted:
+        _emit(
+            {
+                "action": "held_previous_release",
+                "reason": reason,
+                "artifact": str(run_dir / "publication.json"),
+            }
+        )
+        return 1
+    release = await publish_papers_site(layout, publication, site_base_url)
+    _emit(
+        {
+            "action": "published",
+            "release": str(release),
+            "papers": len(publication.papers),
+            "deep_reads": publication.deep_read_count,
+        }
+    )
+    return 0
+
+
 async def _archive(args: argparse.Namespace) -> int:
     """List every day since the first issue, gaps included."""
 
@@ -324,6 +410,9 @@ def build_parser() -> argparse.ArgumentParser:
     archive = subparsers.add_parser("archive", help="list published days and gaps")
     archive.add_argument("--date")
 
+    papers = subparsers.add_parser("papers", help="select and deep-read today's papers")
+    papers.add_argument("--mode", choices=("dry-run", "publish"), required=True)
+
     benchmark = subparsers.add_parser("benchmark-models")
     benchmark.add_argument("--dataset", type=Path, required=True)
     return parser
@@ -340,6 +429,7 @@ def main() -> None:
         "write-fallback": _write_fallback,
         "probe-sources": _probe,
         "archive": _archive,
+        "papers": _papers,
     }
     handler = handlers.get(args.command)
     if handler is not None:

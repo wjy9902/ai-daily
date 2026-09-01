@@ -91,6 +91,8 @@ class BudgetLedger:
 
     config: BudgetConfig
     store_path: Path | None = None
+    request_shares: dict[BudgetStage, float] | None = None
+    cost_shares: dict[BudgetStage, float] | None = None
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -106,8 +108,20 @@ class BudgetLedger:
     runs_today: int = 0
 
     def __post_init__(self) -> None:
+        self.request_shares = self._validate_shares(
+            self.request_shares or STAGE_REQUEST_SHARE, "request"
+        )
+        self.cost_shares = self._validate_shares(self.cost_shares or STAGE_COST_SHARE, "cost")
         if self.store_path is not None and self.store_path.exists():
             self._load()
+
+    @staticmethod
+    def _validate_shares(shares: dict[BudgetStage, float], label: str) -> dict[BudgetStage, float]:
+        if set(shares) != set(BudgetStage):
+            raise ValueError(f"{label} shares must cover every budget stage")
+        if any(value < 0 for value in shares.values()) or abs(sum(shares.values()) - 1.0) > 1e-9:
+            raise ValueError(f"{label} shares must be non-negative and sum to 1.0")
+        return dict(shares)
 
     # ------------------------------------------------------------------ load
     def _load(self) -> None:
@@ -226,12 +240,14 @@ class BudgetLedger:
         )
 
     def stage_remaining_requests(self, stage: BudgetStage) -> int:
-        allowance = int(self.config.request_limit * STAGE_REQUEST_SHARE[stage])
+        assert self.request_shares is not None
+        allowance = int(self.config.request_limit * self.request_shares[stage])
         used = self.stage_requests[stage.value] + self.stage_reserved_requests[stage.value]
         return max(0, min(allowance - used, self.remaining_requests()))
 
     def stage_remaining_cost(self, stage: BudgetStage) -> float:
-        allowance = self.config.cost_cny_limit * STAGE_COST_SHARE[stage]
+        assert self.cost_shares is not None
+        allowance = self.config.cost_cny_limit * self.cost_shares[stage]
         used = self.stage_cost[stage.value] + self.stage_reserved_cost[stage.value]
         return max(0.0, min(allowance - used, self.remaining_cost()))
 

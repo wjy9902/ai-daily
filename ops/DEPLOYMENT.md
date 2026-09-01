@@ -12,7 +12,7 @@
 | DNS | 阿里云 A 记录 `daily → 101.32.114.8`，TTL 600 秒 |
 | 站点根 | `/www/wwwroot/ai-daily` |
 | 运行用户 | `ai-daily`（system 用户，nologin，无 sudo） |
-| 定时 | `ai-daily.timer` → 04:20 / 05:05 / 07:00 / 08:30 CST |
+| 定时 | 日报 04:20 / 05:05 / 07:00 / 08:30；论文 06:10 CST |
 | 反代 | Caddy，与 `zb.jiayutool.cn` 同实例，互不影响 |
 
 ## 目录
@@ -23,12 +23,18 @@
 ├── toolchain/    uv + Python 3.13 + cache（不在 /home，见下）
 ├── .ssh/         两把 deploy key（app 只读 / backup 读写）
 ├── published/    <date>.json —— 唯一需要备份的状态
+├── published-papers/ <date>.json —— 论文刊期记录，同样需要备份
 ├── releases/     <date>-<ts>/ 每次发布一个，保留 30 个
 ├── current →     软链，指向当前 release
 ├── fallback/     预构建兜底页，渲染器挂了也能服务
 ├── status/       出刊状态（Caddy no-store）
-├── budget/       <date>.json 基础日报模型预算台账
+├── budget/       <date>.json 日报台账；papers-<date>.json 论文独立台账
 ```
+
+论文页由独立的 `ai-daily-papers.service` / `.timer` 在 06:10 运行，最长 3600 秒。
+部署时把两个 unit 复制到 `/etc/systemd/system/`，执行 `systemctl daemon-reload` 后启用
+`ai-daily-papers.timer`。它只在最终 release 激活阶段争用 `.publish.lock`，采集和深读阶段
+不阻塞日报。`S2_API_KEY` 是可选增强；未配置时当前实现不调用 Semantic Scholar。
 
 **工具链为什么不在 `/home`**：unit 开着 `ProtectHome=yes`。这个进程解析敌意网页内容，
 同机还存着别的服务的凭证，没有任何理由看到 home 目录。把 uv、Python、cache 和 SSH 身份
@@ -119,6 +125,18 @@ ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'systemctl start ai-daily.service 
 ```
 
 ```bash
+# 论文页 dry-run（只筛选并把完整信号分解写入 artifacts，不发布）
+cd /www/wwwroot/ai-daily/app
+sudo -u ai-daily /www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily papers --mode dry-run
+```
+
+```bash
+# 手动生成并发布论文深读刊期
+systemctl start ai-daily-papers.service
+journalctl -u ai-daily-papers -n 50 --no-pager
+```
+
+```bash
 # 不花钱重建站点（历史刊期都在 published/）
 ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'cd /www/wwwroot/ai-daily/app && sudo -u ai-daily env HOME=/www/wwwroot/ai-daily/toolchain AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily /www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily rebuild-site'
 ```
@@ -127,4 +145,3 @@ ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'cd /www/wwwroot/ai-daily/app && s
 # 回滚展示层到上一个 release
 ssh -i ~/.ssh/singapore_rsa root@101.32.114.8 'ls -1t /www/wwwroot/ai-daily/releases | head -3'
 ```
-

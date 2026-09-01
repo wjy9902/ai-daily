@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Push published records to the backup repository.
 #
-# Only `published/*.json` is backed up. That is the whole recoverable state:
+# Only publication records are backed up. They are the whole recoverable state:
 # HTML is re-renderable from it, artifacts are for post-mortems and are not
 # worth the space, and secrets are deliberately not backed up anywhere.
 #
@@ -34,7 +34,9 @@ git -C "$BACKUP_DIR" config user.email "ai-daily@jiayutool.cn"
 git -C "$BACKUP_DIR" config user.name "ai-daily backup"
 
 mkdir -p "$BACKUP_DIR/published"
+mkdir -p "$BACKUP_DIR/published-papers"
 cp -f "$SITE_ROOT"/published/*.json "$BACKUP_DIR/published/" 2>/dev/null || true
+cp -f "$SITE_ROOT"/published-papers/*.json "$BACKUP_DIR/published-papers/" 2>/dev/null || true
 cp -f "$SITE_ROOT"/status/status.json "$BACKUP_DIR/status.json" 2>/dev/null || true
 
 git -C "$BACKUP_DIR" add -A
@@ -44,9 +46,10 @@ if git -C "$BACKUP_DIR" diff --cached --quiet; then
 fi
 
 COUNT=$(find "$SITE_ROOT/published" -name '*.json' | wc -l | tr -d ' ')
-git -C "$BACKUP_DIR" commit --quiet -m "backup: $COUNT published issues"
+PAPER_COUNT=$(find "$SITE_ROOT/published-papers" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+git -C "$BACKUP_DIR" commit --quiet -m "backup: $COUNT daily and $PAPER_COUNT papers issues"
 if git -C "$BACKUP_DIR" push --quiet origin HEAD:main 2>/dev/null; then
-    echo "backup: pushed $COUNT issues"
+    echo "backup: pushed $COUNT daily and $PAPER_COUNT papers issues"
     exit 0
 fi
 echo "backup: push failed (publication is unaffected)" >&2
