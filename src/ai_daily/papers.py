@@ -490,6 +490,12 @@ class PapersPipeline:
     ) -> None:
         self.config = config
         self.layout = layout
+        configured_artifacts = Path(config.artifacts_dir)
+        self.artifacts_dir = (
+            configured_artifacts
+            if configured_artifacts.is_absolute()
+            else layout.root / configured_artifacts
+        )
         self.collector = collector or Collector()
         ledger = BudgetLedger(
             config.budget,
@@ -503,10 +509,10 @@ class PapersPipeline:
 
     async def select_today(self, target_date: date) -> tuple[PapersRunArtifact, Path]:
         run_id = uuid.uuid4().hex[:12]
-        run_dir = Path(self.config.artifacts_dir) / target_date.isoformat() / f"papers-{run_id}"
+        run_dir = self.artifacts_dir / target_date.isoformat() / f"papers-{run_id}"
         items, health = await self.collector.collect(self.config.sources)
         candidates = build_candidates(items, self.config)
-        candidates = apply_cross_mentions(candidates, Path(self.config.artifacts_dir), target_date)
+        candidates = apply_cross_mentions(candidates, self.artifacts_dir, target_date)
         candidates = filter_fresh_and_unpublished(
             candidates, target_date, historical_paper_keys(self.layout)
         )
