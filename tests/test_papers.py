@@ -14,6 +14,7 @@ from pydantic import HttpUrl
 from ai_daily.budget import BudgetLedger, BudgetStage
 from ai_daily.models import BudgetConfig, RawItem, SourceConfig, SourceTier
 from ai_daily.papers import (
+    PapersPipeline,
     apply_cross_mentions,
     arxiv_id,
     build_candidates,
@@ -231,6 +232,22 @@ def test_arxiv_category_configuration_does_not_change_daily_default() -> None:
     )
     assert papers.arxiv_categories == ["cs.AI", "cs.MA"]
     assert daily.arxiv_categories is None
+
+
+def test_relative_papers_artifacts_live_under_writable_site_root(tmp_path: Path) -> None:
+    config = load_papers_config()
+    config.artifacts_dir = "artifacts"
+    layout = SiteLayout(tmp_path / "site")
+
+    pipeline = PapersPipeline(
+        config,
+        Path("config"),
+        layout,
+        collector=cast(Any, object()),
+        gateway=cast(Any, PromptGateway()),
+    )
+
+    assert pipeline.artifacts_dir == layout.root / "artifacts"
 
 
 @pytest.mark.parametrize("nested", [True, False])
