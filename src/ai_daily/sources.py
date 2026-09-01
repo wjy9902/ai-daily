@@ -111,10 +111,17 @@ def _published(value: Any) -> datetime | None:
     return None
 
 
+# Listing text comes from text_content(), which glues adjacent elements
+# together: anthropic.com/news renders a card as "AnnouncementsSep 1, 2026Our
+# most advanced…", and \b on either side of the date never matches there. The
+# launch page behind it carries no date meta, so this text was its only date -
+# and without one the freshness gate rejected the first-party Fable 5.1 post.
+# No boundary before the month, then: "<month> <day>, <year>" is specific
+# enough on its own. The year still may not run on into more digits.
 DATE_RE = re.compile(
-    r"\b((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"((?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
     r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
-    r"Dec(?:ember)?)\.?\s+\d{1,2},\s+\d{4})\b",
+    r"Dec(?:ember)?)\.?\s+\d{1,2},\s+\d{4})(?!\d)",
     re.IGNORECASE,
 )
 NUMERIC_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})(?:\s+(\d{2}:\d{2}:\d{2}))?\b")

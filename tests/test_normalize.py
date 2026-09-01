@@ -243,6 +243,68 @@ def test_history_filter_drops_a_foreign_language_rerun_of_yesterdays_release() -
     assert remove_historical([event], history) == []
 
 
+def test_history_filter_keeps_a_versioned_launch_that_only_shares_brand_words() -> None:
+    """A short old headline made of brand words must not swallow a new launch.
+
+    2026-09-02: the Fable 5.1 cluster (official X post, AWS, The Decoder,
+    Techmeme) was deleted because one Techmeme title shared
+    claude/anthropic/generally/available with the five-token source title of
+    the 2026-08-27 Claude in Chrome story, which was still inside the 7-day
+    story window. Containment against the shorter text was 0.8.
+    """
+
+    event = cluster_items(
+        [
+            item(
+                "techmeme",
+                "https://www.techmeme.com/260901/p34",
+                (
+                    "Anthropic unveils Claude Fable 5.1, which is generally available, "
+                    "and Mythos 5.1, for trusted partners and with cybersecurity and "
+                    "life sciences safeguards (Anthropic)"
+                ),
+            )
+        ]
+    )[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles=set(),
+        stories=(
+            HistoricalStory(
+                event_id="claude-in-chrome",
+                issue_date=date(2026, 8, 27),
+                texts=(
+                    "Claude in Chrome 全面开放，可跨标签页自主执行任务",
+                    "Claude in Chrome is generally available | Claude by Anthropic",
+                ),
+            ),
+        ),
+    )
+
+    assert remove_historical([event], history) == [event]
+
+
+def test_history_filter_still_matches_a_versioned_story_restated_in_full() -> None:
+    """The both-ways rule only bites when one side never names the version."""
+
+    event = cluster_items(
+        [item("1", "https://example.com/a", "Anthropic unveils Claude Fable 5.1 for everyone")]
+    )[0]
+    history = HistoricalIndex(
+        urls=set(),
+        titles=set(),
+        stories=(
+            HistoricalStory(
+                event_id="fable-launch",
+                issue_date=date(2026, 9, 1),
+                texts=("Anthropic unveils Claude Fable 5.1 for everyone today",),
+            ),
+        ),
+    )
+
+    assert remove_historical([event], history) == []
+
+
 def test_history_filter_keeps_a_followup_about_a_product_already_covered() -> None:
     """Same product, new development: the planner is told to run these."""
 

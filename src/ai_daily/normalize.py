@@ -759,10 +759,23 @@ def _historical_text_match(left: str, right: str) -> bool:
     shared = left_tokens & right_tokens
     if len(shared) < 4 or not (_historical_anchors(left) & _historical_anchors(right)):
         return False
+    left_products = title_product_identifiers(left)
+    right_products = title_product_identifiers(right)
+    shared_products = left_products & right_products
     containment = len(shared) / min(len(left_tokens), len(right_tokens))
     if containment >= 0.6:
-        return True
-    shared_products = title_product_identifiers(left) & title_product_identifiers(right)
+        if bool(left_products) == bool(right_products) or shared_products:
+            return True
+        # Exactly one side names a versioned product. Containment against the
+        # shorter text is meant to catch a headline restated inside a longer
+        # write-up, but a short old headline made of brand words is contained
+        # in almost any launch from the same company: on 2026-09-02 "Claude in
+        # Chrome is generally available | Claude by Anthropic" (five tokens)
+        # matched "Anthropic unveils Claude Fable 5.1, which is generally
+        # available…" on claude/anthropic/generally/available and deleted the
+        # day's top story. A version number the other text never mentions is
+        # evidence of a different story, so demand the overlap hold both ways.
+        return len(shared) / max(len(left_tokens), len(right_tokens)) >= 0.6
     return bool(shared_products and len(shared) >= 5 and containment >= 0.45)
 
 

@@ -25,6 +25,7 @@ from ai_daily.sources import (
     PublicNetworkBackend,
     SourceCollectionError,
     _plain_text,
+    _published_from_text,
     _validate_public_dns,
 )
 
@@ -113,6 +114,23 @@ async def test_pipeline_collector_requests_use_browser_user_agent_and_pinned_dns
     assert [item.title for item in items] == ["New model"]
     assert [request.headers["User-Agent"] for request in pinned_requests] == [DEFAULT_USER_AGENT]
     await pipeline.client.aclose()
+
+
+def test_listing_date_is_read_out_of_glued_card_text() -> None:
+    """text_content() joins card fields with no separator.
+
+    anthropic.com/news lists a launch as "AnnouncementsSep 1, 2026Our most
+    advanced…", and the launch page itself carries no date meta, so this text
+    is the only date the item will ever get. With \\b on both sides of the
+    date the first-party Fable 5.1 post came back undated and was rejected.
+    """
+
+    glued = "Introducing Claude Fable 5.1AnnouncementsSep 1, 2026Our most advanced models"
+    assert _published_from_text(glued) == datetime(2026, 9, 1, tzinfo=UTC)
+    assert _published_from_text("Sep 1, 2026AnnouncementsDeveloping safeguards") == datetime(
+        2026, 9, 1, tzinfo=UTC
+    )
+    assert _published_from_text("Aug 27, 20261 is not a year") is None
 
 
 def test_plain_text_accepts_whitespace_only_html() -> None:

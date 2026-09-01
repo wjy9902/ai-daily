@@ -47,6 +47,10 @@ class FailureClass(StrEnum):
     LEAD_UNCORROBORATED = "lead_uncorroborated"
     """A lead story was demoted for lacking first-party or independent support."""
 
+    RUMOR_UNATTRIBUTED = "rumor_unattributed"
+    """A 前瞻与传闻 story was dropped because its copy never named its origin.
+    Recorded, never a downgrade: the issue simply carries one story fewer."""
+
     BUDGET_EXHAUSTED = "budget_exhausted"
     """The day's model budget ran out mid-run."""
 
@@ -71,6 +75,7 @@ FAILURE_CEILING: dict[FailureClass, PublicationLevel] = {
     FailureClass.DRAFT_FAILED: PublicationLevel.L1,
     FailureClass.DETAIL_EVIDENCE_THIN: PublicationLevel.L1,
     FailureClass.LEAD_UNCORROBORATED: PublicationLevel.L1,
+    FailureClass.RUMOR_UNATTRIBUTED: PublicationLevel.L0,
     FailureClass.BUDGET_EXHAUSTED: PublicationLevel.L2A,
     FailureClass.RENDER_FAILED: PublicationLevel.L3,
 }
@@ -86,6 +91,7 @@ FAILURE_REASON: dict[FailureClass, str] = {
     FailureClass.DRAFT_FAILED: "详报起草失败，本期只保留编辑选题",
     FailureClass.DETAIL_EVIDENCE_THIN: "详报证据不足",
     FailureClass.LEAD_UNCORROBORATED: "重点缺少第一方或独立佐证，已降级",
+    FailureClass.RUMOR_UNATTRIBUTED: "传闻条目未注明出处，已移除",
     FailureClass.BUDGET_EXHAUSTED: "当日模型预算用尽",
     FailureClass.RENDER_FAILED: "渲染失败",
 }

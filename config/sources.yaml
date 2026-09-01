@@ -27,7 +27,13 @@ sources:
     display_name: Anthropic
     kind: html_index
     url: https://www.anthropic.com/news
-    link_pattern: '^https://www\.anthropic\.com/news/[^/]+$'
+    # Model launches are not filed under /news/: Fable 5.1 and Mythos 5.1
+    # shipped at /claude-fable-and-mythos-5-1 (2026-09-01) and the index only
+    # linked it from there, so the first-party post never reached us while
+    # eight outlets covering it did. Root-level slugs are otherwise navigation
+    # (/policy, /careers, /claude-corps), which come first in the DOM and would
+    # eat the limit, so a launch slug must carry a version digit.
+    link_pattern: '^https://www\.anthropic\.com/(?:news/[^/]+|claude-[a-z0-9-]*\d[a-z0-9-]*)$'
     tier: A
     channel: official
     limit: 15

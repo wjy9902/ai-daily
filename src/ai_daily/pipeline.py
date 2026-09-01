@@ -23,6 +23,7 @@ from ai_daily.config import AppConfig, Secrets
 from ai_daily.content import (
     draft_selected,
     enforce_lead_corroboration,
+    enforce_rumor_attribution,
     judge_events,
     plan_digest,
     validate_editorial_plan,
@@ -440,6 +441,13 @@ class DailyPipeline:
                 recent_published_items(self.layout.published, target_date),
             )
             write_artifact(run_dir / "editorial-plan.json", editorial_plan)
+            editorial_plan, unattributed = enforce_rumor_attribution(editorial_plan, candidates)
+            if unattributed:
+                # Rumor copy that never says where it came from cannot run,
+                # but that costs the story, not the plan the editor built
+                # around it.
+                tracker.record(FailureClass.RUMOR_UNATTRIBUTED, "; ".join(unattributed))
+                write_artifact(run_dir / "editorial-plan-attributed.json", editorial_plan)
             editorial_plan, uncorroborated = enforce_lead_corroboration(editorial_plan, candidates)
             if uncorroborated:
                 # An uncorroborated story still cannot lead, but it costs that

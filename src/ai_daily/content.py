@@ -477,7 +477,7 @@ def _normalize_plan_copy(plan: EditorialPlan) -> EditorialPlan:
     for selection in plan.selections:
         if selection.category == RUMOR_CATEGORY:
             # Rumor copy is speculative by definition; the attribution
-            # requirement in _validate_factual_copy is its gate instead.
+            # requirement in enforce_rumor_attribution is its gate instead.
             selections.append(selection)
             continue
         headline = _drop_speculative_clauses(selection.headline)
@@ -685,19 +685,58 @@ def _names_its_source(selection: EditorialSelection, event: Event | None) -> boo
     return any(name in copy for name in _source_names(event))
 
 
+def rumor_is_attributed(selection: EditorialSelection, event: Event | None) -> bool:
+    """True when 前瞻与传闻 copy says where the claim came from."""
+
+    return bool(
+        RUMOR_ATTRIBUTION_RE.search(selection.headline)
+        or RUMOR_ATTRIBUTION_RE.search(selection.brief)
+        or _names_its_source(selection, event)
+    )
+
+
+def enforce_rumor_attribution(
+    plan: EditorialPlan, events: list[Event]
+) -> tuple[EditorialPlan, list[str]]:
+    """Drop rumor stories whose copy never names their origin.
+
+    This used to be a validator, and like lead corroboration before it, it cost
+    whole issues: on 2026-09-02 the 05:05 and 07:00 windows both carried the
+    Fable 5.1 launch at the top of the candidate pool, and both fell to L2A
+    because the editor twice wrote a Musk economic forecast under 前瞻与传闻
+    without 据报道 or the outlet's name. One brief the model could not phrase
+    threw away nine details.
+
+    The invariant is unchanged - unattributed rumor copy does not run - but it
+    now costs that story its slot rather than the issue its plan. Returns the
+    adjusted plan and a description of each dropped story.
+    """
+
+    events_by_id = {event.event_id: event for event in events}
+    kept: list[EditorialSelection] = []
+    dropped: list[str] = []
+    for selection in plan.selections:
+        if selection.category == RUMOR_CATEGORY and not rumor_is_attributed(
+            selection, events_by_id.get(selection.event_id)
+        ):
+            dropped.append(f"{selection.event_id} ({selection.headline[:30]})")
+            continue
+        kept.append(selection)
+    if not dropped:
+        return plan, []
+    adjusted = plan.model_copy(
+        update={
+            "selections": kept,
+            "today_highlight": _deterministic_highlight(kept) or plan.today_highlight,
+        }
+    )
+    return _drop_unselected_viewpoints(adjusted), dropped
+
+
 def _validate_factual_copy(plan: EditorialPlan, events_by_id: dict[str, Event]) -> None:
     for selection in plan.selections:
+        # Rumor attribution is enforced after planning by enforce_rumor_attribution.
         is_rumor = selection.category == RUMOR_CATEGORY
-        if is_rumor and not (
-            RUMOR_ATTRIBUTION_RE.search(selection.headline)
-            or RUMOR_ATTRIBUTION_RE.search(selection.brief)
-            or _names_its_source(selection, events_by_id.get(selection.event_id))
-        ):
-            raise ValueError(
-                "editorial plan rumor item lacks attribution: "
-                f"event_id={selection.event_id}; 前瞻与传闻 copy must name its "
-                "origin (据报道/爆料称/消息称/知情人士 etc.)"
-            )
         for field, value in (("headline", selection.headline), ("brief", selection.brief)):
             if not value.strip():
                 raise ValueError(

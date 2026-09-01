@@ -16,6 +16,7 @@ from ai_daily.content import (
     JudgeBatch,
     draft_selected,
     enforce_lead_corroboration,
+    enforce_rumor_attribution,
     judge_events,
     lead_is_corroborated,
     normalize_quote_text,
@@ -1257,12 +1258,41 @@ def _rumor_plan(rumor_index: int, headline: str, brief: str) -> EditorialPlan:
     return value.model_copy(update={"selections": selections})
 
 
-def test_rumor_copy_requires_attribution() -> None:
+def test_unattributed_rumor_copy_is_dropped_not_rejected() -> None:
+    """The story loses its slot; the issue does not lose its plan.
+
+    As a validator this cost two windows on 2026-09-02: the editor twice wrote
+    a Musk forecast under 前瞻与传闻 without naming its origin, and both runs
+    fell to L2A with the day's top story sitting unpublished in the candidate
+    pool.
+    """
+
     events = [numbered_event(index) for index in range(17)]
     plan_value = _rumor_plan(4, "新模型即将进入灰度测试", "社区里都在讨论这次发布。")
+    dropped_id = plan_value.selections[4].event_id
 
-    with pytest.raises(ValueError, match="lacks attribution"):
-        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+    validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+    adjusted, dropped = enforce_rumor_attribution(plan_value, events)
+
+    assert dropped and dropped_id in dropped[0]
+    assert dropped_id not in {selection.event_id for selection in adjusted.selections}
+    assert len(adjusted.selections) == len(plan_value.selections) - 1
+    selected_evidence = {
+        evidence_id for selection in adjusted.selections for evidence_id in selection.evidence_ids
+    }
+    assert all(
+        set(insight.evidence_ids) <= selected_evidence for insight in adjusted.editor_viewpoint
+    )
+
+
+def test_attributed_rumor_copy_is_left_alone() -> None:
+    events = [numbered_event(index) for index in range(17)]
+    plan_value = _rumor_plan(4, "爆料称新模型即将进入灰度测试", "据报道，社区已看到入口。")
+
+    adjusted, dropped = enforce_rumor_attribution(plan_value, events)
+
+    assert dropped == []
+    assert adjusted == plan_value
 
 
 async def test_planner_is_shown_what_already_ran() -> None:
@@ -1329,8 +1359,8 @@ def test_rumor_copy_naming_an_unrelated_outlet_is_still_unattributed() -> None:
     events = [numbered_event(index) for index in range(17)]
     plan_value = _rumor_plan(4, "Nintendo 发现新模型进入灰度测试", "后台出现了新的模型入口。")
 
-    with pytest.raises(ValueError, match="lacks attribution"):
-        validate_editorial_plan(plan_value, events, load_config(Path("config")).pipeline)
+    _, dropped = enforce_rumor_attribution(plan_value, events)
+    assert dropped and plan_value.selections[4].event_id in dropped[0]
 
 
 def test_rumor_cannot_lead() -> None:
