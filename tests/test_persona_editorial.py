@@ -3381,6 +3381,59 @@ async def test_resume_rejects_baselines_without_persisted_evidence(tmp_path: Pat
     await _assert_resume_held(fixture, source_run, "without evidence artifacts")
 
 
+class _MismatchedFinalizerGateway(_FinalizerGateway):
+    """Resolves a blocker the critique never raised, and skips the one it did."""
+
+    async def generate(self, role: str, output_type: Any, *args: Any, **kwargs: Any) -> Any:
+        if role == "persona_finalizer":
+            validator = kwargs["validator"]
+            validator(
+                FinalizerOutput(
+                    draft=self.after,
+                    resolutions=[
+                        FinalizerResolution(
+                            blocker_id="blocker-invented",
+                            resolution="收紧判断并保留观察边界。",
+                            changed_fields=["thesis_block"],
+                        )
+                    ],
+                )
+            )
+        return await super().generate(role, output_type, *args, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_finalizer_rejection_names_the_blockers_it_got_wrong(tmp_path: Path) -> None:
+    """The retry hands this text back to the model, so it has to be actionable.
+
+    Saying only that the rule was broken left the model re-emitting the same
+    set until it ran out of output tokens.
+    """
+
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    snapshot = _snapshot(layout)
+    draft = _edition_draft(snapshot.publication_marker)
+    gateway = _MismatchedFinalizerGateway(draft, second_round_blocker=False)
+    pipeline = PersonaPipeline(
+        load_config(Path("config")),
+        Secrets(),
+        layout,
+        Path.cwd(),
+        TARGET,
+        gateway=cast(Any, gateway),
+    )
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    with pytest.raises(ValueError) as caught:
+        await pipeline._review(snapshot, draft, _scope(), run_dir)
+
+    message = str(caught.value)
+    assert "never resolved: ['blocker-round-1']" in message
+    assert "not in the critique: ['blocker-invented']" in message
+
+
 @pytest.mark.asyncio
 async def test_blocker_runs_finalizer_and_clean_second_critic(tmp_path: Path) -> None:
     layout = SiteLayout(tmp_path / "site")

@@ -488,9 +488,24 @@ class PersonaPipeline:
             )
             verify_edition(normalized.draft, snapshot, scope, self.persona)
             expected = {item.blocker_id for item in first.open_blockers}
-            actual = {item.blocker_id for item in normalized.resolutions}
-            if actual != expected or len(actual) != len(normalized.resolutions):
-                raise ValueError("finalizer must resolve each blocker exactly once")
+            resolved = [item.blocker_id for item in normalized.resolutions]
+            missing = sorted(expected - set(resolved))
+            unknown = sorted(set(resolved) - expected)
+            repeated = sorted({item for item in resolved if resolved.count(item) > 1})
+            if missing or unknown or repeated:
+                # The retry hands this text back to the model, so it has to name
+                # the discrepancy. Saying only that the rule was broken left the
+                # model guessing and it burned 75k output tokens on 2026-09-01
+                # re-emitting the same set.
+                faults = [
+                    f"never resolved: {missing}" if missing else "",
+                    f"not in the critique: {unknown}" if unknown else "",
+                    f"resolved more than once: {repeated}" if repeated else "",
+                ]
+                raise ValueError(
+                    "finalizer must resolve each blocker exactly once - "
+                    + "; ".join(fault for fault in faults if fault)
+                )
             normalized = _normalize_finalizer_changed_fields(draft, normalized)
             _validate_finalizer_changes(draft, normalized)
             return normalized
