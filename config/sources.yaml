@@ -147,6 +147,84 @@ sources:
     channel: community
     region: china
     limit: 10
+  # Same corroboration-only role for the other Chinese labs. Weight releases are
+  # the one thing their 公众号 carries that has a first-party home outside WeChat,
+  # and WeChat is the ingestion path that breaks: on 2026-09-01 an expired
+  # credential cost us DeepSeek open-sourcing V4-Flash-Vision-Exp, which the
+  # benchmark digest led with and which was on Hugging Face at 02:50 the whole
+  # time. Product and pricing announcements still only exist on WeChat.
+  - name: deepseek-huggingface-models
+    display_name: DeepSeek 官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: deepseek-ai
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: zhipu-huggingface-models
+    display_name: 智谱官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: zai-org
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: kimi-huggingface-models
+    display_name: 月之暗面官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: moonshotai
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: minimax-huggingface-models
+    display_name: MiniMax 官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: MiniMaxAI
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: stepfun-huggingface-models
+    display_name: 阶跃星辰官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: stepfun-ai
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: seed-huggingface-models
+    display_name: 字节跳动 Seed 官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: ByteDance-Seed
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: hunyuan-huggingface-models
+    display_name: 腾讯官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: tencent
+    tier: C
+    channel: community
+    region: china
+    limit: 10
+  - name: wenxin-huggingface-models
+    display_name: 百度官方模型库
+    kind: huggingface_models
+    url: https://huggingface.co/api/models
+    namespace: baidu
+    tier: C
+    channel: community
+    region: china
+    limit: 10
   - name: mistral-news
     display_name: Mistral AI
     kind: rss
