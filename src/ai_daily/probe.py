@@ -10,6 +10,13 @@ from ai_daily.normalize import is_ai_related
 from ai_daily.pipeline import collection_window, filter_fresh_items
 from ai_daily.sources import Collector
 
+#: How long a source may go without publishing before the probe calls it stale.
+#: Deliberately far wider than the 36-hour collection window: a lab blog that
+#: posts monthly is quiet, not broken, and only a feed frozen for weeks is
+#: telling us something. Fourteen X feeds sat on the previous year's posts
+#: answering ``ok``; at this threshold they would have been obvious on day one.
+STALE_AFTER_DAYS = 30
+
 
 async def probe_sources(
     sources: list[SourceConfig],
@@ -59,6 +66,29 @@ def _source_report(
         "in_window": len(fresh),
         "rejections": rejections,
         "top_rejection": ranked[0][0] if ranked[0][1] else None,
+        **_freshness(items, run_time),
+    }
+
+
+def _freshness(items: list[RawItem], run_time: datetime) -> dict[str, object]:
+    """Report how long ago this source last published anything.
+
+    A source that answers but has not published in weeks is dead in a way
+    ``status`` cannot express, so say it separately rather than folding it into
+    the status and tripping the degradation tracker on a merely quiet feed.
+    """
+
+    newest = max(
+        (item.published_at for item in items if item.published_at is not None),
+        default=None,
+    )
+    if newest is None:
+        return {"newest_item_at": None, "newest_item_age_days": None, "stale": None}
+    age_days = (run_time - newest).total_seconds() / 86400
+    return {
+        "newest_item_at": newest.isoformat(),
+        "newest_item_age_days": round(age_days, 1),
+        "stale": age_days > STALE_AFTER_DAYS,
     }
 
 

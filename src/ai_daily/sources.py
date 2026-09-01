@@ -531,6 +531,10 @@ class Collector:
                     if isinstance(result, PartialSourceResult)
                     else None
                 ),
+                newest_item_at=max(
+                    (item.published_at for item in items if item.published_at is not None),
+                    default=None,
+                ),
             )
             return items, health
         except SourceNotModified:

@@ -123,6 +123,15 @@ class SourceHealth(StrictModel):
     item_count: int = Field(ge=0)
     latency_ms: int = Field(ge=0)
     error: str | None = None
+    newest_item_at: datetime | None = None
+    """When the newest item this source offered was published.
+
+    ``status`` says the source answered; this says whether it is still
+    publishing. A feed stuck on last year's posts answers ``ok`` forever and
+    contributes nothing, because every item it carries fails the freshness
+    window - which is how an outdated RSSHub image hid fourteen dead X feeds
+    for days. ``None`` means the source offered nothing datable.
+    """
 
 
 class Event(StrictModel):
