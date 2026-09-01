@@ -1,0 +1,16 @@
+[Unit]
+Description=Renew the we-mp-rss WeRead session cookie before it expires
+
+[Timer]
+# The credential that expired on 2026-09-01 had lasted five days, so renewing
+# six-hourly leaves twenty attempts before a lapse rather than one. It runs
+# well before 04:20, when the daily collects: a session renewed at 00:00 is
+# what the first window of the day uses.
+OnCalendar=00,06,12,18:05
+Persistent=true
+AccuracySec=1m
+RandomizedDelaySec=60s
+Unit=weread-session-renew.service
+
+[Install]
+WantedBy=timers.target
