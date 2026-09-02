@@ -24,9 +24,16 @@ ExecStart=/www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily daily
 # a GitHub outage is not a reason to call the morning a loss.
 ExecStartPost=-/www/wwwroot/ai-daily/app/ops/backup.sh
 
-# A run that has not finished in 30 minutes is stuck, not slow: collection is
+# A run that has not finished in 45 minutes is stuck, not slow: collection is
 # bounded by per-source timeouts and the model budget caps the rest.
-TimeoutStartSec=1800
+#
+# 45, not 30: run time scales with the number of detailed stories, and the
+# planner may pick lead_max + follow_max = 13 of them. 2026-09-02 07:56 did -
+# judge 5.9 min, plan 11.9, draft still going at 30 - and was killed with the
+# day's lead story drafted and unpublished. Normal issues (5-9 details) take
+# 15-25 minutes; the ceiling now leaves room for the largest issue the config
+# allows, and nothing else.
+TimeoutStartSec=2700
 
 # Memory ceiling. This box also runs an LLM gateway and a tunnel endpoint, so
 # the digest must not be able to starve them. Values come from measuring a real
