@@ -2,9 +2,9 @@
 # Deploy a pinned revision of the digest to the server.
 #
 # A bare `git pull` is not a deployment: it can change code while a run is in
-# flight, and it leaves dependencies stale. This takes the publication lock,
-# moves to an explicit revision, syncs the frozen lockfile and refuses to
-# finish unless the configuration still loads.
+# flight, and it leaves dependencies stale. This takes both run locks, moves to
+# an explicit revision, syncs the frozen lockfile and refuses to finish unless
+# the configuration still loads.
 #
 # Usage:  ops/deploy.sh <git-ref>
 #         ops/deploy.sh --rollback        # back to the previously deployed ref
@@ -14,6 +14,7 @@ APP_DIR=${AI_DAILY_APP_DIR:-/www/wwwroot/ai-daily/app}
 SITE_ROOT=${AI_DAILY_SITE_ROOT:-/www/wwwroot/ai-daily}
 UV=${UV_BIN:-/home/ai-daily/.local/bin/uv}
 LOCK_FILE="$SITE_ROOT/.publish.lock"
+DAILY_RUN_LOCK_FILE="$SITE_ROOT/.daily-run.lock"
 DEPLOYED_REF_FILE="$SITE_ROOT/.deployed-ref"
 PREVIOUS_REF_FILE="$SITE_ROOT/.previous-ref"
 
@@ -33,10 +34,18 @@ else
     TARGET_REF="$1"
 fi
 
-# Hold the same lock the publisher uses, so a deploy can never land mid-run.
+# Hold both locks the runs use, so a deploy can never land mid-run. Since the
+# publish lock was narrowed to the release transaction it no longer means "a
+# daily is in flight" on its own; taking it alone would let a deploy swap the
+# code out from under a run that is still gathering.
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     echo "a publication run holds the lock; deploy aborted" >&2
+    exit 1
+fi
+exec 8>"$DAILY_RUN_LOCK_FILE"
+if ! flock -n 8; then
+    echo "a daily run is in progress; deploy aborted" >&2
     exit 1
 fi
 
