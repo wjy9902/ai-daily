@@ -255,9 +255,9 @@ def test_relative_papers_artifacts_live_under_writable_site_root(tmp_path: Path)
     assert pipeline.artifacts_dir == layout.root / "artifacts"
 
 
-@pytest.mark.parametrize("nested", [True, False])
+@pytest.mark.parametrize("shape", ["nested-current", "nested-legacy", "flat-legacy"])
 async def test_hf_payload_shapes_and_missing_fields_are_defensive(
-    nested: bool, monkeypatch: pytest.MonkeyPatch
+    shape: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def allow_test_dns(value: str) -> None:
         del value
@@ -271,10 +271,14 @@ async def test_hf_payload_shapes_and_missing_fields_are_defensive(
         "organization": {"name": "Example Lab"},
         "githubRepo": "https://github.com/example/repo",
         "githubStars": 12,
-        "numComments": 3,
         "authors": [{"name": "Alice"}],
     }
-    value = {"paper": paper, "upvotes": 7} if nested else {**paper, "numUpvotes": 7}
+    if shape == "nested-current":
+        value = {"paper": {**paper, "upvotes": 7}, "numComments": 3}
+    elif shape == "nested-legacy":
+        value = {"paper": {**paper, "numComments": 3}, "upvotes": 7}
+    else:
+        value = {**paper, "numUpvotes": 7, "numComments": 3}
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=[value]))
     source = SourceConfig(
         name="papers-hf-daily",
@@ -285,12 +289,15 @@ async def test_hf_payload_shapes_and_missing_fields_are_defensive(
     items, health = await Collector(transport).collect([source])
     assert health[0].status == "ok"
     assert items[0].metrics["upvotes"] == 7
+    assert items[0].metrics["comments"] == 3
     assert items[0].metrics["organization"] == "Example Lab"
     assert items[0].author == "Alice"
 
     minimal = {"id": "2609.00002", "title": "Minimal", "publishedAt": "2026-09-01"}
     collector = Collector(httpx.MockTransport(lambda request: httpx.Response(200, json=[minimal])))
     items, _ = await collector.collect([source])
+    assert items[0].metrics["upvotes"] == 0
+    assert items[0].metrics["comments"] == 0
     assert items[0].metrics["github_stars"] == 0
     assert items[0].metrics["organization"] == ""
 
