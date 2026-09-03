@@ -67,9 +67,10 @@ score = 3.0 * hf_listed
 子串匹配，全小写比较）。已知偏差：HF 上榜与名校机构相关，存在声誉叠加——接受，
 理由见 §1 原则 1；如里程碑 1 校准发现名单外好论文被系统性压制，下调 `org_tier` 权重。
 
-**字段防御**：HF payload 的 `upvotes`（外层）、`githubRepo`/`githubStars`/`organization`/
-`numComments`（`paper` 内层）均用 `.get()` 取值、缺省为 0/None，任何字段缺失只影响
-该项得分，不抛错。不做独立的 GitHub API 查询（star 数只用 HF 给的，可能滞后，接受）。
+**字段防御**：HF 当前 payload 的 `upvotes` 位于 `paper` 内层、`numComments` 位于外层，
+两者都兼容旧响应的另一层位置及 `numUpvotes` 旧字段名；`githubRepo`/`githubStars`/
+`organization` 取 `paper` 内层。字段均用 `.get()` 取值、缺省为 0/None，任何字段缺失
+只影响该项得分，不抛错。不做独立的 GitHub API 查询（star 数只用 HF 给的，可能滞后，接受）。
 
 ### 3.2 交叉信号的取数与匹配规则
 

@@ -798,6 +798,12 @@ class Collector:
             title = paper.get("title")
             if not paper_id or not title:
                 continue
+            upvotes = paper.get("upvotes")
+            if "upvotes" not in paper:
+                upvotes = value.get("upvotes", value.get("numUpvotes", 0))
+            comments = paper.get("numComments")
+            if "numComments" not in paper:
+                comments = value.get("numComments", 0)
             raw_organization = paper.get("organization")
             organization = (
                 raw_organization.get("name")
@@ -822,11 +828,11 @@ class Collector:
                     )
                     or None,
                     metrics={
-                        "upvotes": value.get("upvotes", value.get("numUpvotes", 0)) or 0,
+                        "upvotes": upvotes or 0,
                         "organization": organization or "",
                         "github_repo": paper.get("githubRepo") or "",
                         "github_stars": paper.get("githubStars") or 0,
-                        "comments": paper.get("numComments") or 0,
+                        "comments": comments or 0,
                     },
                 )
             )
