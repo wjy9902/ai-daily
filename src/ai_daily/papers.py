@@ -43,6 +43,11 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 ARXIV_ID_RE = re.compile(r"(?<!\d)(\d{4}\.\d{4,5})(?:v\d+)?")
 SUMMARY_NUMBER_RE = re.compile(rf"\d{{3,}}|[%{chr(0xFF05)}]")
 TOPIC_BATCH_SIZE = 20
+# Deep reads run one at a time and each can take minutes, so the loop needs a
+# wall-clock stop. Named rather than inline because the systemd ceiling has to
+# be large enough to contain it; ops/systemd/ai-daily-papers.service and the
+# contract test in tests/test_papers.py both depend on this number.
+DEEP_READ_DEADLINE_SECONDS = 40 * 60
 
 
 def arxiv_id(value: str) -> str | None:
@@ -443,7 +448,7 @@ async def build_papers_publication(
     ids = [item.arxiv_id for item in selected if item.arxiv_id]
     full = await fetch_full_papers(collector, ids)
     cards: list[PaperCard] = []
-    deadline = asyncio.get_running_loop().time() + 40 * 60
+    deadline = asyncio.get_running_loop().time() + DEEP_READ_DEADLINE_SECONDS
     for index, candidate in enumerate(selected):
         document = full.get(candidate.arxiv_id or "")
         reason = document.failure if document else "paper has no arXiv ID"

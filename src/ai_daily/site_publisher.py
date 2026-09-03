@@ -102,6 +102,10 @@ class SiteLayout:
     def lock_file(self) -> Path:
         return self.root / ".publish.lock"
 
+    @property
+    def daily_run_file(self) -> Path:
+        return self.root / ".daily-run.lock"
+
     def ensure(self) -> None:
         for path in (
             self.published,
@@ -145,11 +149,35 @@ def _exclusive_lock(path: Path, refusal_message: str) -> Iterator[None]:
 
 @contextmanager
 def publication_lock(layout: SiteLayout) -> Iterator[None]:
-    """Serialise publishing against a concurrent timer run or a manual run."""
+    """Serialise publishing against a concurrent timer run or a manual run.
+
+    Hold this only across the release transaction: read the day's record,
+    render, commit, flip ``current``. Every publisher competes for it, so its
+    duration is the ceiling on how long the others must wait. The papers run
+    waits at most ten minutes for it; a holder that outlasts that starves the
+    papers issue, which is exactly what a whole-run scope used to do.
+    """
 
     with _exclusive_lock(
         layout.lock_file,
         "another publication run holds the lock",
+    ):
+        yield
+
+
+@contextmanager
+def daily_run_lock(layout: SiteLayout) -> Iterator[None]:
+    """Stop a second daily run from spending money alongside the first.
+
+    Separate from ``publication_lock`` on purpose. The daily needs a whole-run
+    guard (a concurrent run would gather and draft a whole issue before the
+    upgrade guard threw it away), but that guard must not be the same lock the
+    papers publisher waits on, or a 25-minute daily blocks a 3-second release.
+    """
+
+    with _exclusive_lock(
+        layout.daily_run_file,
+        "another daily run is already in progress",
     ):
         yield
 

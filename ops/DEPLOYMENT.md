@@ -31,10 +31,34 @@
 ├── budget/       <date>.json 日报台账；papers-<date>.json 论文独立台账
 ```
 
-论文页由独立的 `ai-daily-papers.service` / `.timer` 在 06:10 运行，最长 3600 秒。
+论文页由独立的 `ai-daily-papers.service` / `.timer` 在 06:10 运行，最长 7200 秒。
 部署时把两个 unit 复制到 `/etc/systemd/system/`，执行 `systemctl daemon-reload` 后启用
-`ai-daily-papers.timer`。它只在最终 release 激活阶段争用 `.publish.lock`，采集和深读阶段
-不阻塞日报。`S2_API_KEY` 是可选增强；未配置时当前实现不调用 Semantic Scholar。
+`ai-daily-papers.timer`。`S2_API_KEY` 是可选增强；未配置时当前实现不调用 Semantic Scholar。
+
+**两把锁，别再混用**（2026-09-03 教训）：
+
+- `.publish.lock` 是日报和论文共用的**发布临界区**，只包住渲染、写记录、翻 `current`，
+  几秒钟。论文最多等它 10 分钟（10 次 × 60s）。
+- `.daily-run.lock` 只属于日报，包住整轮运行，作用是让第二个日报进程在花钱之前就失败。
+
+这两把锁曾经是同一把：日报整轮持有 `.publish.lock` 23–28 分钟，论文的 10 分钟等待窗口
+永远等不到，09-02 和 09-03 各丢了一期已经建好的论文刊。**任何新增的发布者都只能碰
+`.publish.lock`，且只在临界区里碰。**
+
+**超时预算怎么算的**：选片约 15 分钟 + 深读循环自带的 40 分钟 deadline
+（`papers.DEEP_READ_DEADLINE_SECONDS`）+ 抢锁最多 10 分钟 = 65 分钟。原来的
+`TimeoutStartSec=3600` 装不下，深读一旦用满自己的预算就必被 systemd 杀掉。改动这三个
+数字中的任何一个，都要重新对账（`tests/test_papers.py` 里有守这条的契约测试）。
+
+**一期建好但没发出去怎么补**：`publication.json` 留在
+`artifacts/<date>/papers-<run>/` 下，直接补发，不重跑不重复花钱：
+
+```
+sudo -u ai-daily ... uv run --frozen ai-daily papers --mode publish \
+    --publish-artifact /www/wwwroot/ai-daily/artifacts/<date>/papers-<run>/publication.json
+```
+
+marker 校验不过的产物会被拒绝，不会发出去。
 
 **工具链为什么不在 `/home`**：unit 开着 `ProtectHome=yes`。这个进程解析敌意网页内容，
 同机还存着别的服务的凭证，没有任何理由看到 home 目录。把 uv、Python、cache 和 SSH 身份

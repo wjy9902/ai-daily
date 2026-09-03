@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -11,9 +13,12 @@ import httpx
 import pytest
 from pydantic import HttpUrl
 
+from ai_daily import cli
 from ai_daily.budget import BudgetLedger, BudgetStage
+from ai_daily.cli import build_parser
 from ai_daily.models import BudgetConfig, RawItem, SourceConfig, SourceTier
 from ai_daily.papers import (
+    DEEP_READ_DEADLINE_SECONDS,
     PapersPipeline,
     apply_cross_mentions,
     arxiv_id,
@@ -531,7 +536,12 @@ def test_corrupt_historical_papers_record_is_not_swallowed(tmp_path: Path) -> No
 def test_systemd_contract_and_cli_have_no_papers_date_option() -> None:
     service = Path("ops/systemd/ai-daily-papers.service").read_text(encoding="utf-8")
     timer = Path("ops/systemd/ai-daily-papers.timer").read_text(encoding="utf-8")
-    assert "TimeoutStartSec=3600" in service
+    # The ceiling has to clear what the run can legitimately spend: selection,
+    # then the deep-read loop's own 40-minute deadline, then up to ten minutes
+    # waiting for the publication lock. At 3600 it did not, and 2026-09-03 was
+    # killed seven minutes after its issue was finished and signed.
+    timeout = int(re.search(r"TimeoutStartSec=(\d+)", service).group(1))  # type: ignore[union-attr]
+    assert timeout >= 15 * 60 + DEEP_READ_DEADLINE_SECONDS + 10 * 60
     assert "ai-daily papers --mode publish" in service
     assert "OnCalendar=*-*-* 06:10:00" in timer
     from ai_daily.cli import build_parser
@@ -539,3 +549,56 @@ def test_systemd_contract_and_cli_have_no_papers_date_option() -> None:
     args = build_parser().parse_args(["papers", "--mode", "dry-run"])
     assert args.command == "papers"
     assert not hasattr(args, "date")
+
+
+async def test_a_built_issue_can_be_published_after_the_run_that_built_it_died(
+    tmp_path: Path,
+) -> None:
+    """2026-09-03 finished its deep reads and was killed before releasing them.
+
+    Rebuilding costs an hour and real money, so the artifact on disk has to be
+    publishable on its own, with no gateway and no second pass over arXiv.
+    """
+
+    layout = SiteLayout(tmp_path / "site")
+    publish_site(layout, factories.publication(), factories.SITE)
+    publication = papers_publication()
+    artifact = tmp_path / "publication.json"
+    artifact.write_text(publication.model_dump_json(indent=2), encoding="utf-8")
+    args = build_parser().parse_args(
+        ["papers", "--mode", "publish", "--publish-artifact", str(artifact)]
+    )
+    args.site_root = str(layout.root)
+
+    assert await cli._papers(args) == 0
+
+    record = layout.papers_publication_path(publication.target_date)
+    assert record.exists()
+    assert load_papers_publication(record.read_text(encoding="utf-8")).marker == publication.marker
+
+
+async def test_a_tampered_artifact_is_refused_rather_than_published(tmp_path: Path) -> None:
+    layout = SiteLayout(tmp_path / "site")
+    publish_site(layout, factories.publication(), factories.SITE)
+    publication = papers_publication()
+    artifact = tmp_path / "publication.json"
+    artifact.write_text(
+        publication.model_dump_json(indent=2).replace("Candidate paper 1", "Rewritten title"),
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(
+        ["papers", "--mode", "publish", "--publish-artifact", str(artifact)]
+    )
+    args.site_root = str(layout.root)
+
+    with pytest.raises(ValueError, match="marker"):
+        await cli._papers(args)
+    assert not layout.papers_publication_path(publication.target_date).exists()
+
+
+def test_publishing_an_artifact_is_not_offered_as_a_dry_run() -> None:
+    args = build_parser().parse_args(
+        ["papers", "--mode", "dry-run", "--publish-artifact", "publication.json"]
+    )
+    with pytest.raises(SystemExit, match="--mode publish"):
+        asyncio.run(cli._papers(args))

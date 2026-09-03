@@ -16,8 +16,13 @@ from ai_daily.benchmark import benchmark_models
 from ai_daily.config import AppConfig, Secrets, load_config
 from ai_daily.papers import PapersPipeline, build_papers_publication, publication_gate
 from ai_daily.papers_config import load_papers_config
-from ai_daily.papers_models import PaperCandidate, PapersRunArtifact
-from ai_daily.pipeline import DailyPipeline
+from ai_daily.papers_models import (
+    PaperCandidate,
+    PapersPublication,
+    PapersRunArtifact,
+    load_papers_publication,
+)
+from ai_daily.pipeline import DailyPipeline, RunOutcome
 from ai_daily.probe import probe_sources
 from ai_daily.publication import LEVEL_NOTICE, DailyPublication, PublicationLevel
 from ai_daily.render import render_fallback
@@ -27,6 +32,7 @@ from ai_daily.site_publisher import (
     SiteLayout,
     activate_release,
     build_archive,
+    daily_run_lock,
     hold_previous_release,
     publication_lock,
     publish_papers_site,
@@ -104,7 +110,12 @@ async def _run(args: argparse.Namespace) -> int:
     target = _target_date(args.date)
     publish = args.mode == "publish"
 
-    with publication_lock(layout):
+    # Two locks, two jobs. ``daily_run_lock`` spans the whole run so a second
+    # daily fails before it spends anything. ``publication_lock`` is shared
+    # with the papers publisher and is held only for the release transaction
+    # below: gathering and drafting under it starved the papers issue for a
+    # full 25 minutes, longer than the ten it is willing to wait.
+    with daily_run_lock(layout):
         async with httpx.AsyncClient(follow_redirects=True) as client:
             pipeline = DailyPipeline(config, secrets, client=client, layout=layout)
             outcome = await pipeline.run(target, publish=publish)
@@ -131,36 +142,48 @@ async def _run(args: argparse.Namespace) -> int:
             )
             return 0
 
-        if outcome.publication.level is PublicationLevel.L3:
-            release = hold_previous_release(layout, LEVEL_NOTICE[PublicationLevel.L3] or "")
-            status["action"] = "held_previous_release"
-            status["release"] = str(release)
-            write_status(layout, _status_payload(layout, outcome.publication, status))
-            _emit({"level": "L3", "action": "held_previous_release"})
-            return 1
+        with publication_lock(layout):
+            return _publish_daily(layout, outcome, status, _site_base_url(config, secrets))
 
-        try:
-            # publish_site owns the upgrade guard: a retry window may replace
-            # today's issue only with a better one, never an equal or poorer.
-            release = publish_site(layout, outcome.publication, _site_base_url(config, secrets))
-        except PublicationRefused as error:
-            status["action"] = "refused"
-            status["reason"] = str(error)
-            write_status(layout, _status_payload(layout, outcome.publication, status))
-            _emit({"level": outcome.publication.level.value, "refused": str(error)})
-            return 0
 
-        status["action"] = "published"
+def _publish_daily(
+    layout: SiteLayout,
+    outcome: RunOutcome,
+    status: dict[str, Any],
+    site_base_url: str,
+) -> int:
+    """The release transaction. The caller holds ``publication_lock``."""
+
+    if outcome.publication.level is PublicationLevel.L3:
+        release = hold_previous_release(layout, LEVEL_NOTICE[PublicationLevel.L3] or "")
+        status["action"] = "held_previous_release"
         status["release"] = str(release)
         write_status(layout, _status_payload(layout, outcome.publication, status))
-        _emit(
-            {
-                "level": outcome.publication.level.value,
-                "marker": outcome.publication.marker,
-                "release": str(release),
-            }
-        )
+        _emit({"level": "L3", "action": "held_previous_release"})
+        return 1
+
+    try:
+        # publish_site owns the upgrade guard: a retry window may replace
+        # today's issue only with a better one, never an equal or poorer.
+        release = publish_site(layout, outcome.publication, site_base_url)
+    except PublicationRefused as error:
+        status["action"] = "refused"
+        status["reason"] = str(error)
+        write_status(layout, _status_payload(layout, outcome.publication, status))
+        _emit({"level": outcome.publication.level.value, "refused": str(error)})
         return 0
+
+    status["action"] = "published"
+    status["release"] = str(release)
+    write_status(layout, _status_payload(layout, outcome.publication, status))
+    _emit(
+        {
+            "level": outcome.publication.level.value,
+            "marker": outcome.publication.marker,
+            "release": str(release),
+        }
+    )
+    return 0
 
 
 async def _daily(args: argparse.Namespace) -> int:
@@ -285,6 +308,12 @@ async def _papers(args: argparse.Namespace) -> int:
     config = load_papers_config(config_dir)
     layout = _layout(args)
     layout.ensure()
+    if args.publish_artifact is not None:
+        if args.mode != "publish":
+            raise SystemExit("--publish-artifact only makes sense with --mode publish")
+        return await _publish_papers_artifact(
+            args.publish_artifact, layout, str(config.site_base_url)
+        )
     target = datetime.now(BEIJING).date()
     pipeline = PapersPipeline(config, config_dir, layout, Secrets())
     try:
@@ -336,14 +365,40 @@ async def _publish_selected_papers(
     publication = await build_papers_publication(
         target, selected, pipeline.collector, pipeline.gateway
     )
-    write_artifact(run_dir / "publication.json", publication)
+    artifact_path = run_dir / "publication.json"
+    write_artifact(artifact_path, publication)
+    return await _release_papers(publication, layout, site_base_url, artifact_path)
+
+
+async def _publish_papers_artifact(
+    artifact_path: Path, layout: SiteLayout, site_base_url: str
+) -> int:
+    """Release an issue an earlier run built but never got to publish.
+
+    Deep-reading a day costs real money and the better part of an hour. When
+    the release step loses (a busy lock, a systemd timeout), the finished
+    publication is still on disk; this republishes it without paying twice.
+    The marker check inside ``load_papers_publication`` refuses an artifact
+    whose content no longer matches what was signed.
+    """
+
+    publication = load_papers_publication(artifact_path.read_text(encoding="utf-8"))
+    return await _release_papers(publication, layout, site_base_url, artifact_path)
+
+
+async def _release_papers(
+    publication: PapersPublication,
+    layout: SiteLayout,
+    site_base_url: str,
+    artifact_path: Path,
+) -> int:
     accepted, reason = publication_gate(publication)
     if not accepted:
         _emit(
             {
                 "action": "held_previous_release",
                 "reason": reason,
-                "artifact": str(run_dir / "publication.json"),
+                "artifact": str(artifact_path),
             }
         )
         return 1
@@ -412,6 +467,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     papers = subparsers.add_parser("papers", help="select and deep-read today's papers")
     papers.add_argument("--mode", choices=("dry-run", "publish"), required=True)
+    papers.add_argument(
+        "--publish-artifact",
+        type=Path,
+        help="publish a publication.json an earlier run built but never released",
+    )
 
     benchmark = subparsers.add_parser("benchmark-models")
     benchmark.add_argument("--dataset", type=Path, required=True)
