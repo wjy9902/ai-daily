@@ -10,9 +10,15 @@ import factories
 import pytest
 
 from ai_daily import cli
+from ai_daily.degradation import DegradationTracker
+from ai_daily.models import RunArtifact
+from ai_daily.pipeline import RunOutcome
 from ai_daily.site_publisher import (
+    PublicationRefused,
     SiteLayout,
     build_archive,
+    daily_run_lock,
+    publication_lock,
     publish_site,
     recent_publications,
 )
@@ -91,3 +97,86 @@ def test_the_site_root_comes_from_the_flag_then_the_environment(
 
     monkeypatch.delenv("AI_DAILY_SITE_ROOT")
     assert cli._layout(SimpleNamespace(site_root=None)) == SiteLayout(Path.cwd() / "site")
+
+
+# ------------------------------------------------- lock scope during a run
+
+
+class ProbingPipeline:
+    """A stand-in daily pipeline that records who holds the publication lock.
+
+    The bug this guards against: the daily used to hold ``publication_lock``
+    across gathering and drafting, 23 to 28 minutes in production. The papers
+    publisher waits ten for that lock, so it could never win, and 2026-09-02
+    and 2026-09-03 both lost a finished issue to it.
+    """
+
+    publish_lock_was_free: bool | None = None
+
+    def __init__(self, *args: object, layout: SiteLayout, **kwargs: object) -> None:
+        del args, kwargs
+        self._layout = layout
+        self.gateway = SimpleNamespace(ledger=SimpleNamespace(snapshot=dict))
+
+    async def run(self, target_date: date, publish: bool) -> object:
+        del publish
+        try:
+            with publication_lock(self._layout):
+                type(self).publish_lock_was_free = True
+        except PublicationRefused:
+            type(self).publish_lock_was_free = False
+        publication = factories.publication(target_date=target_date)
+        return RunOutcome(
+            artifact=RunArtifact(
+                run_id="probe",
+                target_date=target_date,
+                items=[],
+                health=[],
+                events=[],
+                model_runs=[],
+            ),
+            publication=publication,
+            tracker=DegradationTracker(),
+            run_dir=self._layout.root / "artifacts",
+        )
+
+
+async def test_a_daily_run_leaves_the_publication_lock_free_while_it_works(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(cli, "DailyPipeline", ProbingPipeline)
+    monkeypatch.setattr(ProbingPipeline, "publish_lock_was_free", None)
+    args = SimpleNamespace(
+        config_dir="config",
+        site_root=str(tmp_path / "site"),
+        date="2026-09-03",
+        mode="publish",
+    )
+
+    assert await cli._run(args) == 0
+
+    # Free during the run, which is what lets a papers release slip in.
+    assert ProbingPipeline.publish_lock_was_free is True
+    assert SiteLayout(tmp_path / "site").publication_path(date(2026, 9, 3)).exists()
+
+
+async def test_a_daily_run_still_locks_out_a_second_daily_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Narrowing the publish lock must not let two runs both spend money."""
+
+    monkeypatch.setattr(cli, "DailyPipeline", ProbingPipeline)
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    args = SimpleNamespace(
+        config_dir="config",
+        site_root=str(tmp_path / "site"),
+        date="2026-09-03",
+        mode="publish",
+    )
+
+    with daily_run_lock(layout):
+        with pytest.raises(PublicationRefused, match="another daily run"):
+            await cli._run(args)
+
+    assert not layout.publication_path(date(2026, 9, 3)).exists()

@@ -18,7 +18,12 @@ EnvironmentFile=/etc/ai-daily/env
 ExecStart=/www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily papers --mode publish
 ExecStartPost=-/www/wwwroot/ai-daily/app/ops/backup.sh
 
-TimeoutStartSec=3600
+# The internal budgets have to fit inside this, and at 3600 they did not:
+# selection runs ~15 min, the deep-read loop carries its own 40-minute deadline
+# (papers.py), and the release step waits up to 10 for the publication lock.
+# 65 > 60, so a run that used its full deep-read budget was killed by systemd
+# before it could publish, which is how 2026-09-03 lost a finished issue.
+TimeoutStartSec=7200
 MemoryHigh=600M
 MemoryMax=900M
 CPUWeight=50
