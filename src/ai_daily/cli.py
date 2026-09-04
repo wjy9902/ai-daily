@@ -82,6 +82,27 @@ def _emit(payload: dict[str, Any]) -> None:
 # ------------------------------------------------------------------ publishing
 
 
+def _served_publication(layout: SiteLayout) -> DailyPublication | None:
+    """The issue the site is actually serving right now.
+
+    Two paths finish a run without publishing what the run built: the upgrade
+    guard refuses a poorer retry, and an L3 holds the previous release. Both
+    used to describe the rejected publication in status.json while
+    ``latest_published`` named the record on disk, so 2026-09-04 reported
+    9 details and 16 briefs for an issue that was never published - the record
+    had 9 and 19 - and anyone reading the status to see what was live got the
+    counts, level, notice and degradation reasons of a discarded run.
+    """
+
+    dates = published_dates(layout)
+    if not dates:
+        return None
+    try:
+        return read_publication(layout, dates[0])
+    except ValueError:
+        return None
+
+
 def _status_payload(
     layout: SiteLayout,
     publication: DailyPublication | None,
@@ -158,7 +179,7 @@ def _publish_daily(
         release = hold_previous_release(layout, LEVEL_NOTICE[PublicationLevel.L3] or "")
         status["action"] = "held_previous_release"
         status["release"] = str(release)
-        write_status(layout, _status_payload(layout, outcome.publication, status))
+        write_status(layout, _status_payload(layout, _served_publication(layout), status))
         _emit({"level": "L3", "action": "held_previous_release"})
         return 1
 
@@ -169,7 +190,7 @@ def _publish_daily(
     except PublicationRefused as error:
         status["action"] = "refused"
         status["reason"] = str(error)
-        write_status(layout, _status_payload(layout, outcome.publication, status))
+        write_status(layout, _status_payload(layout, _served_publication(layout), status))
         _emit({"level": outcome.publication.level.value, "refused": str(error)})
         return 0
 
