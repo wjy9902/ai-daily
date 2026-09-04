@@ -10,6 +10,7 @@ from ai_daily.normalize import (
     canonicalize_url,
     cluster_items,
     is_ai_related,
+    is_amplified,
     remove_historical,
 )
 
@@ -697,3 +698,51 @@ def test_one_stray_item_does_not_delete_the_cluster_around_it() -> None:
     )
 
     assert remove_historical([event], history) == [event]
+
+
+def _tweet(title: str, source: str = "x-openai-devs") -> RawItem:
+    return RawItem(
+        source=source,
+        source_tier=SourceTier.A,
+        source_channel=SourceChannel.OFFICIAL,
+        source_item_id=title[:20],
+        url=f"https://x.com/OpenAIDevs/status/{abs(hash(title))}",
+        title=title,
+        summary="推文正文。" * 40,
+        discovered_at=datetime(2026, 9, 4, tzinfo=UTC),
+        published_at=datetime(2026, 9, 4, tzinfo=UTC),
+    )
+
+
+def test_retweets_are_recognised_without_catching_products_that_start_with_rt() -> None:
+    assert is_amplified(_tweet("RT Matthew Berman: Astra (GPT-6) is here!!!"))
+    assert is_amplified(_tweet("RT @sama: shipping today"))
+    assert not is_amplified(_tweet("RTX Spark ships in October"))
+    assert not is_amplified(_tweet("RT-2 is a robotics transformer"))
+    assert not is_amplified(_tweet("Introducing GPT-6 Astra"))
+
+
+def test_a_retweet_does_not_get_to_represent_the_cluster_it_sits_in() -> None:
+    """2026-09-04: the 36-item Astra cluster led with "RT Matthew Berman: …".
+
+    The event takes its title and summary from the item chosen here, so the
+    write-up quoted an early tester's enthusiasm while the reports that carried
+    the pricing and the benchmark numbers sat unread beneath it.
+    """
+
+    report = RawItem(
+        source="the-decoder",
+        source_tier=SourceTier.A,
+        source_channel=SourceChannel.OFFICIAL,
+        source_item_id="decoder",
+        url="https://the-decoder.com/astra",
+        title="OpenAI ships GPT-6 Astra",
+        summary="报道正文。",
+        discovered_at=datetime(2026, 9, 4, tzinfo=UTC),
+        published_at=datetime(2026, 9, 4, tzinfo=UTC),
+    )
+    retweet = _tweet("RT Matthew Berman: Astra (GPT-6) is here!!!")
+    for group in permutations([retweet, report]):
+        (event,) = cluster_items(list(group))
+        assert event.title == "OpenAI ships GPT-6 Astra"
+        assert len(event.items) == 2

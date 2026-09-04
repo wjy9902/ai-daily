@@ -1474,3 +1474,58 @@ async def test_planning_survives_a_judge_batch_that_never_returned() -> None:
 
     assert gateway.candidate_count == 17
     assert result.selections[0].event_id == "event-0"
+
+
+def _amplified_event() -> Event:
+    """A launch whose only Tier A, first-party item is a retweet."""
+
+    retweet = RawItem(
+        source="x-openai-devs",
+        source_label="OpenAI Developers @ X",
+        source_tier=SourceTier.A,
+        source_channel=SourceChannel.OFFICIAL,
+        source_item_id="rt",
+        url="https://x.com/OpenAIDevs/status/1",
+        title="RT Matthew Berman: Astra (GPT-6) is here!!! I've had early access",
+        summary="早期体验者对新模型的赞誉。",
+        discovered_at=datetime(2026, 9, 4, tzinfo=UTC),
+    )
+    report = RawItem(
+        source="the-decoder",
+        source_label="The Decoder",
+        source_tier=SourceTier.B,
+        source_channel=SourceChannel.NEWS,
+        source_item_id="1",
+        url="https://the-decoder.com/astra",
+        title="OpenAI ships GPT-6 Astra",
+        summary="一家媒体的报道。",
+        discovered_at=datetime(2026, 9, 4, tzinfo=UTC),
+    )
+    return Event(
+        event_id="event-1",
+        canonical_url=report.url,
+        title=report.title,
+        summary=report.summary,
+        items=[retweet, report],
+    )
+
+
+def test_a_vendor_retweet_is_not_the_vendor_saying_it() -> None:
+    """2026-09-04: x-openai-devs amplified 91 strangers during the Astra launch.
+
+    Each one arrived Tier A on an ``official`` channel, so a single retweet of
+    somebody's praise satisfied both the first-party and the Tier A clause, and
+    it came from x.com so it could not be the second publisher either.
+    """
+
+    assert not lead_is_corroborated(_amplified_event())
+
+
+def test_the_vendor_posting_it_itself_still_leads() -> None:
+    """The exclusion is about amplification, not about the account."""
+
+    event = _amplified_event()
+    own_post = event.items[0].model_copy(
+        update={"title": "Introducing GPT-6 Astra, our most capable model"}
+    )
+    assert lead_is_corroborated(event.model_copy(update={"items": [own_post, event.items[1]]}))

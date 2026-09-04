@@ -33,6 +33,7 @@ from ai_daily.models import (
 )
 from ai_daily.normalize import (
     FIRST_PARTY_CHANNELS,
+    is_amplified,
     registrable_domain,
 )
 
@@ -193,13 +194,21 @@ def lead_is_corroborated(event: Event) -> bool:
     normalize.py), so big stories do reach two domains — but quieter days
     still surface single-outlet Tier A reports worth leading with, so the
     clause stays. A lone Tier B or C report still cannot lead.
+
+    Retweets are excluded from all three. A vendor account is Tier A and
+    first-party, so an amplified stranger used to satisfy two clauses at once
+    while saying nothing the vendor had put its own name to; and a retweet is
+    posted from the vendor's own domain, so it could not supply the second
+    publisher either. An event whose only support is amplification has no
+    evidence, and this is the gate that is supposed to say so.
     """
 
-    if any(item.source_channel in FIRST_PARTY_CHANNELS for item in event.items):
+    evidence = [item for item in event.items if not is_amplified(item)]
+    if any(item.source_channel in FIRST_PARTY_CHANNELS for item in evidence):
         return True
-    if any(item.source_tier is SourceTier.A for item in event.items):
+    if any(item.source_tier is SourceTier.A for item in evidence):
         return True
-    return len({registrable_domain(str(item.url)) for item in event.items}) >= 2
+    return len({registrable_domain(str(item.url)) for item in evidence}) >= 2
 
 
 def enforce_lead_corroboration(
