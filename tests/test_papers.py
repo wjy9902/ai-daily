@@ -20,6 +20,7 @@ from ai_daily.models import BudgetConfig, RawItem, SourceConfig, SourceTier
 from ai_daily.papers import (
     DEEP_READ_DEADLINE_SECONDS,
     PapersPipeline,
+    _paper_card,
     apply_cross_mentions,
     arxiv_id,
     build_candidates,
@@ -100,6 +101,7 @@ def card(index: int, *, deep: bool = True, title: str | None = None) -> PaperCar
         arxiv_id=item.arxiv_id,
         title=title or item.title,
         abstract=item.abstract,
+        published_at=item.submitted_at,
         arxiv_url=item.arxiv_url,
         signals=item.signals,
         topic="agent",
@@ -116,6 +118,11 @@ def papers_publication(
         generated_at=datetime(2026, 9, 1, 1, tzinfo=UTC),
         papers=cards or [card(1), card(2)],
     ).signed()
+
+
+def test_paper_card_keeps_candidate_publication_time() -> None:
+    item = candidate(1)
+    assert _paper_card(item, None, "not fetched").published_at == item.submitted_at
 
 
 class PromptGateway:
@@ -467,7 +474,17 @@ def test_render_has_papers_rss_prefix_xss_escaping_and_simple_label() -> None:
     assert "<script>" not in index
     assert "&lt;script&gt;" in index
     assert "未深读" in index
+    assert index.count("发表时间：2026-09-01") == 2
+    assert issue.count("发表时间：2026-09-01") == 2
     assert f"{factories.SITE}/papers/2026-09-01/" in rss
+
+
+def test_papers_record_without_published_at_keeps_legacy_checksum_valid() -> None:
+    legacy = papers_publication(
+        cards=[card(1).model_copy(update={"published_at": None})]
+    ).model_dump(mode="json")
+    legacy["papers"][0].pop("published_at")
+    assert load_papers_publication(json.dumps(legacy)).papers[0].published_at is None
 
 
 async def test_papers_publish_renders_then_commits_and_refuses_same_day(tmp_path: Path) -> None:

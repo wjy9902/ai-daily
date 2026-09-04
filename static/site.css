@@ -197,9 +197,10 @@ time {
 .papers-main { max-width: 860px; }
 .papers-edition { margin-bottom: 1.5rem; }
 .papers-edition h1 { margin: 0.2rem 0; }
-.papers-kicker, .paper-authors { color: var(--muted); }
+.papers-kicker, .paper-authors, .paper-published { color: var(--muted); }
 .paper-card { border-top: 1px solid var(--line); padding: 1.6rem 0; }
 .paper-title { font-size: 1.35rem; line-height: 1.35; margin: 0.5rem 0; }
+.paper-published { font-size: 0.9rem; margin: -0.2rem 0 0.5rem; }
 .paper-badges { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .paper-badge { background: var(--surface); border: 1px solid var(--line); border-radius: 99px;
   color: var(--muted); font-size: 0.75rem; padding: 0.15rem 0.5rem; }

@@ -114,10 +114,12 @@ def _experiment_section(paper: PaperCard) -> str:
 
 
 def _card(paper: PaperCard) -> str:
+    published = paper.published_at.date().isoformat() if paper.published_at else "未知"
     rows = [
         '<article class="paper-card">',
         f'<div class="paper-badges">{_badges(paper)}</div>',
         f'<h2 class="paper-title">{_t(paper.title)}</h2>',
+        f'<p class="paper-published">发表时间：{_t(published)}</p>',
     ]
     if paper.authors:
         rows.append(f'<p class="paper-authors">{_t(paper.authors)}</p>')
