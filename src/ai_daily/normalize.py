@@ -4,6 +4,7 @@ import hashlib
 import math
 import re
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -299,8 +300,24 @@ def canonicalize_url(value: str) -> str:
     return urlunsplit((parts.scheme.lower() or "https", netloc, path, urlencode(query), ""))
 
 
+#: Dashes that outlets typeset inside a product name, written as escapes
+#: because that is what they are being read as. Simon Willison filed the GPT-6
+#: launch with U+2011 between the name and the version, which LATIN_TOKEN_RE
+#: splits into "gpt" and a bare "6" it then drops for being one character - so
+#: the title that named the product yielded no identifier at all and the launch
+#: never merged with anyone else's report of it. Typography is not a difference
+#: between stories.
+_UNICODE_DASHES = str.maketrans(
+    dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d", "-")
+)
+
+
+def normalize_dashes(text: str) -> str:
+    return text.translate(_UNICODE_DASHES)
+
+
 def title_tokens(title: str) -> set[str]:
-    latin = {token.lower() for token in LATIN_TOKEN_RE.findall(title)} - STOPWORDS
+    latin = {token.lower() for token in LATIN_TOKEN_RE.findall(normalize_dashes(title))} - STOPWORDS
     chinese: set[str] = set()
     for sequence in CHINESE_RE.findall(title):
         if sequence in STOPWORDS:
@@ -336,11 +353,36 @@ def _is_high_signal_community_item(item: RawItem) -> bool:
 _PRODUCT_ID_STRIP = re.compile(r"[.\-+_]")
 #: A roundup title enumerates many products ("Sonnet 4.5、GLM-4.6、Ring-1T…").
 #: Using its identifiers for merging would chain unrelated stories together
-#: through the roundup, so such titles contribute none.
+#: through the roundup, so such titles contribute none. Counted over *direct*
+#: identifiers only: a roundup is a title carrying many real product names, and
+#: the joined rule below answers for its own noise.
 _PRODUCT_ID_ROUNDUP_LIMIT = 3
+#: The joined rule glues a name to a following number, and a number-heavy
+#: headline offers many pairs that are not names. Techmeme filed the GPT-6
+#: launch as "OpenAI prices GPT-6 Astra at $10/1M … vs $40" and "scores 62.7%
+#: … and 99.9%", which produced at10, vs40, scores627 and and999 - enough
+#: junk to break the roundup limit, so the guard threw away the real gpt6
+#: anchor along with it and three reports of the day's biggest launch stayed
+#: three separate one-source events. Real names produce one or two pairs.
+_PRODUCT_ID_JOINED_LIMIT = 2
+#: A version number is not a quantity. Money and percentages are the two the
+#: headlines above actually collide with, and both are marked in the text.
+_CURRENCY_CHARS = frozenset("$¥€£₩₽¢￥")
+#: LATIN_TOKEN_RE needs two characters, so a lone version digit is not a token
+#: at all: "Grok 4" never produced grok4 despite the docstring below promising
+#: it, and "GPT 6" would not either. Anchors are the one place a single
+#: character carries meaning, so they tokenize for themselves.
+_PRODUCT_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+-]*", re.IGNORECASE)
 
 
-def title_product_identifiers(title: str) -> set[str]:
+def _is_quantity(text: str, start: int, end: int) -> bool:
+    """Whether the token spanning ``[start, end)`` is money or a percentage."""
+
+    before = text[start - 1] if start else ""
+    return before in _CURRENCY_CHARS or text[end : end + 1] == "%"
+
+
+def title_product_identifiers(title: str, lexicon: frozenset[str] = frozenset()) -> set[str]:
     """Versioned product names from a TITLE, as cross-outlet merge anchors.
 
     Different outlets word the same announcement differently — and a Chinese
@@ -350,32 +392,113 @@ def title_product_identifiers(title: str) -> set[str]:
     a bare name followed by a version ("Grok 4", "GPT 5.5") is joined into
     one identifier. Titles only: summaries (and digest-style titles, see the
     roundup limit) mention many products and would over-merge.
+
+    ``lexicon`` carries the day's bare-word product names - Astra, Sol, Mythos
+    - which the digit rule above cannot see at all. See product_lexicon for
+    where they come from and why they are safe to anchor on.
+
+    Only the products the title is *about* count. A headline that prices one
+    model against another names both, and merging on the loser chains two
+    launches into one event: on 2026-09-04 "OpenAI prices GPT-6 Astra … vs
+    $5/$40 for GPT-5.6 Sol" and a tweet reading "Muse Spark 1.3 >> Fable 5"
+    were enough to weld the Astra, Muse Spark and Fable stories into a single
+    29-item cluster that a Meta retweet then got to name. Anything past a
+    comparison or a second clause is context, so it is dropped.
     """
 
-    tokens = [token.lower() for token in LATIN_TOKEN_RE.findall(title)]
-    identifiers: set[str] = set()
+    anchors = _title_anchors(title)
+    if len(anchors.direct) > _PRODUCT_ID_ROUNDUP_LIMIT:
+        return set()
+    joined = {} if len(anchors.joined) > _PRODUCT_ID_JOINED_LIMIT else anchors.joined
+    lexical = {token: index for index, token in enumerate(anchors.tokens) if token in lexicon}
+    positions = anchors.direct | joined | lexical
+    if not positions:
+        return set()
+    subject_ends = min(positions.values()) + _SUBJECT_SPAN
+    return {name for name, index in positions.items() if index <= subject_ends}
+
+
+@dataclass(frozen=True)
+class _TitleAnchors:
+    """Product identifiers in one title, with the token index each starts at."""
+
+    tokens: list[str]
+    direct: dict[str, int]
+    joined: dict[str, int]
+    #: Token index -> the bare name that opens a joined identifier. "Fable" in
+    #: "Claude Fable 5.1" is as much the product's name as "GPT-6" is, and it
+    #: is the form the lexicon has to learn from vendors that space the version.
+    joined_names: dict[int, str]
+
+
+def _title_anchors(title: str) -> _TitleAnchors:
+    text = normalize_dashes(title)
+    boundary = _comparison_boundary(text)
+    matches = [match for match in _PRODUCT_TOKEN_RE.finditer(text) if match.start() < boundary]
+    tokens = [match.group(0).lower() for match in matches]
+    direct: dict[str, int] = {}
+    joined: dict[str, int] = {}
+    joined_names: dict[int, str] = {}
     for index, token in enumerate(tokens):
         normalized = _PRODUCT_ID_STRIP.sub("", token)
         has_alpha = any(ch.isalpha() for ch in normalized)
         has_digit = any(ch.isdigit() for ch in normalized)
-        if has_alpha and has_digit and len(normalized) >= 4 and not _is_year_number(normalized):
-            identifiers.add(normalized)
+        if _is_direct_identifier(normalized):
+            direct.setdefault(normalized, index)
         # "Kimi K3" / "Grok 4": the name alone is generic and the version
-        # alone is noise, but joined they are as specific as a long id.
-        if index + 1 < len(tokens):
+        # alone is noise, but joined they are as specific as a long id. A
+        # function word is never the name, and a price or a percentage is
+        # never the version.
+        if index + 1 < len(tokens) and has_alpha and not has_digit:
+            following_match = matches[index + 1]
             following = _PRODUCT_ID_STRIP.sub("", tokens[index + 1])
-            joined = normalized + following
+            candidate = normalized + following
             if (
-                has_alpha
-                and not has_digit
+                token not in HISTORICAL_STOPWORDS
                 and any(ch.isdigit() for ch in following)
-                and len(joined) >= 4
-                and not _is_year_number(joined)
+                and not _is_quantity(text, *following_match.span())
+                and len(candidate) >= 4
+                and not _is_year_number(candidate)
             ):
-                identifiers.add(joined)
-    if len(identifiers) > _PRODUCT_ID_ROUNDUP_LIMIT:
-        return set()
-    return identifiers
+                joined.setdefault(candidate, index)
+                joined_names.setdefault(index, normalized)
+    return _TitleAnchors(tokens=tokens, direct=direct, joined=joined, joined_names=joined_names)
+
+
+#: How far past the first product name the title is still naming the same
+#: thing. "Claude Fable 5.1 and Claude Mythos 5.1" is one announcement of two
+#: models and spans four tokens; "GPT-6 Astra … matching Anthropic's pricing
+#: for Claude Fable 5.1" names a second product twenty tokens later and is a
+#: comparison, not a joint launch. Cheaper and steadier than enumerating every
+#: verb an outlet can compare with.
+_SUBJECT_SPAN = 4
+#: Where a title stops being about its own subject: a comparison, or the
+#: semicolon Techmeme uses to staple a second story onto the first.
+_COMPARISON_BOUNDARY_RE = re.compile(
+    r"(?:[;；]|>>"
+    r"|\b(?:vs|versus|than|compared|beats|outperforms)\b"
+    r"|对比|相比|超过|超越|击败|力压|优于|不敌"
+    # A bare 超 is comparative only in front of a name; inside a word it is
+    # 超大规模 or 超算, and cutting there would drop the title's own subject.
+    r"|超(?=\s*[A-Za-z0-9]))",
+    re.IGNORECASE,
+)
+
+
+def _comparison_boundary(text: str) -> int:
+    match = _COMPARISON_BOUNDARY_RE.search(text)
+    return match.start() if match else len(text)
+
+
+def _is_direct_identifier(normalized: str) -> bool:
+    """Whether a punctuation-stripped token is a product name on its own."""
+
+    return (
+        any(ch.isalpha() for ch in normalized)
+        and any(ch.isdigit() for ch in normalized)
+        and len(normalized) >= 4
+        and not _is_year_number(normalized)
+    )
 
 
 def _is_year_number(identifier: str) -> bool:
@@ -390,7 +513,76 @@ def _is_year_number(identifier: str) -> bool:
     return bool(re.fullmatch(r"20[2-3]\d", digits))
 
 
-def _same_story_by_product(left_title: str, right_title: str) -> bool:
+#: How many independent publishers have to write a word beside a version
+#: before it counts as a product name. One is an incidental proper noun - a
+#: customer, a programme, a place that happened to sit next to a number.
+_LEXICON_MIN_PUBLISHERS = 2
+
+
+def product_lexicon(items: list[RawItem]) -> frozenset[str]:
+    """Bare-word product names, learned from what first-party sources call them.
+
+    Merge anchors needed a digit, which is how the 2026-09-04 launch was lost:
+    "OpenAI launches Astra, its powerful (and controversial) new model" and
+    "OpenAI's Astra crosses Critical cybersecurity threshold" contain no digit
+    at all, so TechCrunch and TestingCatalog could never join the story they
+    were reporting. Model names are increasingly bare words - Astra, Sol,
+    Mythos, Fable - and no digit is coming.
+
+    A word earns its place by belonging to a versioned identifier: standing
+    next to one ("GPT-6 Astra", "Astra (GPT-6)") or opening one that the version
+    is spaced away from ("Claude Fable 5.1", "Grok 4"). That is what a product
+    name looks like when anyone writes the full name out, and it is narrow
+    where the obvious signals are not. Capitalisation says nothing - AWS,
+    NVIDIA and Google headline in title case, so "Intelligence", "Cloud" and
+    "Series" are capitalised too, and a lexicon built that way merged 98
+    unrelated items into one event on the replay of 2026-09-04.
+
+    Two further guards:
+
+    * **Two publishers.** Registrable domains, so one outlet's habit is not a
+      vocabulary; "overview" and "Legora" sat beside GPT-6 once each and stay
+      out. It is deliberately not restricted to first-party posts: at 04:20
+      that day the only first-party mentions were "Path to Astra" and a tweet
+      that promised the model without naming a version, so a first-party rule
+      would have learned the name hours after the story needed it.
+    * **Not a vendor or a generic.** The day OpenAI ships two unrelated things,
+      "OpenAI" must not merge them. That exclusion is the source display names
+      plus AI_TOKENS, both already maintained, so no new roster appears here.
+
+    Freshness deliberately does not apply: an older post naming the product
+    still teaches the name today's coverage is reported under.
+    """
+
+    excluded: set[str] = set()
+    attestations: dict[str, set[str]] = defaultdict(set)
+    for item in items:
+        excluded.update(token.lower() for token in LATIN_TOKEN_RE.findall(item.source_label))
+        try:
+            publisher = registrable_domain(str(item.url))
+        except ValueError:
+            continue
+        anchors = _title_anchors(item.title)
+        versioned = set(anchors.direct.values())
+        candidates = dict(anchors.joined_names)
+        for index in versioned:
+            for neighbour in (index - 1, index + 1):
+                if 0 <= neighbour < len(anchors.tokens) and neighbour not in versioned:
+                    candidates.setdefault(neighbour, anchors.tokens[neighbour])
+        for token in candidates.values():
+            if len(token) >= 4 and token.isalpha():
+                attestations[token].add(publisher)
+    excluded |= AI_TOKENS | HISTORICAL_STOPWORDS | STOPWORDS
+    return frozenset(
+        token
+        for token, publishers in attestations.items()
+        if len(publishers) >= _LEXICON_MIN_PUBLISHERS and token not in excluded
+    )
+
+
+def _same_story_by_product(
+    left_title: str, right_title: str, lexicon: frozenset[str] = frozenset()
+) -> bool:
     """Whether two titles report the same story, anchored on a product name.
 
     A shared versioned product name is necessary but not sufficient: on launch
@@ -406,9 +598,16 @@ def _same_story_by_product(left_title: str, right_title: str) -> bool:
       ("granite", "transcribe", "千问"). Two same-language stories whose only
       common ground is a version number ("GPT-5.6 API 上线" vs "GPT-5.6
       更新数据政策") are different stories about the same model.
+
+    The shared anchors themselves are excluded from that overlap. A lexicon
+    anchor is a digit-free word, so counting it would let the second clause
+    answer itself and every story about a product would merge — and when the
+    anchor carries no version at all, one word of agreement is not enough.
     """
 
-    shared = title_product_identifiers(left_title) & title_product_identifiers(right_title)
+    shared = title_product_identifiers(left_title, lexicon) & title_product_identifiers(
+        right_title, lexicon
+    )
     if not shared:
         return False
     left_cjk = bool(CHINESE_RE.search(left_title))
@@ -420,12 +619,20 @@ def _same_story_by_product(left_title: str, right_title: str) -> bool:
     if min(len(left_tokens), len(right_tokens)) <= 2:
         return True
     digit_free_overlap = {
-        token for token in left_tokens & right_tokens if not any(ch.isdigit() for ch in token)
+        token
+        for token in (left_tokens & right_tokens) - shared
+        if not any(ch.isdigit() for ch in token)
     }
-    return bool(digit_free_overlap)
+    # A bare name is weaker evidence than a version, so it has to be paid for
+    # twice. "RT shirish: …Meta's new model is already ranked above Fable 5"
+    # shares only the word Fable with Anthropic's launch, and on one word it
+    # welded the Fable and Muse Spark stories into a single 25-item cluster.
+    if any(any(ch.isdigit() for ch in name) for name in shared):
+        return bool(digit_free_overlap)
+    return len(digit_free_overlap) >= 2
 
 
-def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
+def _similar(left: RawItem, right: RawItem, window: timedelta, lexicon: frozenset[str]) -> bool:
     left_time = left.published_at or left.discovered_at
     right_time = right.published_at or right.discovered_at
     if abs(left_time - right_time) > window:
@@ -433,7 +640,7 @@ def _similar(left: RawItem, right: RawItem, window: timedelta) -> bool:
     identifiers = story_identifiers(left) & story_identifiers(right)
     if identifiers:
         return True
-    if _same_story_by_product(left.title, right.title):
+    if _same_story_by_product(left.title, right.title, lexicon):
         return True
     if left.source == right.source and left.source_channel == SourceChannel.RELEASE:
         return False
@@ -467,12 +674,16 @@ def registrable_domain(url: str) -> str:
     return ".".join(labels[-2:])
 
 
-def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
+def cluster_items(
+    items: list[RawItem],
+    window_hours: int = 48,
+    lexicon: frozenset[str] = frozenset(),
+) -> list[Event]:
     by_url: dict[str, list[RawItem]] = defaultdict(list)
     for item in items:
         by_url[canonicalize_url(str(item.url))].append(item)
 
-    groups = _connected_groups(list(by_url.values()), timedelta(hours=window_hours))
+    groups = _connected_groups(list(by_url.values()), timedelta(hours=window_hours), lexicon)
 
     events = []
     for group in groups:
@@ -510,7 +721,9 @@ def cluster_items(items: list[RawItem], window_hours: int = 48) -> list[Event]:
     return events
 
 
-def _connected_groups(groups: list[list[RawItem]], window: timedelta) -> list[list[RawItem]]:
+def _connected_groups(
+    groups: list[list[RawItem]], window: timedelta, lexicon: frozenset[str]
+) -> list[list[RawItem]]:
     parents = list(range(len(groups)))
 
     def root(index: int) -> int:
@@ -521,7 +734,7 @@ def _connected_groups(groups: list[list[RawItem]], window: timedelta) -> list[li
 
     for right in range(len(groups)):
         for left in range(right):
-            if any(_similar(a, b, window) for a in groups[left] for b in groups[right]):
+            if any(_similar(a, b, window, lexicon) for a in groups[left] for b in groups[right]):
                 parents[root(right)] = root(left)
     components: dict[int, list[RawItem]] = defaultdict(list)
     for index, group in enumerate(groups):

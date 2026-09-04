@@ -944,3 +944,23 @@ async def test_html_index_reports_partial_success_when_one_article_fails() -> No
     assert [item.title for item in items] == ["Working AI model"]
     assert health[0].status == "partial"
     assert health[0].error == "1 linked article(s) failed"
+
+
+async def test_rss_titles_resolve_entities_the_feed_escaped_twice() -> None:
+    """Techmeme and TestingCatalog ship titles that survive feedparser as entities.
+
+    "OpenAI&#x27;s Astra" reached the page as written, and the anchor extractor
+    read openaix27 as a product name — an identifier belonging to no product,
+    sitting ahead of the real one in the title.
+    """
+
+    body = (
+        b"<?xml version='1.0'?><rss version='2.0'><channel><title>T</title>"
+        b"<item><guid>1</guid><title>ICYMI: OpenAI&amp;#x27;s Astra crosses a threshold</title>"
+        b"<link>https://example.com/a</link><description>Details</description>"
+        b"<pubDate>Wed, 12 Aug 2026 00:00:00 GMT</pubDate></item></channel></rss>"
+    )
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
+    source = SourceConfig(name="feed", kind="rss", url="https://example.com/rss", tier=SourceTier.A)
+    items, _ = await Collector(transport).collect([source])
+    assert items[0].title == "ICYMI: OpenAI's Astra crosses a threshold"

@@ -54,6 +54,7 @@ from ai_daily.normalize import (
     canonicalize_url,
     cluster_items,
     is_ai_related,
+    product_lexicon,
     remove_historical,
     score_events,
     select_candidate_pool,
@@ -371,8 +372,11 @@ class DailyPipeline:
         )
         filtered, freshness_audit = filter_fresh_items(items, cutoff, run_time, timezone)
         write_artifact(run_dir / "freshness.json", freshness_audit)
+        # Built from everything collected, not from the fresh items: a vendor's
+        # older post is what teaches the name today's launch is reported under.
+        lexicon = product_lexicon(items)
         events = score_events(
-            cluster_items(filtered, self.config.pipeline.cluster_window_hours),
+            cluster_items(filtered, self.config.pipeline.cluster_window_hours, lexicon),
             run_time.astimezone(UTC),
         )
         historical_index = local_historical_index(

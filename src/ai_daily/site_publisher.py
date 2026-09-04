@@ -30,6 +30,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+from .degradation import FAILURE_REASON, FailureClass
 from .papers_models import PapersPublication, load_papers_publication
 from .publication import (
     DailyPublication,
@@ -305,15 +306,30 @@ def guard_same_day_overwrite(
         return None
     raise PublicationRefused(
         f"{publication.target_date} is already published at {existing.level.value} "
-        f"with {_coverage(existing)[1]} stories; {publication.level.value} with "
-        f"{_coverage(publication)[1]} would not improve it"
+        f"with {_coverage(existing)[2]} stories; {publication.level.value} with "
+        f"{_coverage(publication)[2]} would not improve it"
     )
 
 
-def _coverage(publication: DailyPublication) -> tuple[int, int]:
-    """How much this issue carries: detailed stories first, then everything."""
+def _coverage(publication: DailyPublication) -> tuple[bool, int, int]:
+    """How much this issue carries, best first.
 
-    return len(publication.details), len(publication.details) + len(publication.briefs)
+    An intact lead outranks story count. 2026-09-04 published at 04:20 with the
+    GPT-6 launch demoted for want of corroboration; the 07:00 and 08:30 reruns
+    both had what it needed and were refused for carrying 25 and 24 stories
+    against 26. Two briefs are not worth the day's biggest story running as a
+    follow item under a degradation banner, and the level cannot see the
+    difference: LEAD_UNCORROBORATED caps at L1, so both issues are L1.
+
+    Details still come before the total, so a flood of briefs cannot displace
+    an issue that actually reported its stories.
+    """
+
+    return (
+        FAILURE_REASON[FailureClass.LEAD_UNCORROBORATED] not in publication.degradation_reasons,
+        len(publication.details),
+        len(publication.details) + len(publication.briefs),
+    )
 
 
 def _carries_more(existing: DailyPublication, candidate: DailyPublication) -> bool:

@@ -366,7 +366,17 @@ async def plan_digest(
     published: Sequence[PublishedItem] = (),
 ) -> EditorialPlan:
     decisions_by_id = {decision.event_id: decision for decision in decisions}
-    payload = [_candidate_payload(event, decisions_by_id[event.event_id]) for event in events]
+    # Only judged candidates can be offered. judge_events deliberately survives
+    # a failed batch - "its candidates simply go unjudged, which costs coverage
+    # rather than the issue" - but indexing every event into the decisions
+    # defeated that: on 2026-09-04 the 05:05 rerun recorded JUDGE_PARTIAL and
+    # then died here with KeyError: 5015b85d1c913c20, losing the whole run and
+    # one of the three chances that morning had to improve the issue.
+    payload = [
+        _candidate_payload(event, decisions_by_id[event.event_id])
+        for event in events
+        if event.event_id in decisions_by_id
+    ]
     output_type = _planning_output_type(config)
     prompt = {
         "candidates": payload,

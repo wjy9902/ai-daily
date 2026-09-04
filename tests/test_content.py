@@ -1441,3 +1441,36 @@ def test_rumor_draft_allows_attributed_speculation() -> None:
     draft = _quoted_draft().model_copy(update={"tldr": "据报道，新模型或将于本周正式发布。"})
 
     _validate_draft(draft, _rumor_selection(), _bundle())
+
+
+async def test_planning_survives_a_judge_batch_that_never_returned() -> None:
+    """2026-09-04 05:05 died here, costing one of three chances to fix the issue.
+
+    judge_events is built to survive a failed batch — its candidates go
+    unjudged, which costs coverage rather than the issue — but planning indexed
+    every candidate into the decisions and raised KeyError on the first one
+    that had none.
+    """
+
+    events = [numbered_event(index) for index in range(18)]
+    judged = events[:17]
+    decisions = [
+        JudgeDecision(
+            event_id=value.event_id,
+            selected=index != 0,
+            category="模型与平台",
+            relevance=20 if index == 0 else 80,
+            confidence=0.8,
+            reason="初筛意见",
+            evidence_ids=[f"{value.event_id}-1"],
+        )
+        for index, value in enumerate(judged)
+    ]
+    gateway = PlanningGateway(valid_global_plan())
+
+    result = await plan_digest(  # type: ignore[arg-type]
+        gateway, events, decisions, load_config(Path("config")).pipeline
+    )
+
+    assert gateway.candidate_count == 17
+    assert result.selections[0].event_id == "event-0"
