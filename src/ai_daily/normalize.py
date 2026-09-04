@@ -272,6 +272,30 @@ MULTI_LABEL_PUBLIC_SUFFIXES = frozenset(
     }
 )
 FIRST_PARTY_CHANNELS = frozenset({SourceChannel.OFFICIAL, SourceChannel.RELEASE})
+#: RSSHub renders a retweet as "RT <display name>: <the other account's post>".
+#: The separator is what keeps RTX, RTFM and a product called RT-2 out.
+_RETWEET_RE = re.compile(r"^RT[ @:]")
+
+
+def is_amplified(item: RawItem) -> bool:
+    """True when ``item`` is an account repeating someone else's post.
+
+    A vendor account carries two kinds of traffic and this project was reading
+    them as one. Its own posts are the newsmaker speaking: first-party, Tier A,
+    the thing lead_is_corroborated exists to find. Its retweets are the
+    newsmaker pointing at a stranger - on 2026-09-04 x-openai-devs amplified 91
+    of them, among the "Astra absolutely crushes" and "one-shotted this tool"
+    genre - and reading those as OpenAI stating a fact meant a launch could
+    qualify to lead an issue on nothing but praise the vendor liked.
+
+    They stay in the event, because an official amplification is still a signal
+    that the story is real. They just stop being the evidence for it, and stop
+    being eligible to represent the cluster they sit in.
+    """
+
+    return bool(_RETWEET_RE.match(item.title.strip()))
+
+
 CHANNEL_PRIORITY = {
     SourceChannel.OFFICIAL: 0,
     SourceChannel.NEWS: 1,
@@ -690,6 +714,20 @@ def cluster_items(
         primary = min(
             group,
             key=lambda item: (
+                # A retweet is the weakest possible representative of a cluster:
+                # its title and summary are a stranger's words, and the event
+                # takes both. 2026-09-04's launch cluster held 36 items across
+                # 10 domains and led with "RT Matthew Berman: Astra (GPT-6) is
+                # here!!!", so the write-up quoted an early tester's enthusiasm
+                # while the pricing and benchmark reports sat unread beneath it.
+                #
+                # This outranks tier and channel rather than breaking ties
+                # inside them, for the same reason lead_is_corroborated ignores
+                # amplification: a retweet is Tier A official only because of
+                # whose account it sits on. Ranking it that way put "RT Hebbia:
+                # Astra set a new high in our evals" ahead of TechCrunch's
+                # launch report in the same cluster.
+                is_amplified(item),
                 item.source_tier.value,
                 CHANNEL_PRIORITY[item.source_channel],
                 -len(item.summary),
