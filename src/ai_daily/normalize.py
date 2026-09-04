@@ -960,9 +960,24 @@ def _historical_story_match(event: Event, story: HistoricalStory) -> bool:
 
 
 def _event_history_texts(event: Event) -> tuple[str, ...]:
-    values = [event.title, event.summary[:1600]]
-    for item in event.items:
-        values.extend((item.title, item.summary[:1600]))
+    """What the event is, for history to be matched against.
+
+    Not every text every item carries. One stray sentence anywhere in a
+    cluster deletes the whole event, and cross-outlet merging made that
+    certain: the 2026-09-04 GPT-6 cluster offered 67 texts against 178
+    remembered stories, and "OpenAI has just introduced GPT-6 Astra…" was
+    struck down by "Amazon Bedrock processes inference requests and data
+    within India" from 08-28 — four shared tokens over a six-token sentence
+    clears containment against the shorter text. The bigger and better sourced
+    the story, the likelier it was to be deleted.
+
+    An event's identity is its own title and summary, which come from the
+    representative item. The other items are corroboration: that a cluster
+    contains one follow-up to yesterday's story does not make it yesterday's
+    story.
+    """
+
+    values = (event.title, event.summary[:1600])
     return tuple(value for value in dict.fromkeys(values) if value.strip())
 
 

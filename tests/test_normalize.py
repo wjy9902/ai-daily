@@ -665,3 +665,35 @@ def test_a_chinese_comparison_does_not_merge_the_model_it_beats() -> None:
         ]
     )
     assert len(events) == 2
+
+
+def test_one_stray_item_does_not_delete_the_cluster_around_it() -> None:
+    """2026-09-04: the merged GPT-6 cluster was struck down by an unrelated line.
+
+    It offered 67 texts against 178 remembered stories, and "OpenAI has just
+    introduced GPT-6 Astra…" matched "Amazon Bedrock processes inference
+    requests and data within India" from 08-28 — four shared tokens over a
+    six-token sentence clears containment against the shorter text. Merging
+    made the best-sourced story the likeliest one to be deleted.
+    """
+
+    launch = item("1", "https://techcrunch.com/astra", "OpenAI launches GPT-6 Astra today")
+    follow_up = item(
+        "2",
+        "https://example.com/bedrock",
+        "Amazon Bedrock now processes inference requests and data within India",
+    )
+    event = cluster_items([launch])[0].model_copy(update={"items": [launch, follow_up]})
+    history = HistoricalIndex(
+        urls=set(),
+        titles=set(),
+        stories=(
+            HistoricalStory(
+                event_id="bedrock-india",
+                issue_date=date(2026, 8, 28),
+                texts=("Amazon Bedrock processes inference requests and data within India.",),
+            ),
+        ),
+    )
+
+    assert remove_historical([event], history) == [event]
