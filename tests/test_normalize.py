@@ -502,3 +502,166 @@ def test_channel_scores_still_suppress_research_and_release_as_before() -> None:
     assert _channel_score(SourceChannel.OFFICIAL) == 30
     assert _channel_score(SourceChannel.NEWS) == 24
     assert _channel_score(SourceChannel.COMMUNITY) == 16
+
+
+def test_typographic_hyphen_in_a_product_name_still_anchors() -> None:
+    # Simon Willison filed the GPT-6 launch with U+2011 in the name, which
+    # split into "gpt" and a bare "6" the tokenizer then dropped, so the only
+    # title naming the product yielded no anchor and led an uncorroborated issue.
+    events = cluster_items(
+        [
+            item("1", "https://simonwillison.net/gpt6", "GPT\u20116 Astra"),
+            item("2", "https://techmeme.com/a", "GPT-6 Astra scores 62.7% on ARC-AGI-3"),
+        ]
+    )
+    assert len(events) == 1
+
+
+def test_a_number_heavy_headline_keeps_its_product_anchor() -> None:
+    # "at $10", "vs $40", "scores 62.7%" and "and 99.9%" glued four junk pairs,
+    # broke the roundup limit and took the real gpt6 anchor down with them.
+    from ai_daily.normalize import title_product_identifiers
+
+    priced = title_product_identifiers(
+        "OpenAI prices GPT-6 Astra at $10/1M input tokens and $50/1M output tokens"
+    )
+    scored = title_product_identifiers("GPT-6 Astra scores 62.7% on ARC-AGI-3 and 99.9% custom")
+    assert "gpt6" in priced
+    assert "gpt6" in scored
+
+
+def test_a_lone_version_digit_is_part_of_the_name() -> None:
+    from ai_daily.normalize import title_product_identifiers
+
+    assert "grok4" in title_product_identifiers("xAI ships Grok 4 to every tier")
+
+
+def test_a_comparison_does_not_weld_two_launches_together() -> None:
+    # "…matching Anthropic's pricing for Claude Fable 5.1" and "Muse Spark 1.3 >>
+    # Fable 5" chained the Astra, Muse Spark and Fable stories into one 29-item
+    # cluster that a Meta retweet then got to name.
+    events = cluster_items(
+        [
+            item(
+                "1",
+                "https://techmeme.com/price",
+                "OpenAI prices GPT-6 Astra at $10/1M input tokens and $50/1M output tokens, "
+                "matching Anthropic's pricing for Claude Fable 5.1",
+            ),
+            item(
+                "2", "https://the-decoder.com/fable", "Claude Fable 5.1 decoded a royalist message"
+            ),
+            item("3", "https://x.com/tim", "Muse Spark 1.3 >> Fable 5 on every eval I ran"),
+        ]
+    )
+    assert len(events) == 3
+
+
+def test_a_joint_launch_still_anchors_on_both_models() -> None:
+    from ai_daily.normalize import title_product_identifiers
+
+    both = title_product_identifiers("Introducing Claude Fable 5.1 and Claude Mythos 5.1")
+    assert {"fable51", "mythos51"} <= both
+
+
+def test_product_lexicon_learns_a_bare_model_name_from_two_publishers() -> None:
+    from ai_daily.normalize import product_lexicon
+
+    named = [
+        item("1", "https://openai.com/index/safety", "Safety overview: GPT-6 Astra"),
+        item("2", "https://techmeme.com/launch", "OpenAI launches GPT-6 Astra for Daybreak"),
+    ]
+    assert "astra" in product_lexicon(named)
+
+
+def test_product_lexicon_refuses_one_publisher_and_the_vendor_itself() -> None:
+    from ai_daily.normalize import product_lexicon
+
+    once = [
+        item("1", "https://openai.com/index/legora", "Legora reviewed 41 files with GPT-6 Astra")
+    ]
+    assert product_lexicon(once) == frozenset()
+
+    vendor = [
+        value.model_copy(update={"source_label": "OpenAI"})
+        for value in (
+            item("1", "https://openai.com/a", "OpenAI GPT-6 Astra ships today"),
+            item("2", "https://techmeme.com/b", "OpenAI GPT-6 Astra reaches the API"),
+        )
+    ]
+    assert "openai" not in product_lexicon(vendor)
+
+
+def test_a_bare_product_name_merges_the_reports_that_never_say_the_version() -> None:
+    # TechCrunch and TestingCatalog covered the GPT-6 launch without a digit in
+    # sight, so no anchor could ever reach them and the day's biggest story
+    # published from one blog post.
+    from ai_daily.normalize import product_lexicon
+
+    lexicon = product_lexicon(
+        [
+            item("0", "https://openai.com/index/safety", "Safety overview: GPT-6 Astra"),
+            item("1", "https://techmeme.com/launch", "OpenAI launches GPT-6 Astra for Daybreak"),
+        ]
+    )
+    events = cluster_items(
+        [
+            item(
+                "2",
+                "https://techmeme.com/launch",
+                "OpenAI launches GPT-6 Astra, initially for customers in its Daybreak program",
+            ),
+            item(
+                "3",
+                "https://techcrunch.com/astra",
+                "OpenAI launches Astra, its powerful (and controversial) new model",
+            ),
+        ],
+        48,
+        lexicon,
+    )
+    assert len(events) == 1
+
+
+def test_a_bare_name_alone_does_not_merge_a_comparison_into_a_launch() -> None:
+    """One word of agreement is all a comparison shares with what it compares to.
+
+    "RT shirish: …Meta's new model is already ranked above Fable 5" shares only
+    the word Fable with Anthropic's launch, and on that alone it welded the
+    Fable and Muse Spark stories into a single 25-item cluster.
+    """
+
+    from ai_daily.normalize import product_lexicon
+
+    lexicon = product_lexicon(
+        [
+            item("0", "https://anthropic.com/a", "Introducing Claude Fable 5.1 today"),
+            item("1", "https://techmeme.com/b", "Anthropic ships Claude Fable 5.1 to the API"),
+        ]
+    )
+    assert "fable" in lexicon
+    events = cluster_items(
+        [
+            item("2", "https://aws.amazon.com/f", "Introducing Claude Fable 5.1 on AWS"),
+            item("3", "https://x.com/shirish", "Meta model already ranked above Fable"),
+        ],
+        48,
+        lexicon,
+    )
+    assert len(events) == 2
+
+
+def test_a_chinese_comparison_does_not_merge_the_model_it_beats() -> None:
+    events = cluster_items(
+        [
+            item(
+                "1",
+                "https://ithome.com/a",
+                "Meta 发布最强 AI 模型 Muse Spark 1.3，编码能力超 GPT-5.6 Sol",
+            ),
+            item(
+                "2", "https://x.com/devs", "GPT-5.6 Sol helps teams orchestrate complex agent work"
+            ),
+        ]
+    )
+    assert len(events) == 2

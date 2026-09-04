@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from email.utils import parsedate_to_datetime
+from html import unescape
 from types import TracebackType
 from typing import Any, TypedDict, cast
 from urllib.parse import urljoin, urlsplit
@@ -172,6 +173,20 @@ def _published_from_text(value: str, default_timezone: tzinfo = UTC) -> datetime
             .astimezone(UTC)
         )
     return None
+
+
+def _title_text(value: str) -> str:
+    """Collapse whitespace and resolve entities the feed escaped one time too many.
+
+    Techmeme and TestingCatalog hand feedparser titles that still read
+    "OpenAI&#x27;s Astra" and "OpenAI&#8217;s Astra" after its own unescaping
+    pass. The entity reaches the page as written, and the tokenizer reads
+    openaix27 and openai8217 as product names - anchors that belong to no
+    product and sort ahead of the real one. The renderer escapes on output, so
+    resolving here is where it belongs.
+    """
+
+    return " ".join(unescape(value).split())
 
 
 def _plain_text(value: str) -> str:
@@ -661,7 +676,7 @@ class Collector:
                     **_source_fields(source),
                     source_item_id=identifier,
                     url=url,
-                    title=str(title).strip(),
+                    title=_title_text(str(title)),
                     summary=_entry_body(entry),
                     published_at=_published(
                         entry.get("published_parsed") or entry.get("published")
@@ -779,7 +794,7 @@ class Collector:
                 **_source_fields(source),
                 source_item_id=str(entry.id),
                 url=HttpUrl(str(entry.link)),
-                title=" ".join(str(entry.title).split()),
+                title=_title_text(str(entry.title)),
                 summary=" ".join(str(entry.get("summary", "")).split()),
                 published_at=_published(entry.get("published")),
                 discovered_at=now,

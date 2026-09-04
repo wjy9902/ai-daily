@@ -130,6 +130,16 @@ DashScope 未配置，所以主备都不用它。两个 DeepSeek 模型都会产
    54 个请求里的 40 个却只花 ¥0.45，规划只用 5 个请求却是最贵的调用。份额得大到
    够判定用请求，规划的钱就只能是同一个比例的零头。已拆成 `STAGE_REQUEST_SHARE`
    与 `STAGE_COST_SHARE` 两张表，**没有抬高 ¥8 上限**——钱仍然是真正的安全阀。
+5. **转推当簇代表**：2026-09-04 合并后的 GPT-6 事件由 `x-openai-devs` 的一条
+   「RT Hebbia: Astra set a new high…」当选 primary——tier A + official 排最前，
+   而那天官方站点 403、@OpenAI 未发帖，同 tier 里只剩转推。影响面是
+   `canonical_url` 和送给编辑的 event title；读者看到的来源列表来自 items，
+   标题由编辑另写，所以没有改。真要修，得先决定「官方账号转推第三方评价」
+   算不算第一方——它同时喂 `lead_is_corroborated` 的第一方分支，不该顺手改。
+6. **OpenAI 没有可用的第一方发布入口**：见 `config/sources.yaml` 里
+   `openai-news` 上方的注释。发布帖只在 `openai.com/index/<slug>`，不进
+   `/news` 列表，站点对非浏览器客户端全线 403（生产出口实测），
+   RSSHub 抓的是同一个列表。目前靠跨媒体聚类补上。
 
 ## 常用命令
 

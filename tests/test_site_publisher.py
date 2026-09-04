@@ -14,6 +14,7 @@ import factories
 import pytest
 
 from ai_daily import cli
+from ai_daily.degradation import FAILURE_REASON, FailureClass
 from ai_daily.publication import DailyPublication, PublicationLevel
 from ai_daily.site_publisher import (
     PublicationRefused,
@@ -465,3 +466,53 @@ def test_the_lock_is_released_for_the_next_run(layout: SiteLayout) -> None:
 
     with publication_lock(layout):
         assert layout.lock_file.exists()
+
+
+def test_a_rerun_that_restores_the_lead_replaces_a_larger_demoted_issue(
+    layout: SiteLayout,
+) -> None:
+    """2026-09-04: the GPT-6 launch published as a follow item and stayed there.
+
+    04:20 carried 26 stories with the lead demoted for want of corroboration.
+    07:00 and 08:30 both had what the lead needed and were refused for carrying
+    25 and 24 — the level cannot separate them, because LEAD_UNCORROBORATED
+    caps at L1 either way.
+    """
+
+    demoted = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 6)],
+        degradation_reasons=[FAILURE_REASON[FailureClass.LEAD_UNCORROBORATED]],
+    )
+    publish_site(layout, demoted, SITE)
+
+    intact = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 4)],
+        degradation_reasons=["详报证据不足"],
+    )
+    assert guard_same_day_overwrite(layout, intact) is None
+    publish_site(layout, intact, SITE)
+    assert_serves(layout, intact)
+
+
+def test_an_issue_that_demotes_the_lead_cannot_replace_one_that_did_not(
+    layout: SiteLayout,
+) -> None:
+    intact = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 4)],
+    )
+    publish_site(layout, intact, SITE)
+
+    demoted = factories.publication(
+        level=PublicationLevel.L1,
+        details=[factories.story_card()],
+        briefs=[factories.brief_card(i) for i in range(1, 9)],
+        degradation_reasons=[FAILURE_REASON[FailureClass.LEAD_UNCORROBORATED]],
+    )
+    with pytest.raises(PublicationRefused, match="would not improve"):
+        guard_same_day_overwrite(layout, demoted)

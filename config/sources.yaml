@@ -1,5 +1,15 @@
 sources:
   # Frontier labs and platform vendors — first-party material.
+  # This feed does not carry every launch, and there is no second inlet to add.
+  # GPT-6 Astra shipped at openai.com/index/gpt-6-astra/ on 2026-09-03 and the
+  # feed never listed it: only the safety overview and two customer stories.
+  # Probed from the production egress that afternoon and again ten hours later
+  # — openai.com/news/, /index/ and the article itself all answer 403 to
+  # non-browser clients, the RSSHub openai/news route scrapes the same listing
+  # and is missing it too, and neither @OpenAI nor @ChatGPT posted it. An
+  # html_index source here would fail on every run, which is health-report
+  # noise rather than coverage. What reached us was @sama and @gdb, and the
+  # story is carried by cross-outlet clustering instead.
   - name: openai-news
     display_name: OpenAI
     kind: rss

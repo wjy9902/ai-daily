@@ -885,3 +885,52 @@ def test_low_tier_a_coverage_is_recorded_but_never_fatal() -> None:
     assert tracker.failures == [FailureClass.SOURCE_COVERAGE_LOW]
     assert tracker.ceiling() is PublicationLevel.L0
     assert tracker.blocked is False
+
+
+async def test_the_product_lexicon_is_learned_from_items_the_window_rejected(
+    tmp_path: Path,
+) -> None:
+    """The name has to be learnable before the launch it names is fresh.
+
+    On 2026-09-04 the only posts writing "GPT-6 Astra" out in full at 04:20 were
+    older than the collection window. Building the lexicon from the fresh items
+    would have learned the name hours after the story needed it, so it is built
+    from everything collected.
+    """
+
+    timezone = ZoneInfo("Asia/Shanghai")
+    target_date = date(2026, 8, 1)
+    fresh_at = datetime(2026, 7, 31, 23, tzinfo=timezone)
+    stale_at = datetime(2026, 7, 20, 9, tzinfo=timezone)
+
+    def raw(index: int, title: str, published_at: datetime) -> RawItem:
+        return RawItem(
+            source=f"source-{index}",
+            source_tier=SourceTier.A,
+            source_item_id=str(index),
+            url=f"https://publisher-{index}.example/{index}",
+            title=title,
+            published_at=published_at,
+            discovered_at=published_at,
+        )
+
+    teaching = [
+        raw(1, "Safety overview: AI Vantage 7 arrives", stale_at),
+        raw(2, "AI Vantage 7 reaches the API", stale_at),
+    ]
+    reporting = [
+        raw(3, "A lab launches Vantage, its most capable coding model", fresh_at),
+        raw(4, "Vantage sets a coding record, the lab says", fresh_at),
+    ]
+
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
+    tracker = DegradationTracker()
+
+    _, candidates = await pipeline._candidates(
+        target_date, [*teaching, *reporting], tmp_path, tracker
+    )
+
+    assert len(candidates) == 1
+    assert len(candidates[0].items) == 2
