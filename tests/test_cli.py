@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, tzinfo
 from pathlib import Path
 from types import SimpleNamespace
@@ -180,3 +181,49 @@ async def test_a_daily_run_still_locks_out_a_second_daily_run(
             await cli._run(args)
 
     assert not layout.publication_path(date(2026, 9, 3)).exists()
+
+
+# ------------------------------------- what status.json describes after a run
+
+
+def _outcome(publication: object, layout: SiteLayout) -> RunOutcome:
+    return RunOutcome(
+        artifact=RunArtifact(
+            run_id="rerun",
+            target_date=factories.TARGET_DATE,
+            items=[],
+            health=[],
+            events=[],
+            model_runs=[],
+        ),
+        publication=publication,  # type: ignore[arg-type]
+        tracker=DegradationTracker(),
+        run_dir=layout.root / "artifacts",
+    )
+
+
+def test_a_refused_rerun_leaves_status_describing_the_live_issue(tmp_path: Path) -> None:
+    """2026-09-04: status.json reported an issue that was never published.
+
+    The 14:44 rerun carried 9 details and 16 briefs and the guard refused it;
+    the record on disk had 9 and 19. Status then named the published date beside
+    the rejected run's counts, so reading it to see what was live was wrong.
+    """
+
+    layout = SiteLayout(tmp_path / "site")
+    layout.ensure()
+    live = factories.publication(briefs=[factories.brief_card(index) for index in range(3)])
+    publish_site(layout, live, "https://example.com")
+    poorer = factories.publication(
+        briefs=[factories.brief_card(1)], highlight="更少的一期。", generated_at=live.generated_at
+    )
+
+    exit_code = cli._publish_daily(
+        layout, _outcome(poorer, layout), {"run_id": "rerun"}, "https://example.com"
+    )
+
+    status = json.loads(layout.status_file.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert status["action"] == "refused"
+    assert status["brief_count"] == len(live.briefs) == 3
+    assert status["level"] == live.level.value
