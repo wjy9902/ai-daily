@@ -86,6 +86,7 @@ class PaperCard(StrictModel):
     title: str = Field(min_length=1, max_length=500)
     abstract: str = Field(default="", max_length=20_000)
     authors: str | None = Field(default=None, max_length=4000)
+    published_at: datetime | None = None
     arxiv_url: HttpUrl
     hf_url: HttpUrl | None = None
     alphaxiv_url: HttpUrl | None = None
@@ -111,6 +112,11 @@ class PapersPublication(StrictModel):
     def canonical_payload(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json")
         payload.pop("marker", None)
+        # Papers published before this field existed have no key at all. Omitting
+        # a missing date keeps their persisted checksum valid during rebuilds.
+        for paper in payload["papers"]:
+            if paper["published_at"] is None:
+                paper.pop("published_at")
         return payload
 
     def compute_marker(self) -> str:

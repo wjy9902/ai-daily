@@ -428,6 +428,7 @@ def _paper_card(
         title=candidate.title,
         abstract=candidate.abstract,
         authors=candidate.authors,
+        published_at=candidate.submitted_at,
         arxiv_url=candidate.arxiv_url,
         hf_url=candidate.hf_url,
         alphaxiv_url=alpha,
