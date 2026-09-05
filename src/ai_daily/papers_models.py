@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 PAPERS_SCHEMA_VERSION: Literal[1] = 1
 PaperTopic = Literal["agent", "模型架构与训练", "推理与对齐", "其他"]
+AUTHORS_MAX_LENGTH = 4000
 
 
 class StrictModel(BaseModel):
@@ -35,7 +36,7 @@ class PaperCandidate(StrictModel):
     title_key: str = Field(min_length=1)
     title: str = Field(min_length=1, max_length=500)
     abstract: str = Field(default="", max_length=20_000)
-    authors: str | None = Field(default=None, max_length=4000)
+    authors: str | None = Field(default=None, max_length=AUTHORS_MAX_LENGTH)
     submitted_at: datetime | None = None
     arxiv_url: HttpUrl
     hf_url: HttpUrl | None = None
@@ -85,7 +86,7 @@ class PaperCard(StrictModel):
     arxiv_id: str | None
     title: str = Field(min_length=1, max_length=500)
     abstract: str = Field(default="", max_length=20_000)
-    authors: str | None = Field(default=None, max_length=4000)
+    authors: str | None = Field(default=None, max_length=AUTHORS_MAX_LENGTH)
     published_at: datetime | None = None
     arxiv_url: HttpUrl
     hf_url: HttpUrl | None = None
