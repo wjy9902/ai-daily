@@ -27,6 +27,7 @@ from .models import RawItem
 from .papers_config import PapersConfig, load_papers_models
 from .papers_fulltext import FullPaper, fetch_full_papers
 from .papers_models import (
+    AUTHORS_MAX_LENGTH,
     DeepRead,
     PaperCandidate,
     PaperCard,
@@ -108,6 +109,30 @@ def build_candidates(items: list[RawItem], config: PapersConfig) -> list[PaperCa
     return list(merged.values())
 
 
+def _byline(authors: str | None) -> str | None:
+    """Cap an author list to the field bound without cutting a name in half.
+
+    HF and arXiv both hand back the complete byline, and a 200+ author paper
+    overruns AUTHORS_MAX_LENGTH. The byline is display metadata, so it gets
+    elided here rather than being allowed to fail the whole candidate pool.
+    """
+    if not authors:
+        return None
+    if len(authors) <= AUTHORS_MAX_LENGTH:
+        return authors
+    names = [name.strip() for name in authors.split(",") if name.strip()]
+    suffix = f" 等 {len(names)} 人"
+    kept: list[str] = []
+    used = 0
+    for name in names:
+        extra = len(name) + (2 if kept else 0)
+        if used + extra + len(suffix) > AUTHORS_MAX_LENGTH:
+            break
+        kept.append(name)
+        used += extra
+    return (", ".join(kept) + suffix).strip()
+
+
 def _candidate_from_item(
     item: RawItem,
     identifier: str | None,
@@ -132,7 +157,7 @@ def _candidate_from_item(
         title_key=title_key,
         title=item.title,
         abstract=item.summary,
-        authors=item.author,
+        authors=_byline(item.author),
         submitted_at=item.published_at,
         arxiv_url=url,
         hf_url=item.url if is_hf else None,

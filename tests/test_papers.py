@@ -35,6 +35,7 @@ from ai_daily.papers import (
 from ai_daily.papers_config import load_papers_config
 from ai_daily.papers_fulltext import clean_arxiv_html, fetch_full_papers
 from ai_daily.papers_models import (
+    AUTHORS_MAX_LENGTH,
     DeepRead,
     ExperimentClaim,
     PaperCandidate,
@@ -365,6 +366,40 @@ def test_hf_and_arxiv_versions_merge_to_one_candidate() -> None:
     assert merged[0].arxiv_id == "2609.00001"
     assert merged[0].signals.hf_listed is True
     assert merged[0].authors == "Alice, Bob"
+
+
+def test_a_two_hundred_author_byline_does_not_sink_the_candidate_pool() -> None:
+    config = load_papers_config()
+    names = [f"Author Name {index:03d}" for index in range(244)]
+    crowded = RawItem(
+        source="papers-hf-daily",
+        source_tier=SourceTier.A,
+        source_item_id="2609.04173",
+        url=HttpUrl("https://huggingface.co/papers/2609.04173"),
+        title="Last Translation Benchmark",
+        summary="A benchmark with a very long byline",
+        published_at=datetime(2026, 9, 5, tzinfo=UTC),
+        discovered_at=datetime(2026, 9, 5, tzinfo=UTC),
+        author=", ".join(names),
+        metrics={"upvotes": 12},
+    )
+    ordinary = crowded.model_copy(
+        update={
+            "source_item_id": "2609.00001",
+            "url": HttpUrl("https://huggingface.co/papers/2609.00001"),
+            "title": "Ordinary paper",
+            "author": "Alice, Bob",
+        }
+    )
+
+    candidates = build_candidates([crowded, ordinary], config)
+
+    assert len(candidates) == 2
+    crowded_candidate = next(item for item in candidates if item.arxiv_id == "2609.04173")
+    assert crowded_candidate.authors is not None
+    assert len(crowded_candidate.authors) <= AUTHORS_MAX_LENGTH
+    assert crowded_candidate.authors.startswith("Author Name 000, Author Name 001")
+    assert crowded_candidate.authors.endswith("等 244 人")
 
 
 async def test_missing_arxiv_html_becomes_a_simple_read_reason() -> None:
