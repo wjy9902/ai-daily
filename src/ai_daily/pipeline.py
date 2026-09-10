@@ -30,6 +30,7 @@ from ai_daily.content import (
 )
 from ai_daily.degradation import DegradationTracker, FailureClass
 from ai_daily.history import local_historical_index, recent_published_items
+from ai_daily.item_store import ItemStore, ItemStoreError, merge_sightings
 from ai_daily.model_gateway import (
     MissingProviderSecret,
     ModelGateway,
@@ -267,8 +268,17 @@ class DailyPipeline:
         self.layout.ensure()
         self._bind_daily_budget(target_date)
 
-        items, health = await self._collect(run_dir, tracker)
-        filtered, candidates = await self._candidates(target_date, items, run_dir, tracker)
+        # One window for the whole run: the store query, the freshness gate and
+        # the artifacts all describe the same cutoff.
+        cutoff, run_time = collection_window(
+            target_date,
+            self.config.pipeline.timezone,
+            self.config.pipeline.collection_window_hours,
+        )
+        items, health = await self._collect(run_dir, tracker, cutoff, run_time)
+        filtered, candidates = await self._candidates(
+            target_date, items, run_dir, tracker, cutoff, run_time
+        )
 
         if tracker.blocked or not candidates:
             publication = build_brief_only_publication(
@@ -344,17 +354,51 @@ class DailyPipeline:
         return build_ranked_publication(target_date, candidates, tracker)
 
     async def _collect(
-        self, run_dir: Path, tracker: DegradationTracker
+        self,
+        run_dir: Path,
+        tracker: DegradationTracker,
+        cutoff: datetime,
+        run_time: datetime,
     ) -> tuple[list[RawItem], list[SourceHealth]]:
-        items, health = await self.collector.collect(self.config.sources)
+        """Fetch the feeds now, then widen the result with what the store has seen.
+
+        The live fetch is written to the store too, so the issue run is one
+        more collection round rather than a separate path. A store that cannot
+        be opened costs nothing but the widening: the run continues on the live
+        fetch alone, which is exactly what it did before the store existed.
+        """
+
+        started = datetime.now(UTC)
+        live, health = await self.collector.collect(self.config.sources)
+        stored: list[RawItem] = []
+        store_audit: dict[str, object] = {}
+        try:
+            with ItemStore(self.layout.item_store) as store:
+                stats = store.merge_many(live, started)
+                store.record_round("publish", started, datetime.now(UTC), health)
+                stored = store.read_window(
+                    cutoff, {source.name: source for source in self.config.sources}
+                )
+                latest = store.latest_round()
+                store_audit = {
+                    "stored_in_window": len(stored),
+                    "live_inserted": stats.inserted,
+                    "live_updated": stats.updated,
+                    "latest_round_at": latest.finished_at.isoformat() if latest else None,
+                }
+        except ItemStoreError as error:
+            store_audit = {"store_error": str(error)}
+        items = merge_sightings(live, stored)
+        store_audit["merged"] = len(items)
         write_artifact(
             run_dir / "sources.json",
             {
                 "items": [item.model_dump(mode="json") for item in items],
                 "health": [item.model_dump(mode="json") for item in health],
+                "store": store_audit,
             },
         )
-        self._check_source_health(health, tracker)
+        self._check_source_health(health, tracker, items)
         return items, health
 
     async def _candidates(
@@ -363,13 +407,10 @@ class DailyPipeline:
         items: list[RawItem],
         run_dir: Path,
         tracker: DegradationTracker,
+        cutoff: datetime,
+        run_time: datetime,
     ) -> tuple[list[RawItem], list[Event]]:
         timezone = ZoneInfo(self.config.pipeline.timezone)
-        cutoff, run_time = collection_window(
-            target_date,
-            self.config.pipeline.timezone,
-            self.config.pipeline.collection_window_hours,
-        )
         filtered, freshness_audit = filter_fresh_items(items, cutoff, run_time, timezone)
         write_artifact(run_dir / "freshness.json", freshness_audit)
         # Built from everything collected, not from the fresh items: a vendor's
@@ -534,7 +575,10 @@ class DailyPipeline:
         return decisions, editorial_plan, drafts
 
     def _check_source_health(
-        self, health: Sequence[SourceHealth], tracker: DegradationTracker
+        self,
+        health: Sequence[SourceHealth],
+        tracker: DegradationTracker,
+        items: Sequence[RawItem] = (),
     ) -> None:
         """Record coverage, but never stop the run on it.
 
@@ -542,12 +586,21 @@ class DailyPipeline:
         news: it can read 100% on a day with nothing worth publishing and 40%
         on a day with plenty. Whether to publish is decided later, on the
         actual candidate count.
+
+        A Tier A source that failed this minute but whose items the store
+        still carries has not gone missing from the issue, so it counts as
+        covered: the health list says how the connection is, ``items`` says
+        what evidence the issue has.
         """
 
         tier_a = [item for item in health if item.tier == SourceTier.A]
         if not tier_a:
             raise QualityGateFailed("no Tier A sources are configured")
-        successful = sum(item.status in {"ok", "partial", "not_modified"} for item in tier_a)
+        represented = {item.source for item in items}
+        successful = sum(
+            item.status in {"ok", "partial", "not_modified"} or item.source in represented
+            for item in tier_a
+        )
         coverage = successful / len(tier_a)
         if coverage < self.config.pipeline.tier_a_min_coverage:
             tracker.record(FailureClass.SOURCE_COVERAGE_LOW)

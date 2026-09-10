@@ -72,10 +72,28 @@ uv run python scripts/render_fixture.py \
 
 ## 正式调度
 
-- 04:20 Asia/Shanghai：完整生成、发布、构建和验证。
-- 05:05：若当日页面已验证则退出，否则幂等恢复。
-- 07:00：只验证；失败时重建站点，不调用模型。
-- 三段任务共享 `ai-daily-publication-lock`，禁止并发写入。
+采集和出刊是两个定时器（设计与理由见 `docs/plan/COLLECT-THEN-PUBLISH.md`）：
+
+- `ai-daily-collect.timer`：00:10、03:10、06:00、09:10、12:10、15:10、18:10、21:10
+  各跑一次 `ai-daily collect`，只抓源、写 `items.sqlite`，不调模型。状态在
+  `status/collect.json`；`status.json` 里 `collect_stale = true` 表示 4 小时没有新一轮。
+- `ai-daily.timer`：06:30 出刊，读条目库 36 小时窗口 ∪ 实时采集，调一轮模型，发布。
+  07:30 是重试：今天没有刊、或页面不可见、或只有 L2 快讯刊时才动作；已有 L1/L0 直接退出。
+- `ai-daily-papers.timer`：07:45，在日报之后。
+- 发布事务共享 `.publish.lock`；日报整轮持 `.daily-run.lock`；采集持 `.collect.lock`。
+  `ops/deploy.sh` 三把都拿，采集或出刊进行中不会被部署打断。
+
+同一天的刊只有级别升高才会被替换。要换成另一轮已经建好的刊：
+
+```bash
+ai-daily publish-artifact /www/wwwroot/ai-daily/artifacts/<date>/<run>/publication.json --replace
+```
+
+旧记录会先备份为 `published/<date>.replaced-<ts>.json`。
+
+条目库出错时：`collect` 非零退出并记 journal；出刊退化为只用实时采集继续，`sources.json`
+的 `store` 段带 `store_error`。不做自动重建，人工处理：停 `ai-daily-collect.timer`，把
+`items.sqlite`、`items.sqlite-wal`、`items.sqlite-shm` 改名，下一轮采集建空库。
 
 ## 失败处理
 

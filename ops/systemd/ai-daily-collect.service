@@ -1,0 +1,63 @@
+[Unit]
+Description=AI Daily source collection round (no model calls)
+Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/COLLECT-THEN-PUBLISH.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ai-daily
+Group=ai-daily
+WorkingDirectory=/www/wwwroot/ai-daily/app
+# Same hardening as ai-daily.service: this process parses hostile web content
+# on a host that also stores other services' credentials.
+Environment=HOME=/www/wwwroot/ai-daily/toolchain
+Environment=UV_CACHE_DIR=/www/wwwroot/ai-daily/toolchain/cache
+Environment=UV_PYTHON_INSTALL_DIR=/www/wwwroot/ai-daily/toolchain/python
+Environment=AI_DAILY_SITE_ROOT=/www/wwwroot/ai-daily
+ExecStart=/www/wwwroot/ai-daily/toolchain/bin/uv run --frozen ai-daily collect
+
+# A round is one fetch of every source under per-source timeouts (60s at
+# most each, five per host in flight); measured rounds take one to two
+# minutes. Fifteen minutes means something is wrong, not slow.
+TimeoutStartSec=900
+
+MemoryHigh=400M
+MemoryMax=600M
+CPUWeight=30
+Nice=10
+IOWeight=50
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+
+ReadWritePaths=/www/wwwroot/ai-daily
+ReadOnlyPaths=/www/wwwroot/ai-daily/app
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-daily-collect
+
+[Install]
+WantedBy=multi-user.target

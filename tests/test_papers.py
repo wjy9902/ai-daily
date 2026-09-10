@@ -602,7 +602,8 @@ def test_systemd_contract_and_cli_have_no_papers_date_option() -> None:
     timeout = int(re.search(r"TimeoutStartSec=(\d+)", service).group(1))  # type: ignore[union-attr]
     assert timeout >= 15 * 60 + DEEP_READ_DEADLINE_SECONDS + 10 * 60
     assert "ai-daily papers --mode publish" in service
-    assert "OnCalendar=*-*-* 06:10:00" in timer
+    # After the 06:30 issue and its 07:30 retry (tests/test_timers.py holds the order).
+    assert "OnCalendar=*-*-* 07:45:00" in timer
     from ai_daily.cli import build_parser
 
     args = build_parser().parse_args(["papers", "--mode", "dry-run"])

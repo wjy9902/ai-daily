@@ -351,7 +351,9 @@ async def test_candidate_filter_rejects_unverified_publication_dates(
     pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
     tracker = DegradationTracker()
 
-    filtered, candidates = await pipeline._candidates(run_time.date(), undated, tmp_path, tracker)
+    filtered, candidates = await pipeline._candidates(
+        run_time.date(), undated, tmp_path, tracker, cutoff, run_time
+    )
 
     assert filtered == []
     assert candidates == []
@@ -437,7 +439,15 @@ async def test_backfill_scores_against_target_date_not_wall_clock(
     pipeline = DailyPipeline(config, Secrets(), client=_client(), layout=_site(tmp_path))
     tracker = DegradationTracker()
 
-    _, candidates = await pipeline._candidates(target_date, items, tmp_path, tracker)
+    _, candidates = await pipeline._candidates(
+        target_date,
+        items,
+        tmp_path,
+        tracker,
+        *collection_window(
+            target_date, config.pipeline.timezone, config.pipeline.collection_window_hours
+        ),
+    )
 
     assert len(candidates) == 17
     assert captured["now"].astimezone(timezone).date() == target_date
@@ -929,7 +939,13 @@ async def test_the_product_lexicon_is_learned_from_items_the_window_rejected(
     tracker = DegradationTracker()
 
     _, candidates = await pipeline._candidates(
-        target_date, [*teaching, *reporting], tmp_path, tracker
+        target_date,
+        [*teaching, *reporting],
+        tmp_path,
+        tracker,
+        *collection_window(
+            target_date, config.pipeline.timezone, config.pipeline.collection_window_hours
+        ),
     )
 
     assert len(candidates) == 1

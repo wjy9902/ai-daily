@@ -4,7 +4,9 @@ Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/PAPERS.md
 
 [Timer]
 # Server local time is Asia/Shanghai. This avoids every daily digest window.
-OnCalendar=*-*-* 06:10:00
+# After the 06:30 issue and its 07:30 retry: the paper selection reads the
+# daily's latest run for cross signals, and at 06:10 that was yesterday's.
+OnCalendar=*-*-* 07:45:00
 Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=60s

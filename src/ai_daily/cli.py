@@ -14,6 +14,7 @@ import httpx
 from ai_daily.artifacts import write_artifact
 from ai_daily.benchmark import benchmark_models
 from ai_daily.config import AppConfig, Secrets, load_config
+from ai_daily.item_store import ItemStore
 from ai_daily.papers import PapersPipeline, build_papers_publication, publication_gate
 from ai_daily.papers_config import load_papers_config
 from ai_daily.papers_models import (
@@ -22,9 +23,14 @@ from ai_daily.papers_models import (
     PapersRunArtifact,
     load_papers_publication,
 )
-from ai_daily.pipeline import DailyPipeline, RunOutcome
+from ai_daily.pipeline import DailyPipeline, RunOutcome, collection_window
 from ai_daily.probe import probe_sources
-from ai_daily.publication import LEVEL_NOTICE, DailyPublication, PublicationLevel
+from ai_daily.publication import (
+    LEVEL_NOTICE,
+    DailyPublication,
+    PublicationLevel,
+    load_publication,
+)
 from ai_daily.render import render_fallback
 from ai_daily.site_publisher import (
     RSS_LIMIT,
@@ -32,6 +38,7 @@ from ai_daily.site_publisher import (
     SiteLayout,
     activate_release,
     build_archive,
+    collect_lock,
     daily_run_lock,
     hold_previous_release,
     publication_lock,
@@ -43,6 +50,7 @@ from ai_daily.site_publisher import (
     render_release,
     write_status,
 )
+from ai_daily.sources import Collector
 from ai_daily.verifier import PublicationNotVisible, verify_publication
 
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -137,6 +145,23 @@ async def _run(args: argparse.Namespace) -> int:
     # below: gathering and drafting under it starved the papers issue for a
     # full 25 minutes, longer than the ten it is willing to wait.
     with daily_run_lock(layout):
+        # Mark the run as started before anything can kill it, so a status file
+        # that still says "running" hours later reads as the failure it is,
+        # rather than as the previous run's success.
+        write_status(
+            layout,
+            _status_payload(
+                layout,
+                _served_publication(layout),
+                {
+                    "action": "running",
+                    "target_date": target.isoformat(),
+                    "mode": args.mode,
+                    "started_at": datetime.now(UTC).isoformat(),
+                    **_collect_staleness(layout),
+                },
+            ),
+        )
         async with httpx.AsyncClient(follow_redirects=True) as client:
             pipeline = DailyPipeline(config, secrets, client=client, layout=layout)
             outcome = await pipeline.run(target, publish=publish)
@@ -148,6 +173,7 @@ async def _run(args: argparse.Namespace) -> int:
             "budget": pipeline.gateway.ledger.snapshot(),
             "degradation_detail": dict(outcome.tracker.details),
             "sources": [item.model_dump(mode="json") for item in outcome.artifact.health],
+            **_collect_staleness(layout),
         }
 
         if not publish:
@@ -207,12 +233,24 @@ def _publish_daily(
     return 0
 
 
-async def _daily(args: argparse.Namespace) -> int:
-    """The timer entry point.
+#: Levels that end the day: the model stages ran and an issue with editorial
+#: content is live. A rerun would spend a full round to build another issue of
+#: the same level and then be refused by the same-day guard.
+SETTLED_LEVELS = frozenset({PublicationLevel.L0, PublicationLevel.L1})
 
-    Verifies what is already live before spending anything. A full issue means
-    there is nothing to do and the window costs nothing; a degraded issue is
-    re-run so a later window can upgrade it.
+
+async def _daily(args: argparse.Namespace) -> int:
+    """The timer entry point: one issue a day, and a retry only for failure.
+
+    1. No record for today: run and publish.
+    2. A record exists: check the site actually serves it. If not, rebuild the
+       site from the record and check again - this is the recovery for a
+       publish transaction killed between committing the record and flipping
+       ``current``, at any level, not only L0.
+    3. The record is L1 or L0: nothing to do. L1 is an issue whose editorial
+       stages succeeded; rerunning it costs a full round and is refused.
+    4. The record is a brief-only L2: the model stages failed, so run again;
+       the guard admits the result only if it reaches L1 or L0.
     """
 
     config = load_config(Path(args.config_dir))
@@ -228,18 +266,160 @@ async def _daily(args: argparse.Namespace) -> int:
     except ValueError:
         existing = None
 
-    if existing is not None and existing.level is PublicationLevel.L0:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            try:
-                verified = await verify_publication(existing, base_url, client)
-            except PublicationNotVisible as error:
-                _emit({"action": "republish", "reason": str(error)})
-            else:
-                _emit({"action": "noop", "level": verified.level.value})
-                return 0
+    if existing is None:
+        args.mode = "publish"
+        return await _run(args)
+
+    if not await _served(existing, base_url):
+        _emit({"action": "republish", "level": existing.level.value})
+        rebuilt = await _rebuild(args)
+        if rebuilt != 0 or not await _served(existing, base_url):
+            write_status(
+                layout,
+                _status_payload(
+                    layout, existing, {"action": "unrecoverable", "target_date": target.isoformat()}
+                ),
+            )
+            _emit({"action": "unrecoverable", "level": existing.level.value})
+            return 1
+
+    if existing.level in SETTLED_LEVELS:
+        _emit({"action": "noop", "level": existing.level.value})
+        return 0
 
     args.mode = "publish"
     return await _run(args)
+
+
+async def _served(publication: DailyPublication, base_url: str) -> bool:
+    """Whether the live site serves exactly this record. Any failure to confirm counts as no."""
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        try:
+            await verify_publication(publication, base_url, client)
+        except (PublicationNotVisible, httpx.HTTPError) as error:
+            _emit({"action": "not_visible", "reason": str(error)})
+            return False
+    return True
+
+
+async def _collect_round(args: argparse.Namespace) -> int:
+    """One collection round: fetch every source, merge into the store, no model calls."""
+
+    config = load_config(Path(args.config_dir))
+    layout = _layout(args)
+    layout.ensure()
+    started = datetime.now(UTC)
+    cutoff, _ = collection_window(
+        datetime.now(BEIJING).date(),
+        config.pipeline.timezone,
+        config.pipeline.collection_window_hours,
+    )
+    with collect_lock(layout):
+        async with Collector() as collector:
+            items, health = await collector.collect(config.sources)
+        finished = datetime.now(UTC)
+        with ItemStore(layout.item_store) as store:
+            stats = store.merge_many(items, finished)
+            pruned = store.prune(finished)
+            record = store.record_round("collect", started, finished, health)
+            total, in_window = store.counts(cutoff)
+    status = {
+        "round_id": record.round_id,
+        "started_at": started.isoformat(),
+        "finished_at": finished.isoformat(),
+        "ok_sources": record.ok_sources,
+        "failed_sources": record.failed_sources,
+        "failed": [item.source for item in health if item.status == "failed"],
+        "fetched": len(items),
+        "inserted": stats.inserted,
+        "updated": stats.updated,
+        "pruned": pruned,
+        "stored": total,
+        "in_window": in_window,
+    }
+    _write_atomic_status(layout.collect_status_file, status)
+    _emit(
+        {
+            "action": "collected",
+            **{
+                k: status[k]
+                for k in (
+                    "round_id",
+                    "ok_sources",
+                    "failed_sources",
+                    "fetched",
+                    "inserted",
+                    "stored",
+                    "in_window",
+                )
+            },
+        }
+    )
+    return 0 if record.ok_sources else 1
+
+
+def _write_atomic_status(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _collect_staleness(layout: SiteLayout) -> dict[str, Any]:
+    """How old the last collection round is, for status.json."""
+
+    if not layout.collect_status_file.exists():
+        return {"collect_age_hours": None, "collect_stale": True}
+    try:
+        payload = json.loads(layout.collect_status_file.read_text(encoding="utf-8"))
+        finished = datetime.fromisoformat(payload["finished_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"collect_age_hours": None, "collect_stale": True}
+    age = (datetime.now(UTC) - finished).total_seconds() / 3600
+    return {"collect_age_hours": round(age, 2), "collect_stale": age > COLLECT_STALE_HOURS}
+
+
+#: A collection round every three hours; four hours without one means the timer stopped.
+COLLECT_STALE_HOURS = 4
+
+
+async def _publish_artifact(args: argparse.Namespace) -> int:
+    """Release an issue an earlier run built, without running anything again.
+
+    ``--replace`` overrides the same-day guard; the record it displaces is
+    backed up first (see publish_site). The timer entry point never takes
+    this path.
+    """
+
+    config = load_config(Path(args.config_dir))
+    secrets = Secrets()
+    layout = _layout(args)
+    layout.ensure()
+    publication = load_publication(Path(args.artifact).read_text(encoding="utf-8"))
+    previous = None
+    try:
+        previous = read_publication(layout, publication.target_date)
+    except ValueError:
+        previous = None
+    with publication_lock(layout):
+        try:
+            release = publish_site(
+                layout, publication, _site_base_url(config, secrets), replace=args.replace
+            )
+        except PublicationRefused as error:
+            _emit({"level": publication.level.value, "refused": str(error)})
+            return 1
+    status = {
+        "action": "replace" if args.replace else "published",
+        "run_id": Path(args.artifact).parent.name,
+        "target_date": publication.target_date.isoformat(),
+        "previous_marker": previous.marker if previous else None,
+        "release": str(release),
+    }
+    write_status(layout, _status_payload(layout, publication, status))
+    _emit({"level": publication.level.value, **status})
+    return 0
 
 
 async def _verify(args: argparse.Namespace) -> int:
@@ -471,6 +651,18 @@ def build_parser() -> argparse.ArgumentParser:
     daily = subparsers.add_parser("daily", help="timer entry point: verify, then run if needed")
     daily.add_argument("--date")
 
+    subparsers.add_parser("collect", help="fetch every source into the item store; no model calls")
+
+    publish_artifact = subparsers.add_parser(
+        "publish-artifact", help="release a publication.json an earlier run built"
+    )
+    publish_artifact.add_argument("artifact", type=Path)
+    publish_artifact.add_argument(
+        "--replace",
+        action="store_true",
+        help="override the same-day guard; the displaced record is backed up first",
+    )
+
     verify = subparsers.add_parser("verify", help="check the live site serves today's issue")
     verify.add_argument("--date")
 
@@ -505,6 +697,8 @@ def main() -> None:
     handlers = {
         "run": _run,
         "daily": _daily,
+        "collect": _collect_round,
+        "publish-artifact": _publish_artifact,
         "verify": _verify,
         "rebuild-site": _rebuild,
         "write-fallback": _write_fallback,

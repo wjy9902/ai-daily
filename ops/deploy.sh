@@ -15,6 +15,8 @@ SITE_ROOT=${AI_DAILY_SITE_ROOT:-/www/wwwroot/ai-daily}
 UV=${UV_BIN:-/home/ai-daily/.local/bin/uv}
 LOCK_FILE="$SITE_ROOT/.publish.lock"
 DAILY_RUN_LOCK_FILE="$SITE_ROOT/.daily-run.lock"
+COLLECT_LOCK_FILE="$SITE_ROOT/.collect.lock"
+UNIT_DIR=${SYSTEMD_UNIT_DIR:-/etc/systemd/system}
 DEPLOYED_REF_FILE="$SITE_ROOT/.deployed-ref"
 PREVIOUS_REF_FILE="$SITE_ROOT/.previous-ref"
 
@@ -48,6 +50,13 @@ if ! flock -n 8; then
     echo "a daily run is in progress; deploy aborted" >&2
     exit 1
 fi
+# The collector runs every three hours and must not have its code swapped out
+# mid-round either.
+exec 7>"$COLLECT_LOCK_FILE"
+if ! flock -n 7; then
+    echo "a collection round is in progress; deploy aborted" >&2
+    exit 1
+fi
 
 cd "$APP_DIR"
 
@@ -78,3 +87,19 @@ fi
 echo "$CURRENT_REF" >"$PREVIOUS_REF_FILE"
 echo "$NEW_REF" >"$DEPLOYED_REF_FILE"
 echo "deployed $NEW_REF"
+
+# systemd units live in the repository but are installed by root. A deploy
+# that changes a timer without the units following it runs the old schedule
+# against new code, so say so loudly (exit 3) rather than finish quietly.
+STALE_UNITS=()
+for unit in "$APP_DIR"/ops/systemd/*.service "$APP_DIR"/ops/systemd/*.timer; do
+    name=$(basename "$unit")
+    if ! cmp -s "$unit" "$UNIT_DIR/$name"; then
+        STALE_UNITS+=("$name")
+    fi
+done
+if [ ${#STALE_UNITS[@]} -gt 0 ]; then
+    echo "systemd units differ from the repository: ${STALE_UNITS[*]}" >&2
+    echo "run as root: $APP_DIR/ops/install-units.sh" >&2
+    exit 3
+fi

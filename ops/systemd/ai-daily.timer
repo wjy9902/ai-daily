@@ -1,22 +1,20 @@
 [Unit]
 Description=AI Daily publication windows
-Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/SELF-HOST-MIGRATION.md
+Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/COLLECT-THEN-PUBLISH.md
 
 [Timer]
 # Server local time is already Asia/Shanghai.
-# 04:20 is the main run. The later windows verify first and cost nothing when
-# the issue is already live at full quality; they only spend model budget when
-# there is something to upgrade.
+# One issue a day. 06:30 reads what ai-daily-collect.timer gathered over the
+# last day and a half plus one live fetch, then runs the model stages once.
+# US afternoon news has settled by 05:00 Beijing; China's own morning news
+# has not started. 07:30 is the retry, and it only spends model budget when
+# 06:30 produced nothing or only a brief-only L2 issue (see cli._daily); an
+# L1 or L0 already live makes it a no-op.
 #
-# 08:30 exists because the US afternoon lands after 04:20: the 2026-08-28
-# benchmark digest led with a Codex quota reset announced around 05:00 Beijing
-# time, which no earlier window could have seen. Adding a window costs judge
-# requests from the shared daily budget — tests/test_budget_staging.py reads
-# the OnCalendar count here and fails if request_limit no longer covers it.
-OnCalendar=*-*-* 04:20:00
-OnCalendar=*-*-* 05:05:00
-OnCalendar=*-*-* 07:00:00
-OnCalendar=*-*-* 08:30:00
+# tests/test_budget_staging.py reads the OnCalendar count here and
+# tests/test_timers.py holds the schedule to this shape.
+OnCalendar=*-*-* 06:30:00
+OnCalendar=*-*-* 07:30:00
 Persistent=true
 AccuracySec=30s
 RandomizedDelaySec=60s

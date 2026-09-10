@@ -1,0 +1,25 @@
+[Unit]
+Description=AI Daily collection rounds
+Documentation=file:///www/wwwroot/ai-daily/app/docs/plan/COLLECT-THEN-PUBLISH.md
+
+[Timer]
+# Server local time is already Asia/Shanghai.
+# Every three hours: IT之家's site feed, the shallowest source, holds four to
+# seven hours, so nothing that stayed in a feed for three hours is missed.
+# 06:00 rather than 06:10 keeps clear of the issue run at 06:30, which does
+# its own live fetch and writes it to the same store.
+OnCalendar=*-*-* 00:10:00
+OnCalendar=*-*-* 03:10:00
+OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 09:10:00
+OnCalendar=*-*-* 12:10:00
+OnCalendar=*-*-* 15:10:00
+OnCalendar=*-*-* 18:10:00
+OnCalendar=*-*-* 21:10:00
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=60s
+Unit=ai-daily-collect.service
+
+[Install]
+WantedBy=timers.target

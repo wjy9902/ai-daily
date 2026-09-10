@@ -25,6 +25,7 @@ from ai_daily.site_publisher import (
     prune_releases,
     publication_lock,
     publish_site,
+    published_dates,
     read_publication,
 )
 
@@ -240,14 +241,17 @@ def test_a_naive_rerun_of_the_same_level_is_refused_and_keeps_the_record(
     assert_serves(layout, record)
 
 
-def test_a_same_level_rerun_that_carries_more_stories_replaces_the_issue(
+def test_a_same_level_rerun_is_refused_however_many_stories_it_carries(
     layout: SiteLayout,
 ) -> None:
-    """2026-09-01: four windows all landed L1, so the first one won.
+    """One issue a day: the L1 that is live stays live.
 
-    The window that carried 29 stories was refused against the 25 already
-    published, and the Nvidia/MediaTek and Anthropic alignment stories the
-    benchmark digest led on went with it.
+    Same-level reruns used to be compared on lead integrity and story count,
+    which decided among the four-window era's four L1s. With one publication
+    a day there is nothing to decide, and the comparison cost 2026-09-10 the
+    issue that carried the DeepSeek story for having one detail fewer. This
+    is a deliberate loss: an operator who wants the other issue live uses
+    ``publish-artifact --replace``.
     """
 
     published = factories.publication(
@@ -259,54 +263,41 @@ def test_a_same_level_rerun_that_carries_more_stories_replaces_the_issue(
 
     richer = factories.publication(
         level=PublicationLevel.L1,
-        details=[factories.story_card()],
-        briefs=[factories.brief_card(i) for i in range(1, 7)],
-    )
-    assert guard_same_day_overwrite(layout, richer) is None
-    publish_site(layout, richer, SITE)
-    assert_serves(layout, richer)
-
-
-def test_a_same_level_rerun_that_carries_less_is_still_refused(
-    layout: SiteLayout,
-) -> None:
-    published = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card()],
-        briefs=[factories.brief_card(i) for i in range(1, 7)],
-    )
-    publish_site(layout, published, SITE)
-
-    thinner = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card()],
-        briefs=[factories.brief_card(i) for i in range(1, 4)],
+        details=[factories.story_card(0), factories.story_card(1)],
+        briefs=[factories.brief_card(i) for i in range(2, 9)],
     )
     with pytest.raises(PublicationRefused, match="would not improve"):
-        publish_site(layout, thinner, SITE)
+        publish_site(layout, richer, SITE)
     assert_serves(layout, published)
 
 
-def test_briefs_cannot_displace_an_issue_that_reported_more_stories(
+def test_a_brief_only_issue_is_replaced_by_the_retry_that_reaches_l1(
     layout: SiteLayout,
 ) -> None:
-    """Details are compared first, so volume alone cannot win."""
+    brief_only = factories.publication(level=PublicationLevel.L2A)
+    publish_site(layout, brief_only, SITE)
 
-    detailed = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card(0), factories.story_card(1)],
-        briefs=[factories.brief_card(2)],
-    )
-    publish_site(layout, detailed, SITE)
+    retry = factories.publication(level=PublicationLevel.L1, highlight="重试出的刊。")
+    assert guard_same_day_overwrite(layout, retry) is None
+    publish_site(layout, retry, SITE)
+    assert_serves(layout, retry)
 
-    brief_heavy = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card(0)],
-        briefs=[factories.brief_card(i) for i in range(1, 9)],
-    )
-    with pytest.raises(PublicationRefused, match="would not improve"):
-        publish_site(layout, brief_heavy, SITE)
-    assert_serves(layout, detailed)
+
+def test_replace_overrides_the_guard_and_backs_up_the_displaced_record(
+    layout: SiteLayout,
+) -> None:
+    published = factories.publication(level=PublicationLevel.L1)
+    publish_site(layout, published, SITE)
+
+    other = factories.publication(level=PublicationLevel.L1, highlight="人工换上的另一期。")
+    publish_site(layout, other, SITE, replace=True)
+
+    assert_serves(layout, other)
+    backups = list(layout.published.glob(f"{other.target_date.isoformat()}.replaced-*.json"))
+    assert len(backups) == 1
+    assert published.marker in backups[0].read_text(encoding="utf-8")
+    # The backup is not an issue: the archive still lists one day.
+    assert published_dates(layout) == [other.target_date]
 
 
 def test_the_cli_publishes_through_the_guarded_transaction() -> None:
@@ -468,15 +459,17 @@ def test_the_lock_is_released_for_the_next_run(layout: SiteLayout) -> None:
         assert layout.lock_file.exists()
 
 
-def test_a_rerun_that_restores_the_lead_replaces_a_larger_demoted_issue(
+def test_a_rerun_that_restores_the_lead_no_longer_replaces_a_demoted_issue(
     layout: SiteLayout,
 ) -> None:
-    """2026-09-04: the GPT-6 launch published as a follow item and stayed there.
+    """The 2026-09-04 case, accepted as a loss on purpose.
 
-    04:20 carried 26 stories with the lead demoted for want of corroboration.
-    07:00 and 08:30 both had what the lead needed and were refused for carrying
-    25 and 24 — the level cannot separate them, because LEAD_UNCORROBORATED
-    caps at L1 either way.
+    04:20 carried the GPT-6 launch demoted for want of corroboration; 07:00
+    had what the lead needed. The lead-integrity comparison that let 07:00
+    replace 04:20 existed for the four-window era. With one issue a day and
+    no retry of an L1 (cli._daily), that situation cannot arise on the timer,
+    and the comparison is gone rather than kept for a path nothing takes.
+    An operator who does want the other issue uses publish-artifact --replace.
     """
 
     demoted = factories.publication(
@@ -493,26 +486,6 @@ def test_a_rerun_that_restores_the_lead_replaces_a_larger_demoted_issue(
         briefs=[factories.brief_card(i) for i in range(1, 4)],
         degradation_reasons=["详报证据不足"],
     )
-    assert guard_same_day_overwrite(layout, intact) is None
-    publish_site(layout, intact, SITE)
-    assert_serves(layout, intact)
-
-
-def test_an_issue_that_demotes_the_lead_cannot_replace_one_that_did_not(
-    layout: SiteLayout,
-) -> None:
-    intact = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card()],
-        briefs=[factories.brief_card(i) for i in range(1, 4)],
-    )
-    publish_site(layout, intact, SITE)
-
-    demoted = factories.publication(
-        level=PublicationLevel.L1,
-        details=[factories.story_card()],
-        briefs=[factories.brief_card(i) for i in range(1, 9)],
-        degradation_reasons=[FAILURE_REASON[FailureClass.LEAD_UNCORROBORATED]],
-    )
     with pytest.raises(PublicationRefused, match="would not improve"):
-        guard_same_day_overwrite(layout, demoted)
+        guard_same_day_overwrite(layout, intact)
+    assert_serves(layout, demoted)

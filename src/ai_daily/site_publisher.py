@@ -30,7 +30,6 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from .degradation import FAILURE_REASON, FailureClass
 from .papers_models import PapersPublication, load_papers_publication
 from .publication import (
     DailyPublication,
@@ -107,6 +106,18 @@ class SiteLayout:
     def daily_run_file(self) -> Path:
         return self.root / ".daily-run.lock"
 
+    @property
+    def collect_lock_file(self) -> Path:
+        return self.root / ".collect.lock"
+
+    @property
+    def item_store(self) -> Path:
+        return self.root / "items.sqlite"
+
+    @property
+    def collect_status_file(self) -> Path:
+        return self.status_dir / "collect.json"
+
     def ensure(self) -> None:
         for path in (
             self.published,
@@ -179,6 +190,17 @@ def daily_run_lock(layout: SiteLayout) -> Iterator[None]:
     with _exclusive_lock(
         layout.daily_run_file,
         "another daily run is already in progress",
+    ):
+        yield
+
+
+@contextmanager
+def collect_lock(layout: SiteLayout) -> Iterator[None]:
+    """One collection round at a time, and none while a deploy swaps the code out."""
+
+    with _exclusive_lock(
+        layout.collect_lock_file,
+        "another collection round is already in progress",
     ):
         yield
 
@@ -287,10 +309,19 @@ def build_archive(layout: SiteLayout, publications: list[DailyPublication]) -> l
 def guard_same_day_overwrite(
     layout: SiteLayout, publication: DailyPublication
 ) -> DailyPublication | None:
-    """Refuse to replace an issue with a poorer one.
+    """Refuse to replace an issue unless the replacement is a higher level.
 
-    A retry window may republish the same date, but only to *improve* it. This
-    is what makes L2 -> L0 upgrades safe and downgrades impossible.
+    The issue is published once a day. A same-day rerun exists for one reason:
+    the first run's model stages failed and left a brief-only L2, and the
+    retry can do better. Two issues of the same level are two editorial
+    choices, and the one already live wins - it is what readers have seen.
+
+    This used to compare same-level issues on lead integrity and story count
+    (the four-window era's "which of today's four L1s should stand"). With one
+    publication a day there is no such choice to make, and the comparison had
+    cost an issue that carried the day's DeepSeek story over one that did not,
+    for having one detail fewer. An operator who wants a different issue live
+    republishes it explicitly with ``publish-artifact --replace``.
     """
 
     try:
@@ -302,52 +333,10 @@ def guard_same_day_overwrite(
         return None
     if is_upgrade(existing.level, publication.level):
         return None
-    if _carries_more(existing, publication):
-        return None
     raise PublicationRefused(
-        f"{publication.target_date} is already published at {existing.level.value} "
-        f"with {_coverage(existing)[2]} stories; {publication.level.value} with "
-        f"{_coverage(publication)[2]} would not improve it"
+        f"{publication.target_date} is already published at {existing.level.value}; "
+        f"{publication.level.value} would not improve it"
     )
-
-
-def _coverage(publication: DailyPublication) -> tuple[bool, int, int]:
-    """How much this issue carries, best first.
-
-    An intact lead outranks story count. 2026-09-04 published at 04:20 with the
-    GPT-6 launch demoted for want of corroboration; the 07:00 and 08:30 reruns
-    both had what it needed and were refused for carrying 25 and 24 stories
-    against 26. Two briefs are not worth the day's biggest story running as a
-    follow item under a degradation banner, and the level cannot see the
-    difference: LEAD_UNCORROBORATED caps at L1, so both issues are L1.
-
-    Details still come before the total, so a flood of briefs cannot displace
-    an issue that actually reported its stories.
-    """
-
-    return (
-        FAILURE_REASON[FailureClass.LEAD_UNCORROBORATED] not in publication.degradation_reasons,
-        len(publication.details),
-        len(publication.details) + len(publication.briefs),
-    )
-
-
-def _carries_more(existing: DailyPublication, candidate: DailyPublication) -> bool:
-    """True when a same-level rerun is worth replacing the published issue with.
-
-    The level alone said 2026-09-01's four windows were interchangeable, so the
-    first L1 won and a later L1 carrying 29 stories against 25 was refused -
-    with it went the Nvidia/MediaTek and Anthropic alignment stories the
-    benchmark digest led on that day. Level measures how much of the pipeline
-    survived, not how much news came out the other end.
-
-    Details are compared before the total so a flood of briefs cannot displace
-    an issue that actually reported its stories.
-    """
-
-    if existing.level is not candidate.level:
-        return False
-    return _coverage(candidate) > _coverage(existing)
 
 
 def _write_atomic(path: Path, payload: str) -> None:
@@ -590,17 +579,27 @@ def publish_site(
     publication: DailyPublication,
     site_base_url: str,
     now: datetime | None = None,
+    *,
+    replace: bool = False,
 ) -> Path:
-    """Run the whole transaction and return the activated release directory."""
+    """Run the whole transaction and return the activated release directory.
+
+    ``replace`` is the operator's override of the same-day guard. The record
+    being replaced is copied to ``<date>.replaced-<stamp>.json`` first, and the
+    publication does not proceed if that copy cannot be made.
+    """
 
     if not publication.marker_is_valid():
         raise PublicationRefused("publication is unsigned or its marker is stale")
     if publication.level is PublicationLevel.L3:
         raise PublicationRefused("an L3 run has nothing to publish")
     layout.ensure()
-    guard_same_day_overwrite(layout, publication)
-
     stamp = (now or datetime.now(UTC)).strftime("%Y%m%dT%H%M%SZ")
+    if replace:
+        _back_up_replaced_record(layout, publication, stamp)
+    else:
+        guard_same_day_overwrite(layout, publication)
+
     release = render_release(layout, publication, site_base_url, stamp)
 
     _write_atomic(
@@ -614,6 +613,17 @@ def publish_site(
     activate_release(layout, release)
     prune_releases(layout)
     return release
+
+
+def _back_up_replaced_record(layout: SiteLayout, publication: DailyPublication, stamp: str) -> None:
+    source = layout.publication_path(publication.target_date)
+    if not source.exists():
+        return
+    backup = layout.published / f"{publication.target_date.isoformat()}.replaced-{stamp}.json"
+    try:
+        backup.write_bytes(source.read_bytes())
+    except OSError as error:
+        raise PublicationRefused(f"cannot back up the record being replaced: {error}") from error
 
 
 def hold_previous_release(layout: SiteLayout, notice: str) -> Path:
