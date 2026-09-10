@@ -215,6 +215,92 @@ def _meta(document: html.HtmlElement, property_name: str) -> str:
     return str(values[0]).strip() if values else ""
 
 
+_TELEGRAM_HOSTS = {"t.me", "telegram.me", "telegram.org"}
+_TELEGRAM_PAGE_SIZE = 20
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class TelegramPost:
+    post_id: int
+    url: str
+    published_at: datetime | None
+    lines: list[str]
+    cited_source: str
+    cited_url: str
+
+
+def _telegram_posts(document: html.HtmlElement) -> list[TelegramPost]:
+    """Read the posts a public channel's ``t.me/s/<channel>`` preview shows.
+
+    A relay channel quotes the post it replies to inside the same bubble, and
+    the quote carries the same ``tgme_widget_message_text`` class as the body.
+    Only ``js-message_text`` is the body; ``js-message_reply_text`` is someone
+    else's post and reading it would attribute yesterday's story to today.
+    """
+
+    posts: list[TelegramPost] = []
+    for message in document.xpath('//div[contains(@class, "tgme_widget_message ") and @data-post]'):
+        data_post = str(message.get("data-post"))
+        channel, _, raw_id = data_post.rpartition("/")
+        if not channel or not raw_id.isdigit():
+            continue
+        bodies = message.xpath('.//div[contains(@class, "js-message_text")]')
+        if not bodies:
+            continue
+        body = bodies[-1]
+        cited_source, cited_url = _telegram_cited_link(body)
+        markup = etree.tostring(body, encoding="unicode", method="html")
+        text = html.fromstring(_BR_RE.sub("\n", markup)).text_content()
+        lines = [" ".join(line.split()) for line in text.split("\n")]
+        lines = [line for line in lines if line]
+        if lines and _is_telegram_signature(body, lines[-1]):
+            lines.pop()
+        if not lines:
+            continue
+        stamps = message.xpath('.//a[contains(@class, "tgme_widget_message_date")]/time/@datetime')
+        posts.append(
+            TelegramPost(
+                post_id=int(raw_id),
+                url=f"https://t.me/{channel}/{raw_id}",
+                published_at=_published(str(stamps[0])) if stamps else None,
+                lines=lines,
+                cited_source=cited_source,
+                cited_url=cited_url,
+            )
+        )
+    return posts
+
+
+def _telegram_cited_link(body: html.HtmlElement) -> tuple[str, str]:
+    """The first link out of Telegram is the story's origin; the rest is channel plumbing."""
+
+    for anchor in body.xpath(".//a[@href]"):
+        href = str(anchor.get("href"))
+        parts = urlsplit(href)
+        if (
+            parts.scheme == "https"
+            and parts.hostname
+            and parts.hostname.lower() not in _TELEGRAM_HOSTS
+        ):
+            return _plain_text(anchor.text_content()), href
+    return "", ""
+
+
+def _is_telegram_signature(body: html.HtmlElement, line: str) -> bool:
+    """A closing line made only of the channel's own t.me links is a signature, not content."""
+
+    remainder = line
+    own_links = 0
+    for anchor in body.xpath(".//a[@href]"):
+        hostname = (urlsplit(str(anchor.get("href"))).hostname or "").lower()
+        label = _plain_text(anchor.text_content())
+        if hostname in _TELEGRAM_HOSTS and label and label in remainder:
+            remainder = remainder.replace(label, "")
+            own_links += 1
+    return own_links > 0 and not re.sub(r"[\W_]+", "", remainder)
+
+
 def _published_from_document(
     document: html.HtmlElement, default_timezone: tzinfo = UTC
 ) -> datetime | None:
@@ -900,6 +986,55 @@ class Collector:
                         "downloads": value.get("downloads", 0),
                         "timestamp_kind": "repository_last_modified",
                     },
+                )
+            )
+        return items
+
+    async def _fetch_telegram_channel(self, source: SourceConfig) -> list[RawItem]:
+        """Collect a public Telegram channel through its ``t.me/s/<channel>`` preview.
+
+        The item URL stays on t.me. A relay channel cites Reuters or IT之家
+        under nearly every post, and using that link as the item URL would let
+        one channel pose as two independent publishers to lead corroboration.
+        The cited link travels in the summary and in ``metrics`` instead, so
+        the editor and the reader still get the origin.
+        """
+
+        posts: dict[int, TelegramPost] = {}
+        response = await self._get(source)
+        for _ in range(-(-source.limit // _TELEGRAM_PAGE_SIZE) + 1):
+            page = _telegram_posts(html.fromstring(response.text, base_url=str(source.url)))
+            for post in page:
+                posts[post.post_id] = post
+            if not page or len(posts) >= source.limit:
+                break
+            oldest = min(post.post_id for post in page)
+            response = await self._same_origin_get(source, f"{source.url}?before={oldest}")
+        if not posts:
+            raise SourceCollectionError("telegram preview yielded no posts")
+        now = datetime.now(UTC)
+        items = []
+        for post in sorted(posts.values(), key=lambda post: post.post_id, reverse=True)[
+            : source.limit
+        ]:
+            title = re.sub(r"^[\W_]+", "", post.lines[0]) or post.lines[0]
+            summary = " ".join(post.lines[1:])
+            metrics: dict[str, int | float | str] = {}
+            if post.cited_url:
+                summary = f"{summary} 来源：{post.cited_source} {post.cited_url}".strip()
+                metrics["cited_url"] = post.cited_url
+                if post.cited_source:
+                    metrics["cited_source"] = post.cited_source
+            items.append(
+                RawItem(
+                    **_source_fields(source),
+                    source_item_id=post.url,
+                    url=HttpUrl(post.url),
+                    title=title[:500],
+                    summary=summary[:ARTICLE_TEXT_LIMIT],
+                    published_at=post.published_at,
+                    discovered_at=now,
+                    metrics=metrics,
                 )
             )
         return items

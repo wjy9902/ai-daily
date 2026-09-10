@@ -858,3 +858,328 @@ sources:
     channel: official
     region: china
     limit: 10
+  # 在花频道：中文科技圈的 Telegram 转发频道，约 19 条/天，近半是 AI，几乎每条
+  # 附原始来源（IT之家、路透、公众号、X）。2026-09-08/09 的 DeepSeek V4.1 Flash
+  # 内测与发布计划只发在官方群和开放平台控制台，93 个源里唯一提到它的是
+  # IT之家早报合辑，而这个频道当天就单独发了。条目 URL 保持 t.me 帖子链接，
+  # 引用的原始链接进 summary 与 metrics.cited_url：转发不算独立佐证域，不能让
+  # 一个频道冒充路透和 IT之家。发布时间是频道转发时间；非 AI 条目交给
+  # is_ai_related 过滤。预览页每页 20 条，limit 40 覆盖约两天。
+  - name: telegram-zaihua
+    display_name: 在花频道
+    kind: telegram_channel
+    url: https://t.me/s/zaihuapd
+    tier: C
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 40
+
+  # ------------------------------------------------------------------------
+  # 2026-09-10：把在花频道引用的出处本身收为信源。统计口径：该频道 08-22 至 09-10
+  # 的 367 条帖子，348 条带原始链接，195 条 AI 相关。下面是引用 ≥2 次、或引用 1 次
+  # 但属于 AI 厂商/官方入口、且从生产出口验过 feed 可用的出处。验过但不能用的：
+  # 路透（RSSHub 路由 503）、WSJ 科技 feed（停在 2025-01）、新浪科技 RSS（停在
+  # 2018）、The Information 与 help.openai.com（403）、澎湃/每经/新华（RSSHub 503
+  # 或无 feed）。微博账号需要 cookie，不接。引用过的公众号见 ops/FEED-INFRA.md。
+  # 泛科技/财经媒体一律 ai_focused: false，交给 is_ai_related 过滤。
+
+  - name: bloomberg-tech
+    display_name: Bloomberg Technology
+    kind: rss
+    url: https://www.bloomberg.com/feeds/technology/news.rss
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 20
+  - name: wired-ai
+    display_name: WIRED
+    kind: rss
+    url: https://www.wired.com/feed/tag/ai/latest/rss
+    tier: B
+    channel: news
+    limit: 10
+  - name: axios
+    display_name: Axios
+    kind: rss
+    url: https://api.axios.com/feed/
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 40
+  - name: ft-ai
+    display_name: Financial Times
+    kind: rss
+    url: https://www.ft.com/artificial-intelligence?format=rss
+    tier: B
+    channel: news
+    limit: 25
+  - name: business-insider
+    display_name: Business Insider
+    kind: rss
+    url: https://feeds.businessinsider.com/custom/all
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 20
+  - name: cnbc-tech
+    display_name: CNBC Technology
+    kind: rss
+    url: https://www.cnbc.com/id/19854910/device/rss/rss.html
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 30
+  - name: scmp-tech
+    display_name: South China Morning Post
+    kind: rss
+    url: https://www.scmp.com/rss/36/feed/
+    tier: B
+    channel: news
+    ai_focused: false
+    limit: 30
+  - name: the-register-ai
+    display_name: The Register
+    kind: rss
+    url: "https://api.theregister.com/api/v1/article?orderBy=published&site_id=2&remapper=rss&query=(tag:software+AND+tag:%22ai+and+ml%22)"
+    tier: B
+    channel: news
+    limit: 20
+  - name: semianalysis
+    display_name: SemiAnalysis
+    kind: rss
+    url: https://newsletter.semianalysis.com/feed
+    tier: B
+    channel: news
+    limit: 10
+  - name: windows-latest
+    display_name: Windows Latest
+    kind: rss
+    url: https://www.windowslatest.com/feed/
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 10
+  - name: android-authority
+    display_name: Android Authority
+    kind: rss
+    url: https://www.androidauthority.com/feed/
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 30
+  - name: toms-hardware
+    display_name: Tom's Hardware
+    kind: rss
+    url: https://www.tomshardware.com/feeds.xml
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 25
+  - name: techspot
+    display_name: TechSpot
+    kind: rss
+    url: https://www.techspot.com/backend.xml
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 30
+  - name: macrumors
+    display_name: MacRumors
+    kind: rss
+    url: https://feeds.macrumors.com/MacRumors-All
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 20
+  - name: 9to5mac
+    display_name: 9to5Mac
+    kind: rss
+    url: https://9to5mac.com/feed/
+    tier: C
+    channel: news
+    ai_focused: false
+    limit: 30
+  - name: apple-newsroom
+    display_name: Apple Newsroom
+    kind: rss
+    url: https://www.apple.com/newsroom/rss-feed.rss
+    tier: A
+    channel: official
+    ai_focused: false
+    limit: 20
+  - name: openclaw-blog
+    display_name: OpenClaw Blog
+    kind: rss
+    url: https://openclaw.ai/rss.xml
+    tier: B
+    channel: official
+    limit: 10
+  - name: claude-platform-release-notes
+    display_name: Claude Platform Release Notes
+    kind: rss
+    url: https://platform.claude.com/docs/en/release-notes/feed.xml
+    tier: A
+    channel: official
+    limit: 10
+
+  # 财联社：RSSHub 的 telegraph 路由条目没有 link，采集器会整条丢弃；depth 路由有链接。
+  - name: cls-depth
+    display_name: 财联社
+    kind: rss
+    url: https://rsshub.jiayutool.cn/cls/depth/1000
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 40
+  - name: jiemian-internet
+    display_name: 界面新闻
+    kind: rss
+    url: https://rsshub.jiayutool.cn/jiemian/lists/6
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 20
+  - name: 36kr-ai
+    display_name: 36氪
+    kind: rss
+    url: https://rsshub.jiayutool.cn/36kr/search/articles/AI
+    tier: B
+    channel: news
+    region: china
+    limit: 20
+  - name: 36kr-newsflashes
+    display_name: 36氪快讯
+    kind: rss
+    url: https://rsshub.jiayutool.cn/36kr/newsflashes
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 30
+  - name: tmtpost
+    display_name: 钛媒体
+    kind: rss
+    url: https://www.tmtpost.com/feed
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 15
+  - name: zaobao-china
+    display_name: 联合早报
+    kind: rss
+    url: https://rsshub.jiayutool.cn/zaobao/realtime/china
+    tier: C
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 24
+
+  # 频道引用过的公众号里，AI 厂商官方号和 AI 垂直媒体号，2026-09-10 加进 we-mp-rss
+  # （采集组 E/F，见 ops/FEED-INFRA.md）。财联社走上面的 RSSHub 路由，界面新闻走
+  # RSSHub 列表；每经、澎湃、九派、新京报等泛新闻号在样本里没有 AI 条目，不收。
+  - name: wechat-doubao
+    display_name: 豆包公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3931663331.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-aliyun
+    display_name: 阿里云公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3086283381.rss
+    tier: A
+    channel: official
+    region: china
+    ai_focused: false
+    limit: 10
+  - name: wechat-qwen-platform
+    display_name: 千问AI平台公众号
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3239545440.rss
+    tier: A
+    channel: official
+    region: china
+    limit: 10
+  - name: wechat-zhinengyongxian
+    display_name: 智能涌现
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3900464567.rss
+    tier: B
+    channel: news
+    region: china
+    limit: 10
+  - name: wechat-appso
+    display_name: APPSO
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_2392024520.rss
+    tier: B
+    channel: news
+    region: china
+    ai_focused: false
+    limit: 10
+  - name: wechat-baijing
+    display_name: 白鲸实验室
+    kind: rss
+    url: https://werss.jiayutool.cn/feed/MP_WXS_3988375575.rss
+    tier: B
+    channel: news
+    region: china
+    limit: 10
+
+  # 频道引用过的 X 账号里，机构号和高管/核心研究员号。个人号同 sama/gdb 的口径：
+  # tier B / news，可佐证不可领衔。一次性引用的普通个人号不收。
+  - name: x-opencode
+    display_name: OpenCode @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/opencode
+    tier: B
+    channel: official
+    limit: 10
+  - name: x-openrouter
+    display_name: OpenRouter @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/OpenRouter
+    tier: B
+    channel: official
+    limit: 10
+  - name: x-jensenhuang
+    display_name: Jensen Huang @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/JensenHuang
+    tier: B
+    channel: news
+    limit: 10
+  - name: x-tombrown
+    display_name: Tom Brown @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/NotTomBrown
+    tier: B
+    channel: news
+    limit: 10
+  - name: x-borispower
+    display_name: Boris Power @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/BorisMPower
+    tier: B
+    channel: news
+    limit: 10
+  - name: x-zuck
+    display_name: Mark Zuckerberg @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/finkd
+    tier: B
+    channel: news
+    limit: 10
+  - name: x-athyuttamre
+    display_name: Atty Eleti @ X
+    kind: rss
+    url: https://rsshub.jiayutool.cn/twitter/user/athyuttamre
+    tier: B
+    channel: news
+    limit: 10

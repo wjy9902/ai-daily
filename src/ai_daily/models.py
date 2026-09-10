@@ -63,6 +63,7 @@ class SourceConfig(StrictModel):
         "huggingface",
         "huggingface_models",
         "html_index",
+        "telegram_channel",
     ]
     url: HttpUrl
     tier: SourceTier
