@@ -28,6 +28,7 @@ from ai_daily.models import (
     EvidenceBundle,
     JudgeDecision,
     PipelineConfig,
+    RawItem,
     SourceTier,
     StrictModel,
 )
@@ -269,9 +270,21 @@ def enforce_lead_corroboration(
     return plan.model_copy(update={"selections": selections}), demoted
 
 
+#: How many cluster members become quotable evidence. Three showed the model
+#: one outlet's three tweets while the report with the pricing sat at position
+#: four; five, taken one publisher at a time first, shows the story as the
+#: cluster actually carries it. The same membership must be built at every
+#: stage, because evidence_ids chosen while planning are checked against the
+#: bundle built again while drafting and rendering.
+EVIDENCE_ITEMS = 5
+#: How many leftover titles ride along as ``also_reported``.
+ALSO_REPORTED_LIMIT = 8
+
+
 def evidence_bundle(
     event: Event, excerpt_chars: int = DRAFT_EVIDENCE_EXCERPT_CHARS
 ) -> EvidenceBundle:
+    chosen = _evidence_items(event)
     evidence = [
         Evidence(
             evidence_id=f"{event.event_id}-{index}",
@@ -281,9 +294,32 @@ def evidence_bundle(
             source=item.source_label or item.source,
             source_time_kind=item.source_time_kind,
         )
-        for index, item in enumerate(event.items[:3], start=1)
+        for index, item in enumerate(chosen, start=1)
     ]
-    return EvidenceBundle(event_id=event.event_id, evidence=evidence)
+    leftovers = [item.title for item in event.items if item not in chosen]
+    also_reported = list(dict.fromkeys(leftovers))[:ALSO_REPORTED_LIMIT]
+    return EvidenceBundle(event_id=event.event_id, evidence=evidence, also_reported=also_reported)
+
+
+def _evidence_items(event: Event) -> list[RawItem]:
+    """The primary, then one item per publisher, then whatever is left, in cluster order."""
+
+    chosen: list[RawItem] = []
+    publishers: set[str] = set()
+    for item in event.items:
+        publisher = registrable_domain(str(item.url))
+        if publisher in publishers:
+            continue
+        publishers.add(publisher)
+        chosen.append(item)
+        if len(chosen) == EVIDENCE_ITEMS:
+            return chosen
+    for item in event.items:
+        if len(chosen) == EVIDENCE_ITEMS:
+            break
+        if item not in chosen:
+            chosen.append(item)
+    return chosen
 
 
 async def judge_events(
@@ -595,6 +631,7 @@ def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, objec
         ],
         "initial_judge": decision.model_dump(mode="json"),
         "evidence": evidence,
+        "also_reported": bundle.also_reported,
     }
 
 

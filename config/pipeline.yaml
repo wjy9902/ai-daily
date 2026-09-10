@@ -2,7 +2,10 @@ timezone: Asia/Shanghai
 site_base_url: https://wjy9902.github.io/ai-daily
 repository: wjy9902/ai-daily
 artifacts_dir: artifacts
-candidate_limit: 100
+# 2026-09-10 回放：每轮 156–171 个事件，100 上限砍掉 35–40%，截断线附近是真新闻
+# （Meta Muse 官方转推、TechCrunch 的超级智能讨论）而分数分辨不出它们。判定一批
+# 10 条只要几分钱，150 让判定去做这道选择。
+candidate_limit: 150
 max_research_candidates: 16
 max_release_candidates: 12
 lead_min: 4

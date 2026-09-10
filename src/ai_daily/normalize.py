@@ -163,6 +163,18 @@ AI_TOKENS = {
     "deepmind",
     "deepseek",
     "diffusion",
+    "doubao",
+    "ernie",
+    "hailuo",
+    "iflytek",
+    "jimeng",
+    "kling",
+    "nvidia",
+    "seedance",
+    "sensetime",
+    "stepfun",
+    "tongyi",
+    "wenxin",
     "gemini",
     "gemma",
     "genai",
@@ -221,6 +233,22 @@ AI_PHRASES = (
     "文生视频",
     "智谱",
     "月之暗面",
+    # 2026-09-10: the Chinese vendor names were missing entirely. It never
+    # showed because 93% of sources are ai_focused and skip this filter; the
+    # general media added that day (财联社、界面、36氪快讯、彭博) all depend on it.
+    "豆包",
+    "混元",
+    "文心",
+    "千问",
+    "通义",
+    "阶跃",
+    "即梦",
+    "可灵",
+    "海螺",
+    "讯飞",
+    "商汤",
+    "昆仑万维",
+    "英伟达",
     "具身智能",
     "智能体",
     "机器学习",
@@ -656,10 +684,44 @@ def _same_story_by_product(
     return len(digit_free_overlap) >= 2
 
 
+#: A digest is many stories under one title, and it must not merge with any of
+#: them. Similarity used to read the first 300 characters of the summary, and
+#: a digest's first 300 characters are simply its first story: 「IT早报 0910」
+#: opened with the Apple event and vanished into the Apple cluster, taking the
+#: DeepSeek V4.1 line at position 13 with it; 「IT早报 0909」 did the same into
+#: ChatGPT Images 2.5. A digest stands alone so the judge sees its own title.
+DIGEST_TITLE_RE = re.compile(
+    r"早报|晚报|午报|周报|汇总|盘点|速览|一文看|一文读懂|回顾|"
+    r"\bICYMI\b|\broundup\b|\brecap\b|\bweek in\b|\bthis week\b|\bnewsletter\b",
+    re.IGNORECASE,
+)
+#: Chinese digests separate their stories with full-width semicolons.
+_DIGEST_SEPARATOR_MINIMUM = 2
+#: A title this short (a bare link, a tweet like "i want one!") says too little
+#: to compare, so its summary joins in. A real headline compares on its own.
+_SHORT_TITLE_TOKENS = 4
+
+
+def is_digest(item: RawItem) -> bool:
+    return (
+        bool(DIGEST_TITLE_RE.search(item.title))
+        or item.title.count("；") >= _DIGEST_SEPARATOR_MINIMUM
+    )
+
+
+def _similarity_tokens(item: RawItem) -> set[str]:
+    tokens = title_tokens(item.title)
+    if len(tokens) < _SHORT_TITLE_TOKENS:
+        tokens = tokens | title_tokens(item.summary[:300])
+    return tokens
+
+
 def _similar(left: RawItem, right: RawItem, window: timedelta, lexicon: frozenset[str]) -> bool:
     left_time = left.published_at or left.discovered_at
     right_time = right.published_at or right.discovered_at
     if abs(left_time - right_time) > window:
+        return False
+    if is_digest(left) or is_digest(right):
         return False
     identifiers = story_identifiers(left) & story_identifiers(right)
     if identifiers:
@@ -668,8 +730,8 @@ def _similar(left: RawItem, right: RawItem, window: timedelta, lexicon: frozense
         return True
     if left.source == right.source and left.source_channel == SourceChannel.RELEASE:
         return False
-    left_tokens = title_tokens(f"{left.title} {left.summary[:300]}")
-    right_tokens = title_tokens(f"{right.title} {right.summary[:300]}")
+    left_tokens = _similarity_tokens(left)
+    right_tokens = _similarity_tokens(right)
     if not left_tokens or not right_tokens:
         return False
     intersection = len(left_tokens & right_tokens)
@@ -789,20 +851,22 @@ def _connected_groups(
 #: against the benchmark digest turned on exactly this vocabulary: quota
 #: resets, reserve allowances, limited-time free access and gray releases were
 #: its most frequent story shape and our lowest-scoring one.
+#: ``model``, ``api`` and ``模型`` are gone from the list: on 2026-09-10 the
+#: vocabulary fired on 94 of 179 events and 61 of those matched nothing but
+#: these three - ``model`` alone hit 62 times - so the 8-point bonus went to
+#: almost everything and separated nothing. An AI daily's candidates all
+#: mention models; what marks one as actionable is what happened to it.
 ACTION_TERMS = (
     # shipping and availability
-    "api",
     "available",
     "general availability",
     "launch",
-    "model",
     "open source",
     "release",
     "rollout",
     "发布",
     "上线",
     "开源",
-    "模型",
     "推出",
     # quota, rate limits and usage
     "credits",
@@ -891,6 +955,7 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
         text = f"{event.title} {event.summary}".lower()
         actionability = 12 if _is_actionable(text) else 4
         popularity = min(6, math.log1p(_numeric_metrics(event)) / 1.2)
+        personal = PERSONAL_POST_PENALTY if _is_personal_post(event) else 0
         scored.append(
             event.model_copy(
                 update={
@@ -903,13 +968,33 @@ def score_events(events: list[Event], now: datetime) -> list[Event]:
                             + recency
                             + corroboration
                             + actionability
-                            + popularity,
+                            + popularity
+                            - personal,
                         ),
                     )
                 }
             )
         )
     return sorted(scored, key=lambda event: event.score, reverse=True)
+
+
+#: What a lone personal post on X gives up against a reported story.
+#:
+#: Personal accounts sit at Tier B / news, the same as TechCrunch, so on
+#: 2026-09-10 "ocarina of time remake is the best news in a long time" from
+#: @sama scored 51.1 and "Superintelligence is coming. Should we let it?" from
+#: TechCrunch scored 51.8, and the candidate cap cut them together. A post
+#: nobody else carried is a remark, not a story; the moment an outlet or an
+#: official account joins the cluster the penalty is gone.
+PERSONAL_POST_PENALTY = 8
+
+
+def _is_personal_post(event: Event) -> bool:
+    return all(
+        registrable_domain(str(item.url)) == "x.com"
+        and item.source_channel not in FIRST_PARTY_CHANNELS
+        for item in event.items
+    )
 
 
 def select_candidate_pool(
@@ -978,15 +1063,90 @@ def _numeric_metrics(event: Event) -> float:
     )
 
 
-def remove_historical(events: list[Event], history: HistoricalIndex) -> list[Event]:
+def remove_historical(
+    events: list[Event],
+    history: HistoricalIndex,
+    window_hours: int = 48,
+    lexicon: frozenset[str] = frozenset(),
+) -> list[Event]:
+    """Drop what already ran, item by item rather than cluster by cluster.
+
+    Deleting the whole event whenever its representative matched history took
+    today's follow-ups down with yesterday's story: on 2026-09-10 the 17-item
+    Astra cluster held the GPT-5.6 Sol quantum-computing post and the ChatGPT
+    Voice model switch, and all of it went because "Astra is fully rolled out"
+    had run the day before. Now the items that are themselves historical leave,
+    and whatever remains is clustered again and offered as its own event - the
+    judge decides whether "i want one!" is news, which is cheaper than never
+    seeing the real follow-up.
+    """
+
     canonical_history = {canonicalize_url(url) for url in history.urls}
-    return [
-        event
-        for event in events
-        if canonicalize_url(str(event.canonical_url)) not in canonical_history
-        and not any(_title_match(event.title, title) for title in history.titles)
-        and not any(_historical_story_match(event, story) for story in history.stories)
-    ]
+    kept: list[Event] = []
+    for event in events:
+        if not _event_is_historical(event, history, canonical_history):
+            kept.append(event)
+            continue
+        survivors = [
+            item
+            for item in event.items
+            if not _item_is_historical(item, history, canonical_history)
+        ]
+        if not survivors:
+            continue
+        for follow_up in cluster_items(survivors, window_hours, lexicon):
+            if not _event_is_historical(follow_up, history, canonical_history):
+                kept.append(follow_up)
+    return kept
+
+
+def _event_is_historical(
+    event: Event, history: HistoricalIndex, canonical_history: set[str]
+) -> bool:
+    return (
+        canonicalize_url(str(event.canonical_url)) in canonical_history
+        or any(_title_match(event.title, title) for title in history.titles)
+        or any(_historical_story_match(event, story) for story in history.stories)
+        or _repeats_published_source_title(event.title, history)
+    )
+
+
+def _item_is_historical(
+    item: RawItem, history: HistoricalIndex, canonical_history: set[str]
+) -> bool:
+    return (
+        canonicalize_url(str(item.url)) in canonical_history
+        or any(_title_match(item.title, title) for title in history.titles)
+        or _repeats_published_source_title(item.title, history)
+    )
+
+
+#: Shorter than this, an exact title says nothing ("Release", "Update").
+_EXACT_TITLE_MINIMUM_CHARS = 12
+
+
+def _repeats_published_source_title(title: str, history: HistoricalIndex) -> bool:
+    """The candidate's title is, verbatim, the title of a source we already cited.
+
+    The fuzzy story matcher needs four shared tokens, which a four-word
+    headline can never supply: "Introducing ChatGPT Images 2.5" ran on
+    2026-09-09 under OpenAI's own URL, and on 09-10's 08:30 window the same
+    post came back through Simon Willison's link with the same title, scored
+    92 with the judge, and occupied a candidate slot until the editor declined
+    it. The published record carries the source titles, so an exact repeat is
+    the one case that needs no fuzziness at all.
+    """
+
+    normalized = _exact_title(title)
+    if len(normalized) < _EXACT_TITLE_MINIMUM_CHARS:
+        return False
+    return any(
+        _exact_title(text) == normalized for story in history.stories for text in story.texts
+    )
+
+
+def _exact_title(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _historical_story_match(event: Event, story: HistoricalStory) -> bool:

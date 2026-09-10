@@ -161,6 +161,11 @@ class Evidence(StrictModel):
 class EvidenceBundle(StrictModel):
     event_id: str
     evidence: list[Evidence] = Field(min_length=1)
+    #: Titles of the cluster members that did not fit into ``evidence``. A
+    #: ten-item cluster used to show the model three excerpts and nothing
+    #: else, so a digest or a distinct sub-story merged in at position seven
+    #: was invisible to both the judge and the editor.
+    also_reported: list[str] = Field(default_factory=list)
 
 
 class JudgeDecision(StrictModel):
@@ -301,7 +306,7 @@ class PipelineConfig(StrictModel):
     site_base_url: HttpUrl
     repository: str = Field(pattern=r"^[^/]+/[^/]+$")
     artifacts_dir: str
-    candidate_limit: int = Field(ge=20, le=100)
+    candidate_limit: int = Field(ge=20, le=200)
     max_research_candidates: int = Field(ge=0, le=30)
     max_release_candidates: int = Field(ge=0, le=30)
     lead_min: int = Field(ge=1, le=8)

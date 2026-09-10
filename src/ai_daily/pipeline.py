@@ -375,16 +375,24 @@ class DailyPipeline:
         # Built from everything collected, not from the fresh items: a vendor's
         # older post is what teaches the name today's launch is reported under.
         lexicon = product_lexicon(items)
-        events = score_events(
-            cluster_items(filtered, self.config.pipeline.cluster_window_hours, lexicon),
-            run_time.astimezone(UTC),
-        )
+        events = cluster_items(filtered, self.config.pipeline.cluster_window_hours, lexicon)
         historical_index = local_historical_index(
             self.layout.published,
             self.config.pipeline.history_window_days,
             target_date,
         )
-        deduplicated = remove_historical(events, historical_index)
+        # History runs before scoring: a cluster that repeats yesterday's story
+        # is split into the items that are new, and those come back as events
+        # of their own that still need a score.
+        deduplicated = score_events(
+            remove_historical(
+                events,
+                historical_index,
+                self.config.pipeline.cluster_window_hours,
+                lexicon,
+            ),
+            run_time.astimezone(UTC),
+        )
         candidates = select_candidate_pool(
             deduplicated,
             self.config.pipeline.candidate_limit,
