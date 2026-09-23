@@ -589,6 +589,12 @@ def publish_site(
     publication does not proceed if that copy cannot be made.
     """
 
+    from .copy_quality import validate_publication_copy
+
+    try:
+        validate_publication_copy(publication)
+    except ValueError as error:
+        raise PublicationRefused(str(error)) from error
     if not publication.marker_is_valid():
         raise PublicationRefused("publication is unsigned or its marker is stale")
     if publication.level is PublicationLevel.L3:

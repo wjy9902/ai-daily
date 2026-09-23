@@ -489,3 +489,36 @@ def test_a_rerun_that_restores_the_lead_no_longer_replaces_a_demoted_issue(
     with pytest.raises(PublicationRefused, match="would not improve"):
         guard_same_day_overwrite(layout, intact)
     assert_serves(layout, demoted)
+
+
+@pytest.mark.parametrize("replace", [False, True])
+def test_bad_new_copy_cannot_change_live_release(layout: SiteLayout, replace: bool) -> None:
+    good = factories.publication()
+    publish_site(layout, good, SITE, FIRST_ATTEMPT)
+    current = layout.current.resolve()
+    before = layout.publication_path(good.target_date).read_bytes()
+    bad = good.model_copy(
+        update={
+            "briefs": [factories.brief_card().model_copy(update={"brief": "这条快讯尚未说完，"})]
+        }
+    ).signed()
+    with pytest.raises(PublicationRefused, match="unfinished_ending"):
+        publish_site(layout, bad, SITE, SECOND_ATTEMPT, replace=replace)
+    assert layout.current.resolve() == current
+    assert layout.publication_path(good.target_date).read_bytes() == before
+
+
+def test_rebuild_does_not_apply_new_copy_gate_to_old_records(layout: SiteLayout) -> None:
+    from ai_daily.site_publisher import render_release
+
+    old = (
+        factories.publication()
+        .model_copy(
+            update={
+                "briefs": [factories.brief_card().model_copy(update={"brief": "旧稿尚未结束，"})]
+            }
+        )
+        .signed()
+    )
+    release = render_release(layout, old, SITE, "historical-rebuild")
+    assert old.marker in (release / "index.html").read_text()

@@ -338,7 +338,7 @@ class BudgetLedger:
         output_tokens: int,
         run: ModelRun,
     ) -> None:
-        actual_requests = max(1, run.request_count)
+        actual_requests = run.request_count
         with self._transaction():
             if (
                 requests > self.stage_reserved_requests[stage.value]

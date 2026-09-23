@@ -153,6 +153,21 @@ class FakeGateway:
             return output_type.model_validate(
                 _grouped_plan_output(_plan_output(values["candidates"]))
             )
+        if output_type.__name__ == "BriefBatch":
+            return output_type.model_validate(
+                {
+                    "items": [
+                        {
+                            "event_id": v["event_id"],
+                            "headline": v["evidence"][0]["title"],
+                            "brief": "已有证据确认该事件的产品更新。",
+                            "evidence_id": v["evidence"][0]["evidence_id"],
+                            "quote": v["evidence"][0]["excerpt"][:80],
+                        }
+                        for v in values
+                    ]
+                }
+            )
         return _draft_output(values)
 
 
@@ -950,3 +965,39 @@ async def test_the_product_lexicon_is_learned_from_items_the_window_rejected(
 
     assert len(candidates) == 1
     assert len(candidates[0].items) == 2
+
+
+async def test_recovery_keeps_collector_open_and_closes_it_once(tmp_path: Path) -> None:
+    class TrackingCollector(FakeCollector):
+        closed = 0
+
+        async def aclose(self) -> None:
+            self.closed += 1
+
+    collector = TrackingCollector()
+
+    class RecoveryGateway(FakeGateway):
+        async def generate(
+            self, role, output_type, instructions, prompt, validator=None, stage=None
+        ):
+            if output_type.__name__.startswith("EditorialPlanOutput_"):
+                raise ModelInvocationFailed("ModelHTTPError:400")
+            if output_type.__name__ == "BriefBatch":
+                assert collector.closed == 0
+            return await super().generate(role, output_type, instructions, prompt, validator, stage)
+
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=collector,
+        gateway=RecoveryGateway(config),
+        layout=_site(tmp_path),
+    )
+    result = await pipeline.run(_today(), publish=False)
+    assert result.publication.level is PublicationLevel.L2A
+    assert result.publication.briefs
+    assert collector.closed == 1
+    assert (result.run_dir / "brief-recovery.json").exists()

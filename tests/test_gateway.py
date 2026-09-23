@@ -359,7 +359,7 @@ async def test_semantic_validation_failure_does_not_cross_provider(
 
     monkeypatch.setattr(gateway, "_build_model", build_model)
 
-    with pytest.raises(ModelInvocationFailed, match="event_id must be event-1"):
+    with pytest.raises(ModelInvocationFailed, match="ModelOutputValidationFailed"):
         await gateway.generate(
             "judge",
             JudgeDecision,
