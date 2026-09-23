@@ -11,6 +11,7 @@ import httpx
 from pydantic_ai.exceptions import UsageLimitExceeded
 
 from ai_daily.artifacts import write_artifact
+from ai_daily.brief_recovery import recover_briefs
 from ai_daily.budget import BudgetExceeded, BudgetLedger, StageBudgetExceeded
 from ai_daily.composer import (
     ComposeError,
@@ -236,6 +237,7 @@ class DailyPipeline:
         # An injected gateway keeps its own ledger; tests want that. Only a
         # gateway we own gets rebound to the day's on-disk budget in run().
         self._owns_gateway = gateway is None
+        self._enrichment_attempted: set[str] = set()
 
     def _bind_daily_budget(self, target_date: date) -> None:
         """Point the ledger at this date's on-disk budget.
@@ -255,6 +257,12 @@ class DailyPipeline:
         self.gateway.ledger = ledger
 
     async def run(self, target_date: date, publish: bool) -> RunOutcome:
+        try:
+            return await self._run(target_date, publish)
+        finally:
+            await self.collector.aclose()
+
+    async def _run(self, target_date: date, publish: bool) -> RunOutcome:
         """Produce the best issue today's inputs allow.
 
         No quality problem raises here any more. Each stage records what went
@@ -262,6 +270,7 @@ class DailyPipeline:
         permits, so a bad morning shrinks the issue instead of erasing it.
         """
 
+        self._enrichment_attempted.clear()
         run_id = f"{target_date.isoformat()}-{uuid.uuid4().hex[:8]}"
         run_dir = self.artifacts_dir / target_date.isoformat() / run_id
         tracker = DegradationTracker()
@@ -349,9 +358,37 @@ class DailyPipeline:
             except ComposeError:
                 tracker.record(FailureClass.PLAN_FAILED)
 
+        candidates = await self._recover_candidates(candidates, decisions, run_dir)
         if decisions:
             return build_judged_publication(target_date, decisions, candidates, tracker)
         return build_ranked_publication(target_date, candidates, tracker)
+
+    async def _recover_candidates(
+        self,
+        candidates: list[Event],
+        decisions: list[JudgeDecision],
+        run_dir: Path,
+    ) -> list[Event]:
+        ranked = sorted(candidates, key=lambda event: event.score, reverse=True)
+        if decisions:
+            by_id = {event.event_id: event for event in candidates}
+            ranked = [
+                by_id[d.event_id]
+                for d in sorted(decisions, key=lambda d: d.relevance, reverse=True)
+                if d.selected and d.event_id in by_id
+            ]
+        audit: list[dict[str, str]] = []
+
+        async def enrich(events: list[Event]) -> None:
+            ids = {e.event_id for e in events} - self._enrichment_attempted
+            self._enrichment_attempted.update(ids)
+            if ids:
+                await self.collector.enrich_event_content(events, self.config.sources, ids)
+
+        candidates = await recover_briefs(ranked, self.gateway, enrich, audit)
+        write_artifact(run_dir / "brief-recovery.json", {"items": audit})
+        write_artifact(run_dir / "model-runs.json", self.gateway.runs)
+        return candidates
 
     async def _collect(
         self,
@@ -475,6 +512,7 @@ class DailyPipeline:
                 for decision in decisions
                 if decision.selected or decision.relevance >= 70
             }
+            self._enrichment_attempted.update(enrichment_ids)
             enrichment = await self.collector.enrich_event_content(
                 candidates,
                 self.config.sources,
@@ -571,7 +609,6 @@ class DailyPipeline:
             ) from error
         finally:
             write_artifact(run_dir / "model-runs.json", self.gateway.runs)
-            await self.collector.aclose()
         return decisions, editorial_plan, drafts
 
     def _check_source_health(

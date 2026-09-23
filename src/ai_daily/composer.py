@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from .copy_quality import copy_problem
 from .degradation import DegradationTracker
 from .models import (
     DraftItem,
@@ -196,7 +197,7 @@ def _story_to_brief(story: object) -> BriefCard:
         event_id=story.event_id,
         category=story.category,
         headline=story.headline,
-        brief=story.tldr[:240],
+        brief=story.tldr,
         sources=story.sources,
         published_at=story.published_at,
     )
@@ -224,12 +225,14 @@ def build_judged_publication(
             published_at = _publication_time(event)
         except ComposeError:
             continue
+        if copy_problem(event.title, 100) or copy_problem(event.summary, 320):
+            continue
         briefs.append(
             BriefCard(
                 event_id=event.event_id,
                 category=decision.category,
-                headline=event.title[:100],
-                brief=(event.summary or event.title)[:240],
+                headline=event.title,
+                brief=event.summary,
                 sources=_source_refs(event),
                 published_at=published_at,
             )
@@ -261,12 +264,14 @@ def build_ranked_publication(
             published_at = _publication_time(event)
         except ComposeError:
             continue
+        if copy_problem(event.title, 100) or copy_problem(event.summary, 320):
+            continue
         briefs.append(
             BriefCard(
                 event_id=event.event_id,
                 category="快讯",
-                headline=event.title[:100],
-                brief=(event.summary or event.title)[:240],
+                headline=event.title,
+                brief=event.summary,
                 sources=_source_refs(event),
                 published_at=published_at,
             )

@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
+from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.alibaba import AlibabaProvider
 from pydantic_ai.providers.deepseek import DeepSeekProvider
@@ -23,6 +24,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
 from ai_daily.config import Secrets
+from ai_daily.model_diagnostics import CURRENT_TRACE, RequestTrace
 from ai_daily.models import ModelEndpoint, ModelRole, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -134,14 +136,23 @@ class ModelGateway:
         stage: BudgetStage,
     ) -> OutputT:
         async with self._concurrency:
-            return await self._invoke_endpoint_bounded(
-                invocation,
-                output_type,
-                instructions,
-                prompt,
-                validator,
-                stage,
-            )
+            trace = RequestTrace(stage=stage.value)
+            token = CURRENT_TRACE.set(trace)
+            try:
+                return await self._invoke_endpoint_bounded(
+                    invocation,
+                    output_type,
+                    instructions,
+                    prompt,
+                    validator,
+                    stage,
+                )
+            finally:
+                try:
+                    if trace.client is not None:
+                        await trace.client.aclose()
+                finally:
+                    CURRENT_TRACE.reset(token)
 
     async def _invoke_endpoint_bounded(
         self,
@@ -241,15 +252,21 @@ class ModelGateway:
             started,
             usage.input_tokens,
             usage.output_tokens,
-            usage.requests,
+            self._request_count(usage),
         )
         self.runs.append(run)
         if reservation is None:
-            self.ledger.record_requests(max(1, usage.requests), stage)
+            if run.request_count:
+                self.ledger.record_requests(run.request_count, stage)
             self.ledger.record(run, stage)
         else:
             self.ledger.settle_reservation(stage, *reservation, run)
         return result.output
+
+    @staticmethod
+    def _request_count(usage: RunUsage) -> int:
+        trace = CURRENT_TRACE.get()
+        return trace.requests if trace and trace.client else max(1, usage.requests)
 
     @staticmethod
     def _call_token_ceiling(
@@ -298,7 +315,15 @@ class ModelGateway:
         stage: BudgetStage,
         reservation: tuple[int, float, int, int] | None,
     ) -> None:
-        request_count = max(1, usage.requests)
+        request_count = self._request_count(usage)
+        if (trace := CURRENT_TRACE.get()) and trace.category is None:
+            trace.category = (
+                "cancelled"
+                if isinstance(error, asyncio.CancelledError)
+                else "validation"
+                if trace.validation
+                else "unknown"
+            )
         run = self._failed_run(
             invocation,
             started,
@@ -314,7 +339,8 @@ class ModelGateway:
         # what turns an exhausted budget into a clean degradation.
         try:
             if reservation is None:
-                self.ledger.record_requests(request_count, stage)
+                if request_count:
+                    self.ledger.record_requests(request_count, stage)
                 self.ledger.record(run, stage)
             else:
                 self.ledger.settle_reservation(stage, *reservation, run)
@@ -332,6 +358,8 @@ class ModelGateway:
             except ValueError as error:
                 message = str(error).replace("\n", " ").strip()[:300]
                 errors.append(message)
+                if trace := CURRENT_TRACE.get():
+                    trace.validation.append("semantic_validation")
                 raise ModelRetry(message) from error
             return normalized if normalized is not None else output
 
@@ -357,24 +385,38 @@ class ModelGateway:
         )
 
     def _build_model(self, endpoint: ModelEndpoint) -> OpenAIChatModel:
+        client = None
+        if trace := CURRENT_TRACE.get():
+            client = create_async_http_client()
+            client.event_hooks["request"].append(trace.on_request)
+            client.event_hooks["response"].append(trace.on_response)
+            trace.client = client
         if endpoint.provider == "alibaba":
             key = self.secrets.dashscope_api_key
             base_url = self.secrets.dashscope_base_url
             if not key or not base_url:
                 raise MissingProviderSecret("DASHSCOPE_API_KEY and DASHSCOPE_BASE_URL are required")
-            alibaba_provider = AlibabaProvider(api_key=key, base_url=base_url)
+            alibaba_provider = (
+                AlibabaProvider(api_key=key, base_url=base_url, http_client=client)
+                if client is not None
+                else AlibabaProvider(api_key=key, base_url=base_url)
+            )
             alibaba_provider.client.max_retries = 0
             return OpenAIChatModel(endpoint.model, provider=alibaba_provider)
         elif endpoint.provider == "deepseek":
             if not self.secrets.deepseek_api_key:
                 raise MissingProviderSecret("DEEPSEEK_API_KEY is required")
-            deepseek_provider = DeepSeekProvider(api_key=self.secrets.deepseek_api_key)
+            deepseek_provider = DeepSeekProvider(
+                api_key=self.secrets.deepseek_api_key, http_client=client
+            )
             deepseek_provider.client.max_retries = 0
             return OpenAIChatModel(endpoint.model, provider=deepseek_provider)
         elif endpoint.provider == "openai":
             if not self.secrets.openai_api_key:
                 raise MissingProviderSecret("OPENAI_API_KEY is required")
-            openai_provider = OpenAIProvider(api_key=self.secrets.openai_api_key)
+            openai_provider = OpenAIProvider(
+                api_key=self.secrets.openai_api_key, http_client=client
+            )
             openai_provider.client.max_retries = 0
             return OpenAIChatModel(endpoint.model, provider=openai_provider)
         else:
@@ -407,6 +449,7 @@ class ModelGateway:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_cny=cost,
+            **(trace.fields() if (trace := CURRENT_TRACE.get()) else {}),
         )
 
     def _failed_run(
@@ -437,24 +480,21 @@ class ModelGateway:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cost_cny=cost,
+            **(trace.fields() if (trace := CURRENT_TRACE.get()) else {}),
             error_type=type(error).__name__,
         )
 
     @staticmethod
     def _safe_error(error: Exception) -> str:
-        """A log-safe description that is still enough to debug from.
+        """Public-safe summary; detailed categories live in internal ModelRun diagnostics.
 
-        Provider errors can echo the prompt back, so ModelHTTPError and
-        ModelAPIError stay reduced to their type and status. Everything else is
-        raised by pydantic-ai itself and describes structure rather than
-        content ("Exceeded maximum retries (1) for output validation"), which
-        is the one thing that makes a repeated failure diagnosable. Truncated,
-        because a validator message can quote the offending output.
+        Provider and validation exceptions may echo inputs, so their messages
+        never enter public degradation status.
         """
 
         if isinstance(error, ModelHTTPError):
             return f"ModelHTTPError:{error.status_code}"
-        if isinstance(error, ModelAPIError):
+        if isinstance(error, (ModelAPIError, UnexpectedModelBehavior, ModelOutputValidationFailed)):
             return type(error).__name__
         message = str(error).replace("\n", " ").strip()
         return f"{type(error).__name__}: {message[:300]}" if message else type(error).__name__
