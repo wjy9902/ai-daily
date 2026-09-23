@@ -425,6 +425,8 @@ _CURRENCY_CHARS = frozenset("$¥€£₩₽¢￥")
 #: it, and "GPT 6" would not either. Anchors are the one place a single
 #: character carries meaning, so they tokenize for themselves.
 _PRODUCT_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9.+-]*", re.IGNORECASE)
+_MULTIPLIER_RE = re.compile(r"\d+(?:\.\d+)?x", re.IGNORECASE)
+_ANNOUNCEMENT_TITLE_RE = re.compile(r"^(?:introducing|announcing)\b|(?:正式)?发布|推出", re.I)
 
 
 def _is_quantity(text: str, start: int, end: int) -> bool:
@@ -463,11 +465,26 @@ def title_product_identifiers(title: str, lexicon: frozenset[str] = frozenset())
         return set()
     joined = {} if len(anchors.joined) > _PRODUCT_ID_JOINED_LIMIT else anchors.joined
     lexical = {token: index for index, token in enumerate(anchors.tokens) if token in lexicon}
-    positions = anchors.direct | joined | lexical
+    versioned = anchors.direct | joined
+    positions = versioned | lexical
     if not positions:
         return set()
-    subject_ends = min(positions.values()) + _SUBJECT_SPAN
-    return {name for name, index in positions.items() if index <= subject_ends}
+    first = min(versioned.values()) if versioned else min(positions.values())
+    # A comparison naming two products may describe the first, but cannot
+    # connect their separate launch clusters through transitive matching.
+    later = sorted(index for index in versioned.values() if index > first)
+    next_product = later[0] if later else 10**9
+    if (
+        later
+        and first > 0
+        and next_product > 0
+        and anchors.tokens[first - 1] == anchors.tokens[next_product - 1]
+    ):
+        # "Claude Fable 5.1 and Claude Mythos 5.1" is one joint launch.
+        next_product = 10**9
+    subject_ends = min(first + _SUBJECT_SPAN, next_product - 1)
+    subject_start = first - 1 if first > 0 and anchors.tokens[first - 1] in lexicon else first
+    return {name for name, index in positions.items() if subject_start <= index <= subject_ends}
 
 
 @dataclass(frozen=True)
@@ -508,7 +525,9 @@ def _title_anchors(title: str) -> _TitleAnchors:
             if (
                 token not in HISTORICAL_STOPWORDS
                 and any(ch.isdigit() for ch in following)
+                and not _is_direct_identifier(following)
                 and not _is_quantity(text, *following_match.span())
+                and not _MULTIPLIER_RE.fullmatch(following)
                 and len(candidate) >= 4
                 and not _is_year_number(candidate)
             ):
@@ -550,6 +569,7 @@ def _is_direct_identifier(normalized: str) -> bool:
         and any(ch.isdigit() for ch in normalized)
         and len(normalized) >= 4
         and not _is_year_number(normalized)
+        and not _MULTIPLIER_RE.fullmatch(normalized)
     )
 
 
@@ -728,6 +748,12 @@ def _similar(left: RawItem, right: RawItem, window: timedelta, lexicon: frozense
         return True
     if _same_story_by_product(left.title, right.title, lexicon):
         return True
+    # Similar wording in a comparison must not override two different
+    # product subjects and join their launches through the fallback score.
+    if title_product_identifiers(left.title, lexicon) and title_product_identifiers(
+        right.title, lexicon
+    ):
+        return False
     if left.source == right.source and left.source_channel == SourceChannel.RELEASE:
         return False
     left_tokens = _similarity_tokens(left)
@@ -792,6 +818,11 @@ def cluster_items(
                 is_amplified(item),
                 item.source_tier.value,
                 CHANNEL_PRIORITY[item.source_channel],
+                item.source_channel is SourceChannel.OFFICIAL
+                and registrable_domain(str(item.url))
+                in {"x.com", "twitter.com", "bsky.app", "t.me"},
+                item.source_channel is SourceChannel.OFFICIAL
+                and not _ANNOUNCEMENT_TITLE_RE.search(item.title),
                 -len(item.summary),
             ),
         )
