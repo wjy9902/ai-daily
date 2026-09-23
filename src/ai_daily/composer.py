@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from .content import _evidence_items
 from .copy_quality import copy_problem
 from .degradation import DegradationTracker
 from .models import (
@@ -41,9 +42,16 @@ class ComposeError(RuntimeError):
     """The pipeline output cannot be turned into a publishable record."""
 
 
-def _source_refs(event: Event) -> list[SourceRef]:
+def _source_refs(event: Event, cited_evidence_ids: set[str] | None = None) -> list[SourceRef]:
+    items = event.items
+    if cited_evidence_ids is not None:
+        items = [
+            item
+            for index, item in enumerate(_evidence_items(event), start=1)
+            if f"{event.event_id}-{index}" in cited_evidence_ids
+        ]
     refs: list[SourceRef] = []
-    for item in event.items[:MAX_SOURCE_REFS]:
+    for item in items[:MAX_SOURCE_REFS]:
         refs.append(
             SourceRef(
                 title=item.title,
@@ -151,7 +159,10 @@ def build_full_publication(
                 why_it_matters=draft.why_it_matters,
                 action=draft.action,
                 caveat=draft.caveat,
-                sources=refs,
+                sources=_source_refs(
+                    event,
+                    {draft.tldr_evidence_id, *(fact.evidence_id for fact in draft.facts)},
+                ),
                 published_at=published_at,
             )
         )

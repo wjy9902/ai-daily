@@ -66,6 +66,22 @@ def test_a_full_plan_with_every_draft_publishes_an_l0_issue() -> None:
     ]
 
 
+def test_detail_lists_only_the_sources_its_facts_cite() -> None:
+    event = factories.event(0)
+    event.items.extend([factories.raw_item(1), factories.raw_item(2)])
+    draft = factories.draft(0)
+    draft.facts.append(draft.facts[0].model_copy(update={"evidence_id": "event-0-2"}))
+
+    record = build_full_publication(
+        TARGET, _full_plan(1), [draft], [event], DegradationTracker(), NOW
+    )
+
+    assert [str(ref.url) for ref in record.details[0].sources] == [
+        "https://example.test/story-0",
+        "https://example.test/story-1",
+    ]
+
+
 def test_a_selection_with_no_draft_is_demoted_to_a_brief() -> None:
     events = _events(3)
     tracker = DegradationTracker()
