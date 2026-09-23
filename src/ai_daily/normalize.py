@@ -786,6 +786,40 @@ def registrable_domain(url: str) -> str:
     return ".".join(labels[-2:])
 
 
+def _ordered_event_items(primary: RawItem, group: list[RawItem]) -> list[RawItem]:
+    remaining = [item for item in group if item is not primary]
+    subject_terms = title_tokens(primary.title) - HISTORICAL_STOPWORDS
+    # The detail gate reads the first three items. A short vendor RSS summary
+    # can still lead if independent, on-topic reporting already has full text.
+    if (
+        primary.source_channel is not SourceChannel.OFFICIAL
+        or not _ANNOUNCEMENT_TITLE_RE.search(primary.title)
+        or len(subject_terms) < 2
+        or len(primary.summary) >= 800
+    ):
+        return [primary, *remaining]
+    primary_domain = registrable_domain(str(primary.url))
+    support = [
+        item
+        for item in remaining
+        if not is_amplified(item)
+        and len(item.summary) >= 800
+        and registrable_domain(str(item.url)) != primary_domain
+        and len(subject_terms & title_tokens(item.title)) >= 2
+    ]
+    if not support:
+        return [primary, *remaining]
+    best = min(
+        support,
+        key=lambda item: (
+            item.source_channel is not SourceChannel.OFFICIAL,
+            -len(subject_terms & title_tokens(item.title)),
+            -len(item.summary),
+        ),
+    )
+    return [primary, best, *(item for item in remaining if item is not best)]
+
+
 def cluster_items(
     items: list[RawItem],
     window_hours: int = 48,
@@ -826,7 +860,7 @@ def cluster_items(
                 -len(item.summary),
             ),
         )
-        ordered = [primary, *(item for item in group if item is not primary)]
+        ordered = _ordered_event_items(primary, group)
         canonical = canonicalize_url(str(primary.url))
         event_id = hashlib.sha256(canonical.encode()).hexdigest()[:16]
         latest_dated_item = max(

@@ -5,7 +5,12 @@ from pathlib import Path
 
 from ai_daily.content import evidence_bundle, lead_is_corroborated
 from ai_daily.models import RawItem
-from ai_daily.normalize import cluster_items, product_lexicon, title_product_identifiers
+from ai_daily.normalize import (
+    _ordered_event_items,
+    cluster_items,
+    product_lexicon,
+    title_product_identifiers,
+)
 
 FIXTURE = Path("tests/fixtures/model-launch-cluster-2026-09-23.json")
 
@@ -38,6 +43,31 @@ def test_numeric_multipliers_do_not_teach_generic_product_names() -> None:
     lexicon = product_lexicon(_sources())
     assert "cheaper" not in lexicon
     assert not title_product_identifiers("193x faster and 445x cheaper", lexicon)
+
+
+def test_short_official_launch_prefers_rich_same_topic_support() -> None:
+    sources = _sources()
+    by_source = {item.source: item for item in sources}
+    primary = by_source["openai-news"]
+    support = by_source["aws-ml-blog"]
+    comparison = by_source["testingcatalog"]
+    other_model = support.model_copy(update={"title": "GPT-6 Astra is now available on AWS"})
+    ordered = _ordered_event_items(primary, [primary, comparison, other_model, support])
+
+    assert [item.source for item in ordered] == [
+        "openai-news",
+        "aws-ml-blog",
+        "testingcatalog",
+        "aws-ml-blog",
+    ]
+    event = next(
+        event
+        for event in cluster_items(sources, lexicon=product_lexicon(sources))
+        if event.primary_item.source == "openai-news"
+    )
+    assert evidence_bundle(event.model_copy(update={"items": ordered})).evidence[1].source == (
+        "AWS Machine Learning Blog"
+    )
 
 
 def test_bare_product_name_before_version_remains_an_anchor() -> None:
