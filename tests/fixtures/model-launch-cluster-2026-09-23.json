@@ -242,5 +242,22 @@
     "discovered_at": "2026-09-22T19:10:37.179733Z",
     "author": null,
     "metrics": {}
+  },
+  {
+    "source": "aws-ml-blog",
+    "source_tier": "B",
+    "source_label": "AWS Machine Learning Blog",
+    "source_channel": "official",
+    "source_region": "global",
+    "source_ai_focused": true,
+    "source_item_id": "f91c4872e4efa50ad6fa1a0161799f318feef3c1",
+    "url": "https://aws.amazon.com/blogs/machine-learning/bring-more-intelligence-to-everyday-work-with-gpt-6-sol-and-gpt-6-luna-on-amazon-bedrock/",
+    "title": "Bring more intelligence to everyday work with GPT-6 Sol and GPT-6 Luna on Amazon Bedrock",
+    "summary": "GPT-6 Sol and GPT-6 Luna are now generally available on Amazon Bedrock, giving you more options to match intelligence and efficiency to each workload. The value of AI at scale depends on two dimensions: what a model can do and how often you can put it to use. Greater intelligence expands the complexity a model can handle, from subtle coding problems to multistep processes across tools. Efficiency determines how broadly that intelligence can support everyday activity and repeatable tasks, where every additional token, retry, and second of latency multiplies across requests. GPT-6 Astra established the upper end of the GPT-6 family for the most ambitious projects, where achieving the highest-quality result matters more than cost. Organizations also need advanced intelligence for the recurring tasks that keep products and operations moving. GPT-6 Sol brings strong reasoning and coding capabilities to complex tasks performed throughout the week, with economics suited to regular use. GPT-6 ",
+    "published_at": "2026-09-22T18:10:22Z",
+    "source_time_kind": "published",
+    "discovered_at": "2026-09-22T19:10:39.321819Z",
+    "author": "Tanvi Girinath",
+    "metrics": {}
   }
 ]
