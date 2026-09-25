@@ -4,12 +4,14 @@ import json
 import re
 from collections import Counter
 from collections.abc import Sequence
+from typing import Any
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, model_validator
 from pydantic_ai.exceptions import UsageLimitExceeded
 
 from ai_daily.budget import BudgetExceeded, BudgetStage
 from ai_daily.history import PublishedItem
+from ai_daily.model_diagnostics import CURRENT_TRACE
 from ai_daily.model_gateway import (
     MissingProviderSecret,
     ModelGateway,
@@ -47,6 +49,28 @@ class JudgeBatch(BaseModel):
 class EditorialPlanOutputBase(StrictModel):
     today_highlight: str = Field(min_length=1, max_length=300)
     editor_viewpoint: list[EditorialInsight] = Field(min_length=2, max_length=4)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unwrap_result_envelope(cls, value: Any) -> Any:
+        """Accept a plan the model wrapped as ``{"result": {...}}``.
+
+        The output tool is named ``final_result`` and deepseek-v4-pro sometimes
+        answers it with its arguments nested under ``result``. Once recorded,
+        this turned out to be what the first attempt died on for the plans of
+        2026-09-23 and 09-24: a complete plan refused over an envelope, costing
+        a ~200k-token resend and the only retry the stage has. Only that exact
+        shape is unwrapped - anything else beside ``result`` still fails - and
+        every unwrap is recorded, so the quirk stays countable.
+        """
+
+        if isinstance(value, dict) and value.keys() == {"result"}:
+            inner = value["result"]
+            if isinstance(inner, dict):
+                if trace := CURRENT_TRACE.get():
+                    trace.validation.append("result_envelope")
+                return inner
+        return value
 
 
 JUDGE_EVIDENCE_EXCERPT_CHARS = 1_600
