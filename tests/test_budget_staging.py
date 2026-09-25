@@ -22,7 +22,9 @@ from test_content import FakeGateway, event, plan
 
 from ai_daily.budget import BudgetLedger, BudgetStage, StageBudgetExceeded
 from ai_daily.config import load_config
-from ai_daily.content import draft_selected, judge_events, plan_digest
+from ai_daily.content import judge_events
+from ai_daily.drafting import draft_selected
+from ai_daily.planning import plan_digest
 
 
 class StageRecordingGateway(FakeGateway):  # type: ignore[misc]

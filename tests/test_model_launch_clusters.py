@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from ai_daily.content import evidence_bundle, lead_is_corroborated
+from ai_daily.content import evidence_bundle
 from ai_daily.models import RawItem
 from ai_daily.normalize import (
     _ordered_event_items,
@@ -11,6 +11,7 @@ from ai_daily.normalize import (
     product_lexicon,
     title_product_identifiers,
 )
+from ai_daily.planning import lead_is_corroborated
 
 FIXTURE = Path("tests/fixtures/model-launch-cluster-2026-09-23.json")
 

@@ -14,18 +14,11 @@ from ai_daily.content import (
     JUDGE_EVIDENCE_EXCERPT_CHARS,
     QUOTE_MIN_CHARS,
     JudgeBatch,
-    draft_selected,
-    enforce_lead_corroboration,
-    enforce_rumor_attribution,
     judge_events,
-    lead_is_corroborated,
     normalize_quote_text,
-    plan_digest,
     quote_supports,
-    registrable_domain,
-    validate_editorial_plan,
-    validate_evidence_quotes,
 )
+from ai_daily.drafting import draft_selected, validate_evidence_quotes
 from ai_daily.model_gateway import ModelInvocationFailed
 from ai_daily.models import (
     DraftItem,
@@ -42,6 +35,14 @@ from ai_daily.models import (
     SourceChannel,
     SourceTier,
     SourceTimeKind,
+)
+from ai_daily.normalize import registrable_domain
+from ai_daily.planning import (
+    enforce_lead_corroboration,
+    enforce_rumor_attribution,
+    lead_is_corroborated,
+    plan_digest,
+    validate_editorial_plan,
 )
 
 
@@ -1392,7 +1393,7 @@ def test_the_same_speculation_outside_the_rumor_category_still_fails() -> None:
 
 
 def test_plan_copy_normalization_leaves_rumor_wording_intact() -> None:
-    from ai_daily.content import _normalize_plan_copy
+    from ai_daily.planning import _normalize_plan_copy
 
     plan_value = _rumor_plan(4, "据报道新模型或将于本周发布", "知情人士称谈判仍处早期阶段。")
 
@@ -1429,14 +1430,14 @@ def _rumor_selection() -> EditorialSelection:
 
 
 def test_rumor_draft_requires_attribution_in_tldr() -> None:
-    from ai_daily.content import _validate_draft
+    from ai_daily.drafting import _validate_draft
 
     with pytest.raises(ValueError, match="attribution"):
         _validate_draft(_quoted_draft(), _rumor_selection(), _bundle())
 
 
 def test_rumor_draft_allows_attributed_speculation() -> None:
-    from ai_daily.content import _validate_draft
+    from ai_daily.drafting import _validate_draft
 
     draft = _quoted_draft().model_copy(update={"tldr": "据报道，新模型或将于本周正式发布。"})
 

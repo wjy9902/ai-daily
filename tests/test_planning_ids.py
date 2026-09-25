@@ -16,8 +16,8 @@ from pydantic import BaseModel
 from test_content import _grouped_plan, numbered_event, valid_global_plan
 
 from ai_daily.config import load_config
-from ai_daily.content import plan_digest
 from ai_daily.models import EditorialPlan, Event, JudgeDecision
+from ai_daily.planning import plan_digest
 
 
 class AliasAnsweringGateway:

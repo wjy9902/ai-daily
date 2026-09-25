@@ -11,7 +11,6 @@ from pydantic import HttpUrl
 
 from ai_daily.assembler import assemble_markdown
 from ai_daily.config import load_config
-from ai_daily.content import validate_editorial_plan
 from ai_daily.models import (
     DraftItem,
     EditorialInsight,
@@ -20,6 +19,7 @@ from ai_daily.models import (
     Event,
     RawItem,
 )
+from ai_daily.planning import validate_editorial_plan
 from ai_daily.publication import (
     BriefCard,
     Claim,

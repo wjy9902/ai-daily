@@ -254,7 +254,7 @@ score = 3.0 * hf_listed
    `published_at` 也视为失败。
 3. `config/papers.yaml` 走独立加载器（§4.1），**不要**接 `load_config`/`AppConfig`。
 4. `verifier.py` 不是引用校验器（它验证线上站点可见性）；引用纪律在
-   `content.py:107-175`。
+   `content.quote_supports`（稿件侧入口是 `drafting.validate_evidence_quotes`）。
 5. `render/site.py` 的 `_url()` 对非 http(s) raise；`_time_label` 对只有 community
    时间戳的条目 raise。论文记录 URL 一律 https。
 6. `static/site.css` 按 `parents[2]` 解析后逐 release 拷贝，papers 页自动获得样式。
