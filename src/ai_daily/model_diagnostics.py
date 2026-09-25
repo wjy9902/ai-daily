@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
+from pydantic_ai import ModelRetry
+from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart
+from pydantic_core import ErrorDetails
+
+REASON_CHARS = 500
 
 CODES = {
     "invalid_request_error",
@@ -39,6 +45,7 @@ class RequestTrace:
     error_param: str | None = None
     category: str | None = None
     validation: list[str] = field(default_factory=list)
+    validation_reasons: list[str] = field(default_factory=list)
     client: httpx.AsyncClient | None = None
 
     async def on_request(self, request: httpx.Request) -> None:
@@ -94,7 +101,48 @@ class RequestTrace:
             "error_parameter": self.error_param,
             "error_category": self.category,
             "validation_categories": self.validation,
+            "validation_reasons": self.validation_reasons,
         }
+
+
+def validation_reasons(
+    messages: list[ModelMessage], error: BaseException | None = None
+) -> list[str]:
+    """Why each rejected output was rejected, in order.
+
+    On 2026-09-25 the plan failed twice and nothing on disk said why; it took
+    a paid replay to learn the editor had mangled two event ids. Each reason
+    is either our own validator's message or pydantic's location and message
+    for a schema error - never the rejected output itself, which pydantic's
+    ``input`` would otherwise echo back.
+
+    Rejections that were retried appear as retry prompts in ``messages``; the
+    final one, when retries ran out, is only the cause of ``error``.
+    """
+
+    reasons = [
+        _describe(part.content)
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, RetryPromptPart)
+    ]
+    cause = error.__cause__ if error is not None else None
+    if isinstance(cause, ValidationError):
+        reasons.append(_describe(cause.errors(include_input=False)))
+    elif isinstance(cause, ModelRetry):
+        reasons.append(_describe(cause.message))
+    return reasons
+
+
+def _describe(content: list[ErrorDetails] | str) -> str:
+    if isinstance(content, str):
+        text = content
+    else:
+        text = "; ".join(
+            f"{'.'.join(str(part) for part in item['loc'])}: {item['msg']}" for item in content
+        )
+    return text.replace("\n", " ").strip()[:REASON_CHARS]
 
 
 CURRENT_TRACE: ContextVar[RequestTrace | None] = ContextVar("model_request_trace", default=None)

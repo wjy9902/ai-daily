@@ -8,13 +8,14 @@ from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel
-from pydantic_ai import Agent, ModelRetry, ModelSettings
+from pydantic_ai import Agent, ModelRetry, ModelSettings, capture_run_messages
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
 )
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -24,7 +25,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 
 from ai_daily.budget import BudgetExceeded, BudgetLedger, BudgetStage
 from ai_daily.config import Secrets
-from ai_daily.model_diagnostics import CURRENT_TRACE, RequestTrace
+from ai_daily.model_diagnostics import CURRENT_TRACE, RequestTrace, validation_reasons
 from ai_daily.models import ModelEndpoint, ModelRole, ModelRun, ModelsConfig
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -206,6 +207,7 @@ class ModelGateway:
             )
         usage = RunUsage()
         validation_errors: list[str] = []
+        messages: list[ModelMessage] = []
         try:
             agent: Agent[None, OutputT] = Agent(
                 self._build_model(invocation.endpoint),
@@ -215,25 +217,28 @@ class ModelGateway:
             )
             if validator is not None:
                 agent.output_validator(self._semantic_validator(validator, validation_errors))
-            async with agent:
-                result = await agent.run(
-                    prompt,
-                    model_settings=self._model_settings(
-                        invocation.endpoint,
-                        output_token_limit,
-                        invocation.role,
-                    ),
-                    usage_limits=UsageLimits(
-                        request_limit=request_limit,
-                        input_tokens_limit=input_token_limit,
-                        output_tokens_limit=output_token_limit,
-                    ),
-                    usage=usage,
-                )
+            with capture_run_messages() as messages:
+                async with agent:
+                    result = await agent.run(
+                        prompt,
+                        model_settings=self._model_settings(
+                            invocation.endpoint,
+                            output_token_limit,
+                            invocation.role,
+                        ),
+                        usage_limits=UsageLimits(
+                            request_limit=request_limit,
+                            input_tokens_limit=input_token_limit,
+                            output_tokens_limit=output_token_limit,
+                        ),
+                        usage=usage,
+                    )
         except asyncio.CancelledError as error:
+            self._note_validation_reasons(messages, error)
             self._record_failed_run(invocation, started, error, usage, stage, reservation)
             raise
         except Exception as error:
+            self._note_validation_reasons(messages, error)
             recorded_error: Exception = error
             # Whichever ceiling stops the run, report what the model actually
             # got wrong. A run that dies on "The next request would exceed the
@@ -247,6 +252,7 @@ class ModelGateway:
             if recorded_error is not error:
                 raise recorded_error from error
             raise
+        self._note_validation_reasons(messages)
         run = self._success_run(
             invocation,
             started,
@@ -262,6 +268,13 @@ class ModelGateway:
         else:
             self.ledger.settle_reservation(stage, *reservation, run)
         return result.output
+
+    @staticmethod
+    def _note_validation_reasons(
+        messages: list[ModelMessage], error: BaseException | None = None
+    ) -> None:
+        if trace := CURRENT_TRACE.get():
+            trace.validation_reasons = validation_reasons(messages, error)
 
     @staticmethod
     def _request_count(usage: RunUsage) -> int:

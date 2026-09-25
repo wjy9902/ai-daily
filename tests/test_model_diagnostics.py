@@ -67,7 +67,7 @@ async def test_success_then_400_counts_both_requests_without_leaking_body():
     gateway = ModelGateway(load_config().models, Secrets(deepseek_api_key="test"))
 
     def validate(value):
-        raise ValueError(secret)
+        raise ValueError("value must be positive: event_ids=['c3']")
 
     with pytest.raises(ModelInvocationFailed, match="ModelHTTPError:400"):
         await gateway.generate(
@@ -83,7 +83,10 @@ async def test_success_then_400_counts_both_requests_without_leaking_body():
     assert run.validation_categories[0] == "semantic_validation"
     assert run.input_tokens == 100 and run.output_tokens == 20
     assert gateway.ledger.requests == 2
+    # The provider's error body never reaches disk; our own validator's
+    # message does, because it is the only record of why an output was refused.
     assert secret not in run.model_dump_json()
+    assert run.validation_reasons == ["value must be positive: event_ids=['c3']"]
 
 
 @respx.mock
@@ -112,3 +115,76 @@ async def test_no_http_request_releases_reservation_without_phantom_charge():
     assert gateway.ledger.requests == 0
     assert gateway.ledger.reserved_requests == 0
     assert gateway.ledger.reserved_cost_cny == 0
+
+
+def _tool_call_response(request: httpx.Request, arguments: str) -> httpx.Response:
+    name = json.loads(request.content)["tools"][0]["function"]["name"]
+    return httpx.Response(
+        200,
+        json={
+            "id": "chat-1",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "deepseek-v4-pro",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": name, "arguments": arguments},
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+        },
+    )
+
+
+@respx.mock
+async def test_a_retried_schema_rejection_is_recorded_without_the_output():
+    """09-23 and 09-24 both passed on a second request after a schema rejection
+    that nothing on disk explained."""
+
+    rejected = "sk-rejected-output-text"
+    answers = iter([json.dumps({"value": rejected}), '{"value": 3}'])
+    respx.post("https://api.deepseek.com/chat/completions").mock(
+        side_effect=lambda request: _tool_call_response(request, next(answers))
+    )
+    gateway = ModelGateway(load_config().models, Secrets(deepseek_api_key="test"))
+
+    result = await gateway.generate("editor", Result, "instructions", "prompt")
+
+    assert result.value == 3
+    run = gateway.runs[0]
+    assert run.status == "ok"
+    assert run.validation_reasons == [
+        "value: Input should be a valid integer, unable to parse string as an integer"
+    ]
+    assert rejected not in run.model_dump_json()
+
+
+@respx.mock
+async def test_the_final_rejection_is_recorded_when_retries_run_out():
+    respx.post("https://api.deepseek.com/chat/completions").mock(
+        side_effect=lambda request: _tool_call_response(request, '{"value": 0}')
+    )
+    gateway = ModelGateway(load_config().models, Secrets(deepseek_api_key="test"))
+
+    def validate(value):
+        raise ValueError(f"unknown event: event_ids=['c{value.value}x']")
+
+    with pytest.raises(ModelInvocationFailed):
+        await gateway.generate("editor", Result, "instructions", "prompt", validate)
+
+    assert gateway.runs[0].validation_reasons == [
+        "unknown event: event_ids=['c0x']",
+        "unknown event: event_ids=['c0x']",
+    ]

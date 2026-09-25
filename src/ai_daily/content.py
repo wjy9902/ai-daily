@@ -37,6 +37,7 @@ from ai_daily.normalize import (
     is_amplified,
     registrable_domain,
 )
+from ai_daily.planning_ids import PlanningIds
 
 
 class JudgeBatch(BaseModel):
@@ -417,12 +418,24 @@ async def plan_digest(
     # defeated that: on 2026-09-04 the 05:05 rerun recorded JUDGE_PARTIAL and
     # then died here with KeyError: 5015b85d1c913c20, losing the whole run and
     # one of the three chances that morning had to improve the issue.
-    payload = [
-        _candidate_payload(event, decisions_by_id[event.event_id])
-        for event in events
-        if event.event_id in decisions_by_id
-    ]
+    offered = [event for event in events if event.event_id in decisions_by_id]
+    ids = PlanningIds.for_events(offered)
+    payload = [_candidate_payload(event, decisions_by_id[event.event_id], ids) for event in offered]
     output_type = _planning_output_type(config)
+
+    def build_plan(value: BaseModel) -> EditorialPlan:
+        return _drop_unselected_viewpoints(
+            _normalize_plan_copy(
+                _normalize_repository_plan(_materialize_editorial_plan(ids.restore(value)), events)
+            )
+        )
+
+    def validate(value: BaseModel) -> None:
+        try:
+            validate_editorial_plan(build_plan(value), events, config)
+        except ValueError as error:
+            raise ValueError(ids.aliased_message(str(error))) from error
+
     prompt = {
         "candidates": payload,
         "recently_published": [
@@ -439,22 +452,10 @@ async def plan_digest(
         output_type,
         instructions=_planning_instructions(config),
         prompt=json.dumps(prompt, ensure_ascii=False),
-        validator=lambda value: validate_editorial_plan(
-            _drop_unselected_viewpoints(
-                _normalize_plan_copy(
-                    _normalize_repository_plan(_materialize_editorial_plan(value), events)
-                )
-            ),
-            events,
-            config,
-        ),
+        validator=validate,
         stage=BudgetStage.PLAN,
     )
-    plan = _drop_unselected_viewpoints(
-        _normalize_plan_copy(
-            _normalize_repository_plan(_materialize_editorial_plan(output), events)
-        )
-    )
+    plan = build_plan(output)
     validate_editorial_plan(plan, events, config)
     return plan
 
@@ -600,11 +601,13 @@ def _has_repository_release_claim(value: str) -> bool:
     )
 
 
-def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, object]:
+def _candidate_payload(
+    event: Event, decision: JudgeDecision, ids: PlanningIds
+) -> dict[str, object]:
     bundle = evidence_bundle(event, PLANNING_EVIDENCE_EXCERPT_CHARS)
     evidence = [
         {
-            "evidence_id": item.evidence_id,
+            "evidence_id": ids.alias_evidence(event.event_id, item.evidence_id),
             "source": item.source,
             "title": item.title,
             "excerpt": item.excerpt,
@@ -613,8 +616,13 @@ def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, objec
         }
         for item in bundle.evidence
     ]
+    initial_judge = decision.model_dump(mode="json")
+    initial_judge["event_id"] = ids.to_alias[event.event_id]
+    initial_judge["evidence_ids"] = [
+        ids.alias_evidence(event.event_id, evidence_id) for evidence_id in decision.evidence_ids
+    ]
     return {
-        "event_id": event.event_id,
+        "event_id": ids.to_alias[event.event_id],
         "title": event.title,
         "summary": event.summary[:700],
         "published_at": event.published_at.isoformat() if event.published_at else None,
@@ -629,7 +637,7 @@ def _candidate_payload(event: Event, decision: JudgeDecision) -> dict[str, objec
             }
             for item in event.items[:3]
         ],
-        "initial_judge": decision.model_dump(mode="json"),
+        "initial_judge": initial_judge,
         "evidence": evidence,
         "also_reported": bundle.also_reported,
     }
@@ -703,6 +711,7 @@ def _planning_instructions(config: PipelineConfig) -> str:
         "editor_viewpoint 给出 2-4 条跨新闻观察，每条只能引用已经进入三个数组的 "
         "evidence_ids，禁止引用未选候选。"
         "三个数组之间 event_id 不得重复，evidence_ids 只能使用对应候选中的值。"
+        "event_id 和 evidence_ids 是 c12、c12-1 这样的短编号，必须逐字照抄候选里的值。"
     )
 
 
@@ -713,8 +722,9 @@ def validate_editorial_plan(
     ids = [selection.event_id for selection in plan.selections]
     if len(ids) != len(set(ids)):
         raise ValueError("editorial plan contains duplicate events")
-    if not set(ids) <= set(events_by_id):
-        raise ValueError("editorial plan referenced an unknown event")
+    unknown_events = sorted(set(ids) - set(events_by_id))
+    if unknown_events:
+        raise ValueError(f"editorial plan referenced an unknown event: event_ids={unknown_events}")
     _validate_factual_copy(plan, events_by_id)
     _validate_plan_evidence(plan, events_by_id)
     _validate_plan_quotas(plan.selections, config)
@@ -832,8 +842,12 @@ def _validate_plan_evidence(plan: EditorialPlan, events_by_id: dict[str, Event])
     for selection in plan.selections:
         bundle = evidence_bundle(events_by_id[selection.event_id])
         allowed = {item.evidence_id for item in bundle.evidence}
-        if not set(selection.evidence_ids) <= allowed:
-            raise ValueError("editorial plan referenced unknown evidence")
+        unknown_evidence = sorted(set(selection.evidence_ids) - allowed)
+        if unknown_evidence:
+            raise ValueError(
+                f"editorial plan referenced unknown evidence ids={unknown_evidence} "
+                f"for event_id={selection.event_id}; use only ids={sorted(allowed)}"
+            )
         selected_evidence.update(selection.evidence_ids)
         repository_evidence.update(
             item.evidence_id

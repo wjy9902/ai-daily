@@ -260,6 +260,7 @@ class ModelRun(StrictModel):
     error_parameter: str | None = None
     error_category: str | None = None
     validation_categories: list[str] = Field(default_factory=list)
+    validation_reasons: list[str] = Field(default_factory=list)
 
 
 class Publication(StrictModel):
