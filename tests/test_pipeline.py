@@ -7,12 +7,17 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from pydantic import BaseModel
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ai_daily.budget import BudgetLedger
+from ai_daily.composer import RANKED_BRIEF_LIMIT
 from ai_daily.config import Secrets, load_config
 from ai_daily.content import JudgeBatch
+from ai_daily.copy_quality import source_copy_ready
 from ai_daily.degradation import DegradationTracker, FailureClass
-from ai_daily.model_gateway import ModelInvocationFailed
+from ai_daily.model_gateway import ModelGateway, ModelInvocationFailed
 from ai_daily.models import (
     DraftItem,
     EditorialInsight,
@@ -22,6 +27,7 @@ from ai_daily.models import (
     Event,
     FactClaim,
     JudgeDecision,
+    ModelEndpoint,
     RawItem,
     SourceChannel,
     SourceConfig,
@@ -1001,3 +1007,63 @@ async def test_recovery_keeps_collector_open_and_closes_it_once(tmp_path: Path) 
     assert result.publication.briefs
     assert collector.closed == 1
     assert (result.run_dir / "brief-recovery.json").exists()
+
+
+class OutageCollector(FakeCollector):
+    """The highest-ranked events need a model rewrite; lower ones are publishable as is."""
+
+    def __init__(self) -> None:
+        super().__init__(count=30)
+
+    async def collect(self, sources: object) -> tuple[list[RawItem], list[SourceHealth]]:
+        items, health = await super().collect(sources)
+        for index, item in enumerate(items[RANKED_BRIEF_LIMIT:], start=RANKED_BRIEF_LIMIT):
+            item.source_tier = SourceTier.C
+            item.source_channel = SourceChannel.NEWS
+            item.summary = f"Product{index} is generally available to every customer today."
+        return items, health
+
+
+async def test_a_total_model_outage_still_publishes_ranked_briefs(tmp_path: Path) -> None:
+    """2026-10-15: DeepSeek answered 402 to every call and the OpenAI key was rejected.
+
+    Recovery could not rewrite any of the top-ranked events, and the issue
+    collapsed to L3 although the pool held publishable candidates further down.
+    """
+
+    config = load_config(Path("config"))
+    config.pipeline.artifacts_dir = str(tmp_path)
+    gateway = ModelGateway(config.models, Secrets())
+
+    def build_model(endpoint: ModelEndpoint) -> FunctionModel:
+        status = 402 if endpoint.provider == "deepseek" else 401
+
+        async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status, endpoint.model)
+
+        return FunctionModel(respond)
+
+    gateway._build_model = build_model  # type: ignore[method-assign]
+    pipeline = DailyPipeline(
+        config,
+        Secrets(),
+        client=_client(),
+        collector=OutageCollector(),  # type: ignore[arg-type]
+        gateway=gateway,
+        layout=_site(tmp_path),
+    )
+
+    outcome = await pipeline.run(_today(), publish=False)
+
+    ranked = sorted(outcome.artifact.events, key=lambda event: event.score, reverse=True)
+    assert not any(
+        source_copy_ready(event.title, event.summary) for event in ranked[:RANKED_BRIEF_LIMIT]
+    )
+    assert gateway.runs and all(run.status == "failed" for run in gateway.runs)
+    assert outcome.publication.level is PublicationLevel.L2B
+    assert FailureClass.CANDIDATES_EXHAUSTED not in outcome.tracker.failures
+    assert len(outcome.publication.briefs) == RANKED_BRIEF_LIMIT
+    backfilled = {event.event_id for event in ranked[RANKED_BRIEF_LIMIT:]}
+    assert {brief.event_id for brief in outcome.publication.briefs} <= backfilled
+    audit = json.loads((outcome.run_dir / "brief-recovery.json").read_text())["items"]
+    assert {entry["reason"] for entry in audit} >= {"model_failed", "source_complete_backfill"}

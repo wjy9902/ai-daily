@@ -189,6 +189,55 @@ async def test_all_failed_recovery_becomes_l3():
     assert not pub.briefs
 
 
+async def test_failed_recovery_backfills_from_ready_candidates_beyond_the_top():
+    """2026-10-15: every call 402, and the top 12 all needed a rewrite."""
+
+    from ai_daily.composer import RANKED_BRIEF_LIMIT, build_ranked_publication
+    from ai_daily.degradation import DegradationTracker
+    from ai_daily.publication import PublicationLevel
+
+    top = [pending(i) for i in range(RANKED_BRIEF_LIMIT)]
+    ready = [factories.event(i) for i in range(RANKED_BRIEF_LIMIT, 2 * RANKED_BRIEF_LIMIT)]
+    below = [pending(i) for i in range(2 * RANKED_BRIEF_LIMIT, 2 * RANKED_BRIEF_LIMIT + 3)]
+    gateway, audit = AsyncMock(), []
+    gateway.generate.side_effect = ModelInvocationFailed("ModelHTTPError:402")
+    result = await recover_briefs(top + ready + below, gateway, AsyncMock(), audit)
+    assert [e.event_id for e in result] == [e.event_id for e in ready]
+    assert gateway.generate.call_count == 3
+    assert sum(a["reason"] == "source_complete_backfill" for a in audit) == RANKED_BRIEF_LIMIT
+    pub = build_ranked_publication(factories.TARGET_DATE, result, DegradationTracker())
+    assert pub.level is PublicationLevel.L2B
+    assert len(pub.briefs) == RANKED_BRIEF_LIMIT
+
+
+async def test_timed_out_recovery_backfills_after_what_it_recovered(monkeypatch):
+    monkeypatch.setattr(brief_recovery, "RECOVERY_SECONDS", 0.02)
+    top = [pending(i) for i in range(12)]
+    extra = factories.event(12)
+    count = 0
+
+    async def generate(*args, **kwargs):
+        nonlocal count
+        count += 1
+        if count == 1:
+            return BriefBatch(items=[output(top[0])])
+        await asyncio.sleep(1)
+
+    gateway, audit = AsyncMock(), []
+    gateway.generate.side_effect = generate
+    result = await recover_briefs([*top, extra], gateway, AsyncMock(), audit)
+    assert [e.event_id for e in result] == [top[0].event_id, extra.event_id]
+    assert any(a["reason"] == "recovery_timeout" for a in audit)
+
+
+async def test_full_recovery_needs_no_backfill():
+    top = [factories.event(i) for i in range(12)]
+    extra = factories.event(12)
+    audit = []
+    assert await recover_briefs([*top, extra], AsyncMock(), AsyncMock(), audit) == top
+    assert all(a["reason"] == "source_complete" for a in audit)
+
+
 def test_balanced_markdown_link_is_not_rejected():
     assert copy_problem("Read [source](https://example.test/a).", 320) is None
 

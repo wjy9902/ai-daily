@@ -228,7 +228,9 @@ def build_judged_publication(
     selected.sort(key=lambda decision: decision.relevance, reverse=True)
 
     briefs: list[BriefCard] = []
-    for decision in selected[:RANKED_BRIEF_LIMIT]:
+    for decision in selected:
+        if len(briefs) >= RANKED_BRIEF_LIMIT:
+            break
         event = by_id.get(decision.event_id)
         if event is None:
             continue

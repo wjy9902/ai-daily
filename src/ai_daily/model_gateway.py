@@ -64,8 +64,17 @@ def output_retries(role: ModelRole) -> int:
     return ROLE_OUTPUT_RETRIES.get(role, OUTPUT_RETRIES)
 
 
+def is_payment_required(error: Exception) -> bool:
+    # The provider account is out of balance. Retrying the same provider cannot
+    # help, so generate() goes straight to the cross-provider fallback.
+    return isinstance(error, ModelHTTPError) and error.status_code == 402
+
+
 def is_recoverable(error: Exception) -> bool:
-    if isinstance(error, (httpx.TimeoutException, httpx.ConnectError)):
+    # TimeoutError is the per-call wall-clock bound in _invoke_endpoint_bounded.
+    if isinstance(error, (httpx.TimeoutException, httpx.ConnectError, TimeoutError)):
+        return True
+    if is_payment_required(error):
         return True
     if isinstance(error, ModelHTTPError):
         return error.status_code == 429 or 500 <= error.status_code < 600
@@ -107,7 +116,10 @@ class ModelGateway:
         role_config = self.config.roles[role]
         fallback_reason: str | None = None
         endpoints = (role_config.primary, role_config.primary, role_config.fallback)
+        skip_primary = False
         for attempt, endpoint in enumerate(endpoints, start=1):
+            if skip_primary and endpoint is role_config.primary:
+                continue
             invocation = Invocation(role, role_config.primary, endpoint, attempt, fallback_reason)
             try:
                 return await self._invoke_endpoint(
@@ -123,6 +135,7 @@ class ModelGateway:
             except Exception as error:
                 if attempt < len(endpoints) and is_recoverable(error):
                     fallback_reason = self._safe_error(error)
+                    skip_primary = is_payment_required(error)
                     continue
                 raise ModelInvocationFailed(self._safe_error(error)) from error
         raise AssertionError("unreachable")
@@ -217,8 +230,12 @@ class ModelGateway:
             )
             if validator is not None:
                 agent.output_validator(self._semantic_validator(validator, validation_errors))
+            # timeout_seconds reaches the SDK as a per-read timeout, and DeepSeek
+            # keep-alive lines reset it: on 2026-10-15 one plan call ran 900s.
+            # This bounds the whole call, output retries included.
+            deadline = invocation.endpoint.timeout_seconds * (1 + retries)
             with capture_run_messages() as messages:
-                async with agent:
+                async with asyncio.timeout(deadline), agent:
                     result = await agent.run(
                         prompt,
                         model_settings=self._model_settings(
