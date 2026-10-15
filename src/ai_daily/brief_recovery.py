@@ -8,6 +8,7 @@ from pydantic import Field
 from pydantic_ai.exceptions import UsageLimitExceeded
 
 from .budget import BudgetExceeded, BudgetStage
+from .composer import RANKED_BRIEF_LIMIT
 from .content import evidence_bundle, quote_supports
 from .copy_quality import copy_problem, source_copy_ready
 from .model_gateway import MissingProviderSecret, ModelGateway, ModelInvocationFailed
@@ -98,7 +99,7 @@ async def recover_briefs(
     enrich: Callable[[list[Event]], Awaitable[None]],
     audit: list[dict[str, str]],
 ) -> list[Event]:
-    selected = events[:12]
+    selected = events[:RANKED_BRIEF_LIMIT]
     ready = [e for e in selected if source_copy_ready(e.title, e.summary)]
     pending = [e for e in selected if e not in ready]
     for event in ready:
@@ -129,4 +130,14 @@ async def recover_briefs(
             for e in pending
             if e.event_id not in finished
         )
+    # Whatever the model did not recover is replaced from further down the
+    # ranking, by candidates whose source copy is already publishable. Without
+    # this a model outage (2026-10-15: every call 402) left nothing to publish
+    # although the pool held 150 events. All of them are passed on: the composer
+    # caps the issue and drops events without a verified publication time.
+    if len(ready) < RANKED_BRIEF_LIMIT:
+        for event in events[RANKED_BRIEF_LIMIT:]:
+            if source_copy_ready(event.title, event.summary):
+                ready.append(event)
+                audit.append({"event_id": event.event_id, "reason": "source_complete_backfill"})
     return ready

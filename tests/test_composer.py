@@ -163,6 +163,19 @@ def test_judged_briefs_come_from_the_selected_decisions_only() -> None:
     assert all(brief.headline == f"Source story {brief.event_id[-1]}" for brief in record.briefs)
 
 
+def test_judged_briefs_fill_past_top_decisions_that_have_no_event() -> None:
+    """Top decisions whose events recovery could not use give way to lower ones."""
+
+    count = RANKED_BRIEF_LIMIT + 4
+    decisions = [factories.judge_decision(i, relevance=100 - i) for i in range(count)]
+    events = _events(count)[4:]
+
+    record = build_judged_publication(TARGET, decisions, events, DegradationTracker(), NOW)
+
+    assert len(record.briefs) == RANKED_BRIEF_LIMIT
+    assert {brief.event_id for brief in record.briefs} == {e.event_id for e in events}
+
+
 def test_ranked_briefs_are_capped_and_ordered_newest_first() -> None:
     events = _events(RANKED_BRIEF_LIMIT + 3)
     tracker = DegradationTracker()

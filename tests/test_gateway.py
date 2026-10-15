@@ -23,6 +23,8 @@ def test_only_transient_failures_are_recoverable() -> None:
     assert is_recoverable(ModelAPIError("model", "Request timed out."))
     assert is_recoverable(ModelHTTPError(429, "model"))
     assert is_recoverable(ModelHTTPError(503, "model"))
+    assert is_recoverable(ModelHTTPError(402, "model"))
+    assert is_recoverable(TimeoutError())
     assert not is_recoverable(ModelHTTPError(401, "model"))
     assert not is_recoverable(ModelHTTPError(400, "model"))
 
@@ -237,6 +239,114 @@ async def test_generate_does_not_fallback_after_unrecoverable_error(
         await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
 
     assert len(calls) == 1
+
+
+def _judge_response(info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[
+            ToolCallPart(
+                info.output_tools[0].name,
+                {
+                    "event_id": "event-1",
+                    "selected": True,
+                    "category": "行业动态",
+                    "relevance": 90,
+                    "confidence": 0.9,
+                    "reason": "有效候选",
+                    "evidence_ids": ["event-1-1"],
+                },
+            )
+        ]
+    )
+
+
+async def test_payment_required_goes_straight_to_the_fallback_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An account out of balance stays out of balance; retrying it wastes the call."""
+
+    gateway = ModelGateway(load_config().models, Secrets())
+    role = gateway.config.roles["judge"]
+    providers: list[str] = []
+
+    def build_model(endpoint: ModelEndpoint) -> FunctionModel:
+        providers.append(endpoint.provider)
+
+        async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+            if endpoint.provider == role.primary.provider:
+                raise ModelHTTPError(402, endpoint.model, {"error": "Insufficient Balance"})
+            return _judge_response(info)
+
+        return FunctionModel(respond)
+
+    monkeypatch.setattr(gateway, "_build_model", build_model)
+
+    result = await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+    assert result.event_id == "event-1"
+    assert providers == [role.primary.provider, role.fallback.provider]
+    assert [(run.attempt, run.status) for run in gateway.runs] == [(1, "failed"), (3, "ok")]
+    assert gateway.runs[1].fallback_reason == "ModelHTTPError:402"
+
+
+async def test_payment_required_with_a_dead_fallback_fails_after_two_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """2026-10-15: DeepSeek 402 on every call and the OpenAI key rejected with 401."""
+
+    gateway = ModelGateway(load_config().models, Secrets())
+    role = gateway.config.roles["judge"]
+
+    def build_model(endpoint: ModelEndpoint) -> FunctionModel:
+        status = 402 if endpoint.provider == role.primary.provider else 401
+
+        async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+            raise ModelHTTPError(status, endpoint.model)
+
+        return FunctionModel(respond)
+
+    monkeypatch.setattr(gateway, "_build_model", build_model)
+
+    with pytest.raises(ModelInvocationFailed, match="401"):
+        await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+    assert [run.actual_provider for run in gateway.runs] == [
+        role.primary.provider,
+        role.fallback.provider,
+    ]
+
+
+async def test_wall_clock_bound_stops_a_call_the_read_timeout_never_trips(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep-alive lines reset the SDK read timeout, so a call can run far past it."""
+
+    config = load_config().models
+    role = config.roles["judge"]
+    config.roles["judge"] = role.model_copy(
+        update={"primary": role.primary.model_copy(update={"timeout_seconds": 0.05})}
+    )
+    gateway = ModelGateway(config, Secrets())
+
+    def build_model(endpoint: ModelEndpoint) -> FunctionModel:
+        async def respond(messages: object, info: AgentInfo) -> ModelResponse:
+            if endpoint.provider == role.primary.provider:
+                await asyncio.sleep(30)
+            return _judge_response(info)
+
+        return FunctionModel(respond)
+
+    monkeypatch.setattr(gateway, "_build_model", build_model)
+
+    async with asyncio.timeout(5):
+        result = await gateway.generate("judge", JudgeDecision, "instructions", "prompt")
+
+    assert result.event_id == "event-1"
+    assert [(run.attempt, run.status, run.error_type) for run in gateway.runs] == [
+        (1, "failed", "TimeoutError"),
+        (2, "failed", "TimeoutError"),
+        (3, "ok", None),
+    ]
 
 
 async def test_generate_repairs_invalid_structured_output_with_same_provider(
