@@ -31,7 +31,9 @@ roles:
     primary:
       provider: deepseek
       model: deepseek-v4-flash
-      timeout_seconds: 60
+      # Each call is bounded at timeout_seconds x (1 + output retries) = 300s.
+      # The slowest judge call that succeeded through 2026-10-15 took 265s.
+      timeout_seconds: 150
       # DeepSeek v4 emits reasoning tokens that count against this ceiling, so
       # a limit sized for the JSON alone truncates the answer mid-structure and
       # the schema check fails. Leave room for both.
@@ -58,7 +60,10 @@ roles:
     primary:
       provider: deepseek
       model: deepseek-v4-pro
-      timeout_seconds: 180
+      # Each call is bounded at timeout_seconds x (1 + output retries) = 720s.
+      # Successful plans through 2026-10-15 took up to 534s and editor calls up
+      # to 709s; the bound is there to stop the 900s keep-alive hang, not those.
+      timeout_seconds: 360
       # Planning emits the largest structure in the pipeline (up to 29 selections
       # plus viewpoints) and this model spends roughly two thirds of its output
       # on reasoning. Measured twice: an 8192 ceiling truncated every plan, and
